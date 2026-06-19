@@ -103,6 +103,10 @@ class Earshot:
             tag = "WIN " if o["win"] else "LOSS"
             print(f"  [SELL/{r['exit']}] {tag} {o['ticker']} {o['pnl_pct']:+.1f}% "
                   f"(${o['pnl_usd']:+.2f}) | felt {m['felt']:+.1f} | {m['note']}")
+        # LEARN FROM ALL DATA: label matured observations (confirmed setups we saw, traded or not)
+        learned = self.learner.resolve_observations()
+        if learned:
+            print(f"  learned from {learned} matured observations (data, not just trades)")
 
         # 3) DAILY CIRCUIT BREAKER — realized + unrealized mark-to-market
         capital = self.instinct.sizing_capital()
@@ -133,6 +137,7 @@ class Earshot:
         for c in cands[:5]:
             print(f"    {c.ticker:<6} score {c.confidence:5.1f}  {c.catalyst.value:<18} "
                   f"{getattr(c, '_families', 1)} fam  ~${c.size_usd:.0f}")
+        self.learner.observe(cands)        # every confirmed setup -> a labeled example to learn from
 
         # 5) act — but NOT if the day is halted (in the dungeon until tomorrow)
         if self.daily.halted():

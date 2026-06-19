@@ -11,6 +11,7 @@ from .patterns import PatternMemory
 from . import prices
 
 OPEN_PATH = "state/open_positions.json"
+OBS_PATH = "state/observations.json"
 OUTCOMES_PATH = "state/outcomes.jsonl"
 KNOW_PATH = "state/knowledge.json"
 DUNGEON_PATH = "state/dungeon/post_mortems.jsonl"  # under state/ so one volume persists everything
@@ -41,6 +42,7 @@ class Learner:
     def __init__(self, weights: dict):
         self.weights = weights  # SHARED dict — updates here propagate to live tentacles
         self.open = _load(OPEN_PATH, [])
+        self.obs = _load(OBS_PATH, [])      # pending observations (learn-from-all-data)
         self.know = _load(KNOW_PATH, {"sources": {}, "catalysts": {}, "weights": {}})
         # restore LEARNED weights from the persistent ledger so progress survives redeploys
         if self.know.get("weights"):
@@ -96,22 +98,68 @@ class Learner:
         self._persist_know()
         return resolved
 
-    def _learn(self, p: dict, o: Outcome):
-        # update per-source precision and nudge weights toward proven performers
-        for src in p["sources"]:
+    def _credit_sources(self, sources, win: bool, ret: float, rate: float = 0.15):
+        """Nudge each source's weight toward its proven precision. Shared by trades AND observations
+        (rate is gentler for observations so executed trades still matter most)."""
+        for src in sources:
             st = self.know["sources"].setdefault(src, {"trades": 0, "wins": 0, "sum_ret": 0.0})
             st["trades"] += 1
-            st["wins"] += 1 if o.win else 0
-            st["sum_ret"] += o.pnl_pct
+            st["wins"] += 1 if win else 0
+            st["sum_ret"] += ret
             precision = st["wins"] / st["trades"]
             base = self.weights.get(src, 0.5)
             target = base * (0.6 + precision)        # precision 0->0.6x, 0.5->1.1x, 1.0->1.6x
-            new = 0.85 * base + 0.15 * target
-            self.weights[src] = round(max(WMIN, min(WMAX, new)), 3)
+            self.weights[src] = round(max(WMIN, min(WMAX, (1 - rate) * base + rate * target)), 3)
+
+    def _learn(self, p: dict, o: Outcome):
+        self._credit_sources(p["sources"], o.win, o.pnl_pct, rate=0.15)
         ct = self.know["catalysts"].setdefault(o.catalyst, {"trades": 0, "wins": 0, "sum_ret": 0.0})
         ct["trades"] += 1
         ct["wins"] += 1 if o.win else 0
         ct["sum_ret"] += o.pnl_pct
+
+    # ---- LEARN FROM ALL DATA (not just trades): label every confirmed setup we observe ----
+    def observe(self, candidates, max_pending: int = 800):
+        """Record every multi-family setup we SEE (traded or not) so it becomes a labeled example.
+        One per ticker per day. This is how the brain learns from the whole data stream."""
+        from . import prices
+        today = iso(time.time())[:10]
+        have = {(o["ticker"], o["day"]) for o in self.obs}
+        for c in candidates:
+            if getattr(c, "_families", 1) < 2:        # only confirmed (multi-family) setups
+                continue
+            if (c.ticker, today) in have or len(self.obs) >= max_pending:
+                continue
+            px = prices.last_price(c.ticker)
+            if not px:
+                continue
+            self.obs.append({"ticker": c.ticker, "day": today, "ts": time.time(),
+                             "entry": px, "sig": getattr(c, "_signature", ""),
+                             "sources": sorted({s.source for s in c.signals})})
+            have.add((c.ticker, today))
+        _save(OBS_PATH, self.obs)
+
+    def resolve_observations(self, horizon_days: float = 1.0, max_per_cycle: int = 25) -> int:
+        """Label matured observations by what the stock ACTUALLY did (entry-anchored), and teach
+        patterns + weights from it — learning from the whole data stream, not just trades."""
+        from . import prices
+        still, learned = [], 0
+        for o in self.obs:
+            if learned >= max_per_cycle or (time.time() - o["ts"]) < horizon_days * 86400:
+                still.append(o); continue
+            px = prices.last_price(o["ticker"])
+            if not px or not o.get("entry"):
+                still.append(o); continue
+            ret = (px / o["entry"] - 1) * 100
+            win = ret > 0
+            self.patterns.record(o.get("sig", ""), win, ret)        # learn the pattern from data
+            self._credit_sources(o["sources"], win, ret, rate=0.05)  # gentler than a real trade
+            learned += 1
+        self.obs = still
+        if learned:
+            _save(OBS_PATH, self.obs)
+            self._persist_know()
+        return learned
 
     def _dungeon(self, p: dict, o: Outcome, mind: dict):
         """The Dungeon: forced written reflection after a loss."""
