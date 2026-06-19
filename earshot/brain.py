@@ -96,16 +96,13 @@ class Brain:
 
             ccfg = self.cats.get(catalyst.value, {"prior": 1.0, "hold_days": 5, "stop_pct": 8, "target_pct": 12})
 
-            # earliness: penalize if the easy move already happened
-            runup = prices.runup_pct_today(tk)
-            if runup is None:
-                earliness = 0.9
-            elif runup > self.conv["max_runup_pct"]:
-                earliness = 0.5
-            else:
-                earliness = 1.0
-
+            # only spend a yfinance price call on candidates that could ACTUALLY qualify
+            # (>= min sources AND min families) — at 10k tentacles this prevents a Yahoo ban
             families = {FAMILY.get(s, "other") for s in per_source}
+            qualifies = (len(per_source) >= self.conv["min_independent_sources"]
+                         and len(families) >= self.conv.get("min_families", 1))
+            runup = prices.runup_pct_today(tk) if qualifies else None
+            earliness = 0.9 if runup is None else (0.5 if runup > self.conv["max_runup_pct"] else 1.0)
             score = self._score(per_source, ccfg["prior"], earliness, len(families))
             cand = Candidate(
                 ticker=tk, catalyst=catalyst, confidence=score,

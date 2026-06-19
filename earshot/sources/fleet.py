@@ -76,30 +76,68 @@ def _sp500() -> list[str]:
         return []
 
 
-def build_feed_list() -> list[tuple]:
-    tickers = list(dict.fromkeys((_sp500() or CORE_TICKERS) + EXTRA_TICKERS))
-    feeds: list[tuple] = []
-    for t in tickers:                                   # per-ticker tentacles (2 templates each)
-        feeds.append((_gnews(f'"{t}" stock'), "google_news", 0.5))
-        feeds.append((_yahoo(t), "google_news", 0.55))
-    feeds += [(_gnews(q), "google_news", 0.5) for q in KEYWORDS]    # catalyst-language tentacles
-    feeds += [(f"https://www.reddit.com/r/{s}/.rss", "reddit", 0.35) for s in REDDIT]
-    feeds += MEDIA
-    return feeds
+def _all_us_symbols() -> list[str]:
+    """Full US listings (NASDAQ + NYSE/other) from the free Nasdaq Trader symbol files — ~8k names."""
+    syms: list[str] = []
+    for url in ("https://www.nasdaqtrader.com/dynamic/SymDir/nasdaqlisted.txt",
+                "https://www.nasdaqtrader.com/dynamic/SymDir/otherlisted.txt"):
+        try:
+            r = requests.get(url, headers={"User-Agent": UA}, timeout=20)
+            for ln in r.text.splitlines()[1:]:
+                if ln.startswith("File Creation Time"):
+                    continue
+                sym = ln.split("|")[0].strip()
+                if sym and sym.isalpha() and len(sym) <= 5:
+                    syms.append(sym)
+        except Exception:
+            pass
+    return syms
+
+
+def build_feed_list(universe: str = "sp500", wide_cap: int = 20000) -> tuple[list, list]:
+    """Returns (fast_feeds, wide_feeds). Fast = liquid core (swept often). Wide = full US long
+    tail (swept slowly) — only when universe='all'. Tiering = 10k breadth without making the
+    names that matter stale."""
+    fast_tickers = list(dict.fromkeys((_sp500() or CORE_TICKERS) + EXTRA_TICKERS))
+    fast: list[tuple] = []
+    for t in fast_tickers:
+        fast.append((_gnews(f'"{t}" stock'), "google_news", 0.5))
+        fast.append((_yahoo(t), "google_news", 0.55))
+    fast += [(_gnews(q), "google_news", 0.5) for q in KEYWORDS]
+    fast += [(f"https://www.reddit.com/r/{s}/.rss", "reddit", 0.35) for s in REDDIT]
+    fast += MEDIA
+
+    wide: list[tuple] = []
+    if universe == "all":
+        fastset = set(fast_tickers)
+        for t in _all_us_symbols():
+            if t in fastset:
+                continue
+            wide.append((_gnews(f'"{t}" stock'), "google_news", 0.4))
+            wide.append((_yahoo(t), "google_news", 0.45))
+            if len(wide) >= wide_cap:
+                break
+    return fast, wide
 
 
 class MegaFleetSource(Source):
-    """~1000+ feeds, swept in rotating parallel batches so no domain gets hammered."""
+    """Up to ~10k+ feeds in two tiers: a FAST liquid core (swept often) + a WIDE full-US long tail
+    (swept slowly). Each tick polls a rotating batch from each tier in parallel — so the names that
+    matter stay fresh while breadth scales, and no domain gets hammered."""
     key = "google_news"
     min_interval = 20.0
 
-    def __init__(self, weights: dict, batch: int = 30):
+    def __init__(self, weights: dict, fast_batch: int = 25, wide_batch: int = 20,
+                 universe: str = "sp500", wide_cap: int = 20000):
         super().__init__(weights)
-        self.feeds = build_feed_list()
-        self.batch = batch
-        self.idx = 0
-        print(f"  [megafleet] {len(self.feeds)} tentacles loaded (rotating {batch}/tick, "
-              f"full sweep ~{len(self.feeds) * self.min_interval / batch / 60:.0f} min)")
+        self.fast, self.wide = build_feed_list(universe, wide_cap)
+        self.fb, self.wb = fast_batch, wide_batch
+        self.fi = self.wi = 0
+        total = len(self.fast) + len(self.wide)
+        fsweep = len(self.fast) * self.min_interval / max(1, fast_batch) / 60
+        wsweep = len(self.wide) * self.min_interval / max(1, wide_batch) / 60
+        print(f"  [megafleet] {total} tentacles = {len(self.fast)} fast + {len(self.wide)} wide. "
+              f"fast sweep ~{fsweep:.0f}m, wide sweep ~{wsweep:.0f}m")
 
     def _one(self, feed):
         url, skey, strength = feed
@@ -117,15 +155,18 @@ class MegaFleetSource(Source):
         except Exception:
             return []
 
+    @staticmethod
+    def _rot(pool, idx, n):
+        if not pool:
+            return [], idx
+        return [pool[(idx + i) % len(pool)] for i in range(min(n, len(pool)))], (idx + n) % len(pool)
+
     def fetch(self) -> list[RawSignal]:
-        n = len(self.feeds)
-        if not n:
-            return []
-        batch = [self.feeds[(self.idx + i) % n] for i in range(min(self.batch, n))]
-        self.idx = (self.idx + self.batch) % n
+        fb, self.fi = self._rot(self.fast, self.fi, self.fb)
+        wb, self.wi = self._rot(self.wide, self.wi, self.wb)
         out, seen = [], set()
-        with cf.ThreadPoolExecutor(max_workers=20) as ex:
-            for res in ex.map(self._one, batch):
+        with cf.ThreadPoolExecutor(max_workers=24) as ex:
+            for res in ex.map(self._one, fb + wb):
                 for sg in res:
                     k = (sg.source, tuple(sg.tickers), sg.headline)
                     if k not in seen:

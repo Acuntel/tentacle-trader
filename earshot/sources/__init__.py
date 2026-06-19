@@ -40,7 +40,12 @@ def build_sources(cfg: dict, weights: dict) -> list[Source]:
     if s.get("scrape_targets"):
         out.append(HtmlScraperSource(weights, s["scrape_targets"]))
     if s.get("megafleet"):
-        out.append(MegaFleetSource(weights, int(s.get("fleet_batch", 30))))  # ~1000+ rotating tentacles
+        out.append(MegaFleetSource(                       # up to ~10k+ tiered rotating tentacles
+            weights,
+            fast_batch=int(s.get("fleet_fast_batch", 25)),
+            wide_batch=int(s.get("fleet_wide_batch", 20)),
+            universe=s.get("fleet_universe", "sp500"),
+            wide_cap=int(s.get("fleet_wide_cap", 20000))))
     for url in (s.get("rss_feeds") or []):
         out.append(RssSource(url, weights))
     # keyed tentacles activate themselves only if their env keys exist
