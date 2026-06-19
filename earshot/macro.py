@@ -1,0 +1,88 @@
+"""Macro / alternative-data layer — the quant-firm move: don't just read stock headlines, read the
+whole economy. Pulls FRED (Federal Reserve Economic Data) series for FREE and KEYLESS via the
+fredgraph CSV endpoint — rates, inflation, jobs, growth, credit spreads, sector industrial
+production, housing, energy. Derives a MACRO REGIME tag (rate direction + risk-on/off + growth)
+that (a) tilts conviction and (b) becomes a PATTERN feature, so the bot learns 'this setup in THIS
+regime wins'. FRED has ~800k series — this list is the seed; add IDs to scale the data surface.
+"""
+from __future__ import annotations
+
+import concurrent.futures as cf
+import time
+import requests
+
+UA = "Mozilla/5.0 (EARSHOT macro)"
+CSV = "https://fred.stlouisfed.org/graph/fredgraph.csv?id="
+
+# Seed set across rates / inflation / jobs / growth / credit / sectors / housing / energy / markets.
+FRED_SERIES = [
+    "FEDFUNDS", "DFF", "SOFR", "DGS2", "DGS10", "DGS30", "T10Y2Y", "T10Y3M", "MORTGAGE30US",
+    "CPIAUCSL", "CPILFESL", "PCEPI", "PPIACO", "T5YIE", "T10YIE",
+    "UNRATE", "PAYEMS", "ICSA", "JTSJOL", "CIVPART",
+    "GDPC1", "INDPRO", "TCU", "RSAFS", "UMCSENT", "HOUST", "PERMIT", "DGORDER", "BUSINV",
+    "M2SL", "WALCL", "BAMLH0A0HYM2", "BAMLC0A0CM", "TOTALSL", "BUSLOANS", "DRCCLACBS",
+    "VIXCLS", "SP500", "NASDAQCOM", "DCOILWTICO", "DHHNGSP", "GASREGW", "DTWEXBGS",
+    "IPMAN", "IPMINE", "IPUTIL", "IPDMAN", "IPNMAN", "IPCONGD", "IPBUSEQ", "IPDCONGD",
+    "MSPUS", "CSUSHPINSA", "HSN1F", "EXHOSLUSM495S", "RRVRUSQ156N",
+    "PCE", "PSAVERT", "DSPIC96", "TOTALSA", "UMCSENT", "RSXFS",
+]
+
+
+def _series(sid: str):
+    """Return (latest, prior) for a FRED series, or (None, None)."""
+    try:
+        r = requests.get(CSV + sid, headers={"User-Agent": UA}, timeout=12)
+        vals = []
+        for ln in r.text.splitlines()[1:]:
+            parts = ln.split(",")
+            if len(parts) >= 2 and parts[1] not in (".", "", "NA"):
+                try:
+                    vals.append(float(parts[1]))
+                except ValueError:
+                    pass
+        if not vals:
+            return None, None
+        latest = vals[-1]
+        prior = vals[-7] if len(vals) >= 7 else vals[0]      # ~6 observations back
+        return latest, prior
+    except Exception:
+        return None, None
+
+
+class MacroMonitor:
+    """Self-throttling (refreshes ~daily). Holds a compact regime tag + the raw latest values."""
+    series_count = len(FRED_SERIES)
+
+    def __init__(self):
+        self.context = ""
+        self.values: dict = {}
+        self._last = 0.0
+
+    def update(self):
+        if time.time() - self._last < 86400 and self.context:
+            return                                            # macro moves slowly; refresh daily
+        self._last = time.time()
+        pulled = {}
+        with cf.ThreadPoolExecutor(max_workers=16) as ex:
+            for sid, res in zip(FRED_SERIES, ex.map(_series, FRED_SERIES)):
+                if res[0] is not None:
+                    pulled[sid] = res
+        self.values = pulled
+        self.context = self._regime(pulled)
+        print(f"  [macro] {len(pulled)}/{self.series_count} FRED series -> regime: {self.context or 'unknown'}")
+
+    @staticmethod
+    def _regime(v: dict) -> str:
+        tags = []
+        ff = v.get("FEDFUNDS") or v.get("DFF")
+        if ff:
+            tags.append("rates_down" if ff[0] < ff[1] - 0.02 else
+                        "rates_up" if ff[0] > ff[1] + 0.02 else "rates_flat")
+        vix = v.get("VIXCLS")
+        curve = v.get("T10Y2Y")
+        risk_off = (vix and vix[0] > 22) or (curve and curve[0] < 0)
+        tags.append("risk_off" if risk_off else "risk_on")
+        ip = v.get("INDPRO")
+        if ip:
+            tags.append("growth_up" if ip[0] >= ip[1] else "growth_down")
+        return "|".join(tags)

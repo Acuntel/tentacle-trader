@@ -22,6 +22,7 @@ from .executor import get_executor
 from .scout import SourceScout
 from .daily import DailyGuard
 from .exits import ExitEngine
+from .macro import MacroMonitor
 
 
 def load_config(path: str) -> dict:
@@ -54,6 +55,8 @@ class Earshot:
         self.base_min = cfg["conviction"]["min_score_to_trade"]
         self.buffer: list = []                                  # rolling signal memory
         self.window = int(cfg["sources"].get("signal_window_sec", 1800))
+        self.macro_mon = MacroMonitor()                         # FRED alt-data / macro regime
+        self.brain.patterns = self.learner.patterns            # share the learned pattern memory
 
     def _equity_now(self) -> float:
         """Realized paper equity + unrealized mark-to-market of open positions (today's true damage)."""
@@ -117,11 +120,14 @@ class Earshot:
             print("  mood: ASHAMED — I hurt the child badly and treated the money like nothing.")
             print(f"  dungeon: {reflection}")
 
-        # 4) think
+        # 4) think — refresh the macro regime (daily-throttled) and feed it to the brain
+        self.macro_mon.update()
+        self.brain.macro = self.macro_mon.context
         regime_down = bool(self.cfg["risk"].get("regime_filter")) and prices.regime_downtrend(
             self.cfg["regime"]["proxy"], self.cfg["regime"]["downtrend_lookback_days"])
         cands = self.brain.evaluate(signals, capital, regime_down)
-        print(f"\n  {len(signals)} signals -> {len(cands)} tickers in view"
+        print(f"\n  macro regime: {self.macro_mon.context or 'pending'}   "
+              f"{len(signals)} signals -> {len(cands)} tickers in view"
               f"{'   [REGIME: downtrend, longs suppressed]' if regime_down else ''}")
         for c in cands[:5]:
             print(f"    {c.ticker:<6} score {c.confidence:5.1f}  {c.catalyst.value:<18} "
@@ -155,6 +161,7 @@ class Earshot:
                 print(f"\n  >> SHADOW BUY {chosen.ticker}  ~${chosen.size_usd:.0f} @ ${fill['price']:.2f}  "
                       f"(score {chosen.confidence:.0f}, {chosen.catalyst.value})")
                 print(f"     conviction: {chosen.reasons[0]}")
+                print(f"     plan: {chosen.reasons[2]} | pattern {getattr(chosen, '_signature', 'new')}")
             else:
                 print(f"\n  >> NO TRADE — {why}")
 
@@ -171,6 +178,11 @@ class Earshot:
         elif a.get("n"):
             print(f"  integrity OK — score verified against {a['n']} immutable ledger outcomes "
                   f"(equity ${a['ledger_equity']}, mastery {a['ledger_mastery']})")
+        prep = self.learner.patterns.report()
+        if prep["best"]:
+            print("  patterns learned — best:", [f"{r['sig']}={r['win']}({r['n']})" for r in prep["best"][:3]])
+            if prep["worst"]:
+                print("    vetoed/weak:", [f"{r['sig']}={r['win']}({r['n']})" for r in prep["worst"][:3]])
         print("=" * 74)
 
     def loop(self):

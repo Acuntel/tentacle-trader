@@ -7,6 +7,7 @@ import os
 import time
 
 from .models import Candidate, Outcome, iso
+from .patterns import PatternMemory
 from . import prices
 
 OPEN_PATH = "state/open_positions.json"
@@ -44,6 +45,7 @@ class Learner:
         # restore LEARNED weights from the persistent ledger so progress survives redeploys
         if self.know.get("weights"):
             self.weights.update(self.know["weights"])
+        self.patterns = PatternMemory(self.know)   # learned pattern win-rates (persisted)
 
     def _persist_know(self):
         self.know["weights"] = self.weights      # learned weights ride along, survive restarts
@@ -55,6 +57,7 @@ class Learner:
             "size_usd": c.size_usd, "entry_price": fill_price, "entry_ts": time.time(),
             "hold_days": c.hold_days, "target_pct": c.target_pct, "stop_pct": c.stop_pct,
             "runup_pct": c.runup_pct, "sources": sorted({s.source for s in c.signals}),
+            "pattern": getattr(c, "_signature", ""),
         })
         _save(OPEN_PATH, self.open)
 
@@ -84,6 +87,7 @@ class Learner:
             _append(OUTCOMES_PATH, {**outcome.to_dict(), "exit": reason})
             mind = instinct.record(p["confidence"], ret, p["size_usd"])
             self._learn(p, outcome)
+            self.patterns.record(p.get("pattern", ""), outcome.win, ret)   # learn the pattern
             if not outcome.win:
                 self._dungeon(p, outcome, mind)
             resolved.append({"outcome": outcome.to_dict(), "mind": mind, "exit": reason})

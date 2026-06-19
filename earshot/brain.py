@@ -55,6 +55,8 @@ class Brain:
         self.cfg = cfg
         self.conv = cfg["conviction"]
         self.cats = cfg["catalysts"]
+        self.patterns = None        # PatternMemory, attached by main
+        self.macro = ""             # current macro regime tag, set by main each cycle
 
     def _score(self, sources_strength: dict[str, float], prior: float,
                earliness: float, n_families: int) -> float:
@@ -104,24 +106,41 @@ class Brain:
             runup = prices.runup_pct_today(tk) if qualifies else None
             earliness = 0.9 if runup is None else (0.5 if runup > self.conv["max_runup_pct"] else 1.0)
             score = self._score(per_source, ccfg["prior"], earliness, len(families))
+
+            # macro-regime tilt (rate cuts / risk-on help; risk-off hurts)
+            if "risk_off" in self.macro:
+                score *= 0.9
+            elif "risk_on" in self.macro:
+                score *= 1.05
+            # learned PATTERN recognition: amplify proven setups, set data-driven profit target
+            target, sig = ccfg["target_pct"], ""
+            if self.patterns is not None:
+                sig = self.patterns.signature(catalyst.value, families, self.macro)
+                score *= self.patterns.multiplier(sig)
+                target = self.patterns.suggested_target(sig, ccfg["target_pct"])
+            score = max(0.0, min(100.0, score))
+
             cand = Candidate(
                 ticker=tk, catalyst=catalyst, confidence=score,
                 size_usd=self._size(score, capital), signals=sigs, runup_pct=runup,
                 regime_ok=not regime_down,
-                stop_pct=ccfg["stop_pct"], target_pct=ccfg["target_pct"], hold_days=ccfg["hold_days"],
+                stop_pct=ccfg["stop_pct"], target_pct=target, hold_days=ccfg["hold_days"],
                 reasons=[
-                    f"{len(per_source)} sources across {len(families)} families "
+                    f"{len(per_source)} sources / {len(families)} families "
                     f"({', '.join(sorted(families))}): {', '.join(sorted(per_source))}",
-                    f"catalyst={catalyst.value} (prior {ccfg['prior']})",
-                    f"runup_today={runup if runup is None else round(runup,1)}% -> earliness {earliness}",
+                    f"catalyst={catalyst.value}, macro={self.macro or 'n/a'}, pattern={sig or 'new'}",
+                    f"take-profit {target}% / stop {ccfg['stop_pct']}%",
                 ],
             )
-            cand._families = len(families)  # used by the gate
+            cand._families = len(families)
+            cand._signature = sig
             out.append(cand)
         out.sort(key=lambda c: c.confidence, reverse=True)
         return out
 
     def passes_gate(self, c: Candidate) -> tuple[bool, str]:
+        if self.patterns is not None and self.patterns.is_loser(getattr(c, "_signature", "")):
+            return False, "pattern recognized as a persistent loser — vetoed"
         if c.n_independent < self.conv["min_independent_sources"]:
             return False, f"only {c.n_independent} source(s); need {self.conv['min_independent_sources']}"
         fams = getattr(c, "_families", 1)

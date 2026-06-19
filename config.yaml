@@ -97,7 +97,7 @@ sources:
   fleet_universe: all           # 'all' = full US listings (~10k+ tentacles) | 'sp500' = focused ~1155
   fleet_fast_batch: 25          # liquid-core feeds polled per tick (stay fresh)
   fleet_wide_batch: 20          # long-tail feeds polled per tick (slow sweep; anti-ban)
-  fleet_wide_cap: 9000          # long-tail feeds (total ~10,155 tentacles with the 1,155 fast core)
+  fleet_wide_cap: 20000         # cover EVERY US-listed stock (~21k tentacles total). 100k isn't real — only ~10k stocks exist.
   rss_feeds:                    # generic RSS tentacle — drop RSSHub / Nitter / Telegram-RSS / Google-News URLs here
     # - https://www.globenewswire.com/RssFeed/orgclass/1/feedTitle/GlobeNewswire
     # - https://rsshub.app/twitter/user/DeItaone     # X-around via self-hosted RSSHub
