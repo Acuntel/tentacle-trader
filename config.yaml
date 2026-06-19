@@ -96,4 +96,5 @@ sources:
     # - https://www.globenewswire.com/RssFeed/orgclass/1/feedTitle/GlobeNewswire
     # - https://rsshub.app/twitter/user/DeItaone     # X-around via self-hosted RSSHub
     []
-  poll_seconds: 60
+  poll_seconds: 15             # loop tick — but each tentacle only fetches on its own min_interval
+  signal_window_sec: 1800      # rolling signal memory (30m) so async polls confirm each other

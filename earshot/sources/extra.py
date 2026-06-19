@@ -38,6 +38,7 @@ def _map(name: str, table: dict) -> str | None:
 class PolymarketSource(Source):
     """Crowd-forecast — prediction-market odds often shift before the news. Confirmation, low weight."""
     key = "polymarket"
+    min_interval = 120.0
 
     def fetch(self) -> list[RawSignal]:
         r = requests.get("https://gamma-api.polymarket.com/markets?closed=false&order=volume"
@@ -67,6 +68,7 @@ class PolymarketSource(Source):
 class UsaSpendingSource(Source):
     """Federal contract awards — a public company landing a big award is a real catalyst."""
     key = "gov_contract"
+    min_interval = 3600.0        # contract data updates ~daily
 
     def fetch(self) -> list[RawSignal]:
         body = {
@@ -94,6 +96,7 @@ class UsaSpendingSource(Source):
 class ClinicalTrialsSource(Source):
     """Biotech trial status changes precede drug news. Public sponsors only."""
     key = "fda"
+    min_interval = 3600.0
 
     def fetch(self) -> list[RawSignal]:
         r = requests.get("https://clinicaltrials.gov/api/v2/studies?sort=LastUpdatePostDate:desc"
@@ -120,6 +123,7 @@ class Berkshire13FSource(Source):
     """Track Buffett: emit Berkshire's reported holdings on a NEW 13F (position-following, low weight,
     45-day lag — never a latency play). Persists last-seen accession to fire only on changes."""
     key = "edgar_13d"  # reuse a whale weight bucket
+    min_interval = 21600.0       # quarterly filing; checking every 6h is plenty
     STATE = "state/berkshire13f.json"
 
     def __init__(self, weights: dict, user_agent: str):

@@ -50,6 +50,8 @@ class Earshot:
         self.scout = SourceScout(self.learner.know, self.weights)
         self.daily = DailyGuard(cfg)
         self.base_min = cfg["conviction"]["min_score_to_trade"]
+        self.buffer: list = []                                  # rolling signal memory
+        self.window = int(cfg["sources"].get("signal_window_sec", 1800))
 
     def _equity_now(self) -> float:
         """Realized paper equity + unrealized mark-to-market of open positions (today's true damage)."""
@@ -70,16 +72,24 @@ class Earshot:
               f"{'' if prices.have_prices() else '   [no yfinance: price filters degrade gracefully]'}")
         print("-" * 74)
 
-        # 1) scour
-        signals, seen = [], set()
+        # 1) scour — only poll tentacles that are DUE (each at its own rate-limit-safe cadence)
+        now = time.time()
+        polled = []
         for s in self.sources:
+            if not s.due():
+                continue
             got = s.safe_fetch()
-            print(f"  {s.key:>13}: {len(got)} signal(s)")
-            for sig in got:
-                k = (sig.source, tuple(sig.tickers), sig.headline)
-                if k not in seen:
-                    seen.add(k)
-                    signals.append(sig)
+            polled.append(f"{s.key}:{len(got)}")
+            self.buffer.extend(got)
+        # rolling memory: keep the recent window so async polls still confirm each other
+        self.buffer = [sg for sg in self.buffer if now - sg.ts <= self.window]
+        seen, signals = set(), []
+        for sg in reversed(self.buffer):
+            k = (sg.source, tuple(sg.tickers), sg.headline)
+            if k not in seen:
+                seen.add(k); signals.append(sg)
+        print(f"  polled: {' '.join(polled) or '(nothing due this tick)'}")
+        print(f"  signal memory: {len(signals)} live signals (last {self.window // 60}m)")
 
         # 2) learn from anything that has matured FIRST (so realized equity is current)
         for r in self.learner.resolve_due(self.instinct):

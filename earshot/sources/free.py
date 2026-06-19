@@ -15,6 +15,7 @@ AI_QUANTUM_KW = ("ai ", "a.i.", "gpt", "llm", "quantum", "chip", "gpu", "nvidia"
 class EdgarSource(Source):
     """SEC EDGAR real-time filings: 8-K (material events), Form 4 (insider buys), SC 13D (activist)."""
     key = "edgar_8k"
+    min_interval = 30.0          # filings can break anytime; ~12 req/30s is well under SEC's 10/s
     FEEDS = {
         "8-K": "edgar_8k",
         "4": "edgar_form4",
@@ -68,6 +69,7 @@ class EdgarSource(Source):
 class ApeWisdomSource(Source):
     """Free Reddit/StockTwits mention-velocity. Confirmation only (never a sole trigger)."""
     key = "apewisdom"
+    min_interval = 600.0         # mention counts update ~hourly; no point polling faster
 
     def fetch(self) -> list[RawSignal]:
         r = requests.get("https://apewisdom.io/api/v1.0/filter/all-stocks/page/1", timeout=TIMEOUT)
@@ -89,6 +91,7 @@ class ApeWisdomSource(Source):
 class HackerNewsSource(Source):
     """HN front page = fast AI/quantum/tech radar. Low weight, theme-tagging."""
     key = "hackernews"
+    min_interval = 90.0
 
     def fetch(self) -> list[RawSignal]:
         r = requests.get("http://hn.algolia.com/api/v1/search_by_date?tags=front_page&hitsPerPage=40",
@@ -113,6 +116,7 @@ class HackerNewsSource(Source):
 class RssSource(Source):
     """Generic RSS tentacle — the X-around. Point it at RSSHub / Nitter / Telegram-RSS / newswire / Google News."""
     key = "google_news"
+    min_interval = 45.0
 
     def __init__(self, url: str, weights: dict):
         super().__init__(weights)

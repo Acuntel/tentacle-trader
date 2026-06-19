@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import time
 from ..models import RawSignal
 
 TICKER_RE = re.compile(r"\$([A-Z]{1,5})\b")
@@ -46,21 +47,27 @@ def extract_tickers(text: str) -> list[str]:
 
 
 class Source:
-    """Base tentacle. Subclasses set `key` and implement `fetch()`."""
+    """Base tentacle. Subclasses set `key`, `min_interval` (seconds between polls), and `fetch()`."""
     key: str = "base"
+    min_interval: float = 60.0      # how fast THIS tentacle may safely be polled (rate-limit aware)
 
     def __init__(self, weights: dict):
         self.weights = weights
         self.enabled = True
         self.errors = 0
+        self._last = 0.0
 
     def weight(self, key: str | None = None) -> float:
         return float(self.weights.get(key or self.key, 0.5))
+
+    def due(self) -> bool:
+        return (time.time() - self._last) >= self.min_interval
 
     def fetch(self) -> list[RawSignal]:  # pragma: no cover - interface
         raise NotImplementedError
 
     def safe_fetch(self) -> list[RawSignal]:
+        self._last = time.time()
         try:
             return self.fetch() or []
         except Exception as e:  # one bad tentacle never sinks the octopus

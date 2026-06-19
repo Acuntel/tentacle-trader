@@ -38,6 +38,7 @@ FEEDS = [
 class MarketNewsSource(Source):
     """One tentacle, many free wires = our self-owned Benzinga substitute."""
     key = "newswire"
+    min_interval = 30.0          # press-release wires update every few min; 30s catches them fast
 
     def __init__(self, weights: dict, extra_feeds: list | None = None):
         super().__init__(weights)

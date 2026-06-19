@@ -15,6 +15,7 @@ TIMEOUT = 12
 class AlpacaNewsSource(Source):
     """Alpaca's free Benzinga newswire (REST poll here; a WebSocket upgrade is a drop-in later)."""
     key = "alpaca_news"
+    min_interval = 30.0
 
     def __init__(self, weights: dict):
         super().__init__(weights)
@@ -47,6 +48,7 @@ class FinnhubSource(Source):
     """Finnhub free tier: market news + REAL earnings-surprise beats (the 'surprise' family).
     Earnings beats emit under source 'finnhub_earnings' so they count as a distinct signal family."""
     key = "finnhub"
+    min_interval = 30.0          # 2 calls/30s = 4/min, safely under Finnhub's 60/min free limit
 
     def __init__(self, weights: dict):
         super().__init__(weights)
