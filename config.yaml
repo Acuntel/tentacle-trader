@@ -1,0 +1,99 @@
+# EARSHOT — all thresholds in one place. Tune here, not in code.
+
+identity:
+  name: EARSHOT
+  mode: shadow          # shadow | live   (live is REFUSED until the Gauntlet passes + you arm it)
+
+# ---- The survival ethos (mother & baby) ----
+survival:
+  starting_capital: 500.0
+  loss_aversion_lambda: 2.5     # a loss hurts 2.5x more than an equal gain feels good
+  ruin_floor_pct: 0.40          # lose 40% of a stage's capital -> the bot "dies" (halts + demotes)
+  # The graduation ladder: capital is EARNED rung by rung. Full $500 is the top, not the default.
+  ladder:
+    - {rung: -1, stage: backtest_gauntlet, capital: 0,   promote_mastery: 80, min_samples: 200}
+    - {rung: 0,  stage: live_shadow,       capital: 0,   promote_mastery: 85, min_samples: 40}
+    - {rung: 1,  stage: micro,             capital: 25,  promote_mastery: 85, min_samples: 20}
+    - {rung: 2,  stage: small,             capital: 75,  promote_mastery: 87, min_samples: 20}
+    - {rung: 3,  stage: half,              capital: 250, promote_mastery: 90, min_samples: 25}
+    - {rung: 4,  stage: full,              capital: 500, promote_mastery: 92, min_samples: 30}
+
+# ---- The firing gate ----
+conviction:
+  min_score_to_trade: 55        # below this -> shadow-log only, no trade
+  min_independent_sources: 2    # >= 2 independent sources must confirm the SAME catalyst
+  min_families: 2               # >= 2 DIFFERENT signal families (filing+surprise+flow...), not 2 of the same
+  family_bonus: 0.18            # confidence multiplier per extra family that agrees (cross-confirmation)
+  max_runup_pct: 4.0            # if price already ran > this since the signal, the easy move is gone
+  size_bands:                   # confidence score -> fraction of the rung's live capital
+    - {min: 95, frac: 1.00}
+    - {min: 85, frac: 0.70}
+    - {min: 70, frac: 0.45}
+    - {min: 55, frac: 0.20}
+
+# Per-source trust (the learning loop tunes these within [0.1, 1.2])
+source_weights:
+  edgar_8k: 1.00
+  edgar_form4: 0.95
+  edgar_13d: 1.00
+  newswire: 1.00
+  fda: 0.90
+  index_inclusion: 0.90
+  gov_contract: 0.85
+  alpaca_news: 0.80
+  finnhub: 0.80
+  finnhub_earnings: 0.85
+  hackernews: 0.45
+  google_news: 0.45
+  apewisdom: 0.35
+  stocktwits: 0.35
+  reddit: 0.35
+  x_relay: 0.30
+  discord: 0.25
+  telegram: 0.25
+  polymarket: 0.55
+
+# Per-catalyst prior drift multiplier + default hold (learning tunes these too)
+catalysts:
+  earnings_beat:     {prior: 1.10, hold_days: 5,  stop_pct: 8, target_pct: 12}
+  index_inclusion:   {prior: 1.20, hold_days: 7,  stop_pct: 6, target_pct: 10}
+  fda_approval:      {prior: 1.05, hold_days: 3,  stop_pct: 10, target_pct: 20}
+  mna_target:        {prior: 1.15, hold_days: 10, stop_pct: 6, target_pct: 15}
+  gov_contract:      {prior: 1.05, hold_days: 5,  stop_pct: 8, target_pct: 12}
+  activist_stake:    {prior: 1.10, hold_days: 10, stop_pct: 8, target_pct: 15}
+  insider_cluster:   {prior: 1.00, hold_days: 10, stop_pct: 8, target_pct: 12}
+  ai_quantum_breakout: {prior: 0.95, hold_days: 3, stop_pct: 8, target_pct: 12}
+
+# ---- Hard risk law (enforced OUTSIDE the model — the bot cannot reason past these) ----
+risk:
+  max_open_positions: 4         # unlimited trade FREQUENCY, but each must clear full conviction
+  daily_loss_pct: 0.10          # >>> lose 10% of capital in a day -> HARD STOP for the whole day + deep reflection
+  caution_step: 5               # after a -10% day, the conviction bar rises this much per breach
+  caution_max: 6                # max caution ratchet (so bar can climb to +30)
+  daily_max_loss_usd: 100.0     # secondary absolute backstop
+  repeated_exec_limit: 50       # auto-disarm after this many entries in a window (frequency allowed, abuse not)
+  min_price: 2.0                # never buy sub-$2 (pump/penny filter)
+  min_dollar_volume: 5000000    # liquidity floor so a small order doesn't eat slippage
+  block_microcap_social_only: true  # a microcap moved only by social = blocked
+  regime_filter: true           # skip longs when the broad tape (SPY) is in a downtrend
+
+# ---- Market regime ----
+regime:
+  proxy: SPY
+  downtrend_lookback_days: 20
+
+# ---- Tentacles (sources) to poll ----
+sources:
+  edgar: true
+  apewisdom: true
+  hackernews: true
+  market_news: true             # OUR OWN newswire (free Alpaca/Benzinga replacement) — the 'news' family
+  polymarket: true              # §18 crowd-forecast (often leads the news)
+  usaspending: true             # §18 federal contract awards
+  clinicaltrials: true          # §18 biotech trial status
+  berkshire_13f: true           # §18 track Buffett's reported holdings (quarterly, low weight)
+  rss_feeds:                    # generic RSS tentacle — drop RSSHub / Nitter / Telegram-RSS / Google-News URLs here
+    # - https://www.globenewswire.com/RssFeed/orgclass/1/feedTitle/GlobeNewswire
+    # - https://rsshub.app/twitter/user/DeItaone     # X-around via self-hosted RSSHub
+    []
+  poll_seconds: 60

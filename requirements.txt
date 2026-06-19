@@ -1,0 +1,12 @@
+# EARSHOT — core deps (all free). Smoke test needs only the first three.
+requests>=2.31
+feedparser>=6.0
+PyYAML>=6.0
+
+# Optional — price data for earliness + outcome scoring (degrades gracefully if absent)
+yfinance>=0.2.40
+lxml>=5.0          # used by the Backtest Gauntlet (yfinance get_earnings_dates)
+
+# Optional — only used when API keys are present in .env
+# (alpaca news, finnhub, reddit, etc. activate themselves when keys exist)
+python-dotenv>=1.0

@@ -1,0 +1,16 @@
+# secrets
+.env
+.env.*
+*.pem
+
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# runtime state (the bot's memory + logs — keep local, not in git)
+state/
+*.jsonl
+knowledge.json
+dungeon/
