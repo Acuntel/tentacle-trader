@@ -112,3 +112,8 @@ sources:
 exits:
   trail_pct: 5.0               # give back 5% from the peak after a gain -> lock it in
   trail_arm_pct: 4.0           # only start trailing once up +4%
+
+# ---- On-demand enrichment (brain pulls more data on under-confirmed names) ----
+enrichment:
+  max_per_cycle: 2             # probe at most N under-confirmed tickers per tick
+  cooldown_sec: 1800          # don't re-probe the same ticker within 30m (rate-limit safe)

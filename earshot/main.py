@@ -23,6 +23,7 @@ from .scout import SourceScout
 from .daily import DailyGuard
 from .exits import ExitEngine
 from .macro import MacroMonitor
+from .enrich import EnrichmentEngine
 
 
 def load_config(path: str) -> dict:
@@ -58,6 +59,17 @@ class Earshot:
         self.macro_mon = MacroMonitor(                          # FRED alt-data / macro regime
             expand_cap=int(cfg["sources"].get("fred_expand_cap", 0)))
         self.brain.patterns = self.learner.patterns            # share the learned pattern memory
+        self.enricher = EnrichmentEngine(cfg)                  # on-demand data collection
+        self.enricher.weights = self.weights
+
+    def _dedup(self) -> list:
+        seen, out = set(), []
+        for sg in reversed(self.buffer):
+            k = (sg.source, tuple(sg.tickers), sg.headline)
+            if k not in seen:
+                seen.add(k)
+                out.append(sg)
+        return out
 
     def _equity_now(self) -> float:
         """Realized paper equity + unrealized mark-to-market of open positions (today's true damage)."""
@@ -89,11 +101,7 @@ class Earshot:
             self.buffer.extend(got)
         # rolling memory: keep the recent window so async polls still confirm each other
         self.buffer = [sg for sg in self.buffer if now - sg.ts <= self.window]
-        seen, signals = set(), []
-        for sg in reversed(self.buffer):
-            k = (sg.source, tuple(sg.tickers), sg.headline)
-            if k not in seen:
-                seen.add(k); signals.append(sg)
+        signals = self._dedup()
         print(f"  polled: {' '.join(polled) or '(nothing due this tick)'}")
         print(f"  signal memory: {len(signals)} live signals (last {self.window // 60}m)")
 
@@ -131,8 +139,14 @@ class Earshot:
         regime_down = bool(self.cfg["risk"].get("regime_filter")) and prices.regime_downtrend(
             self.cfg["regime"]["proxy"], self.cfg["regime"]["downtrend_lookback_days"])
         cands = self.brain.evaluate(signals, capital, regime_down)
+        # on-demand enrichment: pull more data on under-confirmed names, then re-evaluate
+        added = self.enricher.enrich(cands, self.buffer)
+        if added:
+            signals = self._dedup()
+            cands = self.brain.evaluate(signals, capital, regime_down)
         print(f"\n  macro regime: {self.macro_mon.context or 'pending'}   "
               f"{len(signals)} signals -> {len(cands)} tickers in view"
+              f"{f'   [enriched +{added}]' if added else ''}"
               f"{'   [REGIME: downtrend, longs suppressed]' if regime_down else ''}")
         for c in cands[:5]:
             print(f"    {c.ticker:<6} score {c.confidence:5.1f}  {c.catalyst.value:<18} "
