@@ -92,9 +92,17 @@ sources:
   usaspending: true             # §18 federal contract awards
   clinicaltrials: true          # §18 biotech trial status
   berkshire_13f: true           # §18 track Buffett's reported holdings (quarterly, low weight)
+  openinsider: true             # SCRAPED whale signal — OpenInsider cluster buys (no API)
+  megafleet: true               # ~1000+ rotating tentacles (S&P500 x feeds + keywords + reddit + media)
+  fleet_batch: 30               # feeds polled per tick (rotates through all ~1000 every ~15m, anti-ban)
   rss_feeds:                    # generic RSS tentacle — drop RSSHub / Nitter / Telegram-RSS / Google-News URLs here
     # - https://www.globenewswire.com/RssFeed/orgclass/1/feedTitle/GlobeNewswire
     # - https://rsshub.app/twitter/user/DeItaone     # X-around via self-hosted RSSHub
     []
   poll_seconds: 15             # loop tick — but each tentacle only fetches on its own min_interval
   signal_window_sec: 1800      # rolling signal memory (30m) so async polls confirm each other
+
+# ---- Exit engine (when to SELL) ----
+exits:
+  trail_pct: 5.0               # give back 5% from the peak after a gain -> lock it in
+  trail_arm_pct: 4.0           # only start trailing once up +4%

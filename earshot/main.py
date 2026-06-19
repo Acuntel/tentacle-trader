@@ -21,6 +21,7 @@ from .learning import Learner
 from .executor import get_executor
 from .scout import SourceScout
 from .daily import DailyGuard
+from .exits import ExitEngine
 
 
 def load_config(path: str) -> dict:
@@ -49,6 +50,7 @@ class Earshot:
         self.executor = get_executor(cfg["identity"]["mode"])
         self.scout = SourceScout(self.learner.know, self.weights)
         self.daily = DailyGuard(cfg)
+        self.exits = ExitEngine(cfg)
         self.base_min = cfg["conviction"]["min_score_to_trade"]
         self.buffer: list = []                                  # rolling signal memory
         self.window = int(cfg["sources"].get("signal_window_sec", 1800))
@@ -91,12 +93,12 @@ class Earshot:
         print(f"  polled: {' '.join(polled) or '(nothing due this tick)'}")
         print(f"  signal memory: {len(signals)} live signals (last {self.window // 60}m)")
 
-        # 2) learn from anything that has matured FIRST (so realized equity is current)
-        for r in self.learner.resolve_due(self.instinct):
+        # 2) MANAGE open positions against the live price FIRST (exit engine decides sells)
+        for r in self.learner.resolve_due(self.instinct, self.exits):
             o, m = r["outcome"], r["mind"]
             tag = "WIN " if o["win"] else "LOSS"
-            print(f"  [{tag}] {o['ticker']} {o['pnl_pct']:+.1f}% (${o['pnl_usd']:+.2f}) "
-                  f"felt {m['felt']:+.1f} | {m['note']}")
+            print(f"  [SELL/{r['exit']}] {tag} {o['ticker']} {o['pnl_pct']:+.1f}% "
+                  f"(${o['pnl_usd']:+.2f}) | felt {m['felt']:+.1f} | {m['note']}")
 
         # 3) DAILY CIRCUIT BREAKER — realized + unrealized mark-to-market
         capital = self.instinct.sizing_capital()

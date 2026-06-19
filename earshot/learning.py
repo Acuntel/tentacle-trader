@@ -58,15 +58,21 @@ class Learner:
         })
         _save(OPEN_PATH, self.open)
 
-    def resolve_due(self, instinct) -> list[dict]:
+    def resolve_due(self, instinct, exits, bearish_tickers=None) -> list[dict]:
+        """Manage every open position against the LIVE price each cycle via the exit engine.
+        Positions now close early on stop/target/trailing/decay, not just at the time horizon."""
         still_open, resolved = [], []
         for p in self.open:
-            ret = prices.forward_return_pct(p["ticker"], p["entry_ts"], p["hold_days"])
-            if ret is None:
+            price = prices.last_price(p["ticker"])
+            if price and p.get("entry_price"):
+                reason, chg = exits.evaluate(p, price, bearish_tickers)
+            else:  # no live price -> fall back to horizon resolution
+                ret = prices.forward_return_pct(p["ticker"], p["entry_ts"], p["hold_days"])
+                reason, chg = (("time", ret) if ret is not None else (None, 0.0))
+            if not reason:
                 still_open.append(p)
                 continue
-            # clamp the realized move to the position's stop/target (disciplined exits)
-            ret = max(-p["stop_pct"], min(p["target_pct"], ret))
+            ret = max(-p["stop_pct"], min(p["target_pct"], chg))   # bound to the disciplined range
             entry = p["entry_price"] or 0.0
             outcome = Outcome(
                 ticker=p["ticker"], catalyst=p["catalyst"], confidence=p["confidence"],
@@ -75,12 +81,12 @@ class Learner:
                 pnl_usd=round(p["size_usd"] * ret / 100, 2), win=ret > 0,
                 entry_ts=p["entry_ts"], exit_ts=time.time(), sources=p["sources"],
             )
-            _append(OUTCOMES_PATH, outcome.to_dict())
+            _append(OUTCOMES_PATH, {**outcome.to_dict(), "exit": reason})
             mind = instinct.record(p["confidence"], ret, p["size_usd"])
             self._learn(p, outcome)
             if not outcome.win:
                 self._dungeon(p, outcome, mind)
-            resolved.append({"outcome": outcome.to_dict(), "mind": mind})
+            resolved.append({"outcome": outcome.to_dict(), "mind": mind, "exit": reason})
         self.open = still_open
         _save(OPEN_PATH, self.open)
         self._persist_know()

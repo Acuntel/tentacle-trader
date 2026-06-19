@@ -11,6 +11,8 @@ from .free import EdgarSource, ApeWisdomSource, HackerNewsSource, RssSource
 from .keyed import AlpacaNewsSource, FinnhubSource
 from .extra import PolymarketSource, UsaSpendingSource, ClinicalTrialsSource, Berkshire13FSource
 from .newswire import MarketNewsSource
+from .fleet import MegaFleetSource
+from .scrape import OpenInsiderSource, HtmlScraperSource
 
 
 def build_sources(cfg: dict, weights: dict) -> list[Source]:
@@ -33,6 +35,12 @@ def build_sources(cfg: dict, weights: dict) -> list[Source]:
         out.append(ClinicalTrialsSource(weights))
     if s.get("berkshire_13f"):
         out.append(Berkshire13FSource(weights, ua))
+    if s.get("openinsider"):
+        out.append(OpenInsiderSource(weights))          # scraped whale signal (cluster buys)
+    if s.get("scrape_targets"):
+        out.append(HtmlScraperSource(weights, s["scrape_targets"]))
+    if s.get("megafleet"):
+        out.append(MegaFleetSource(weights, int(s.get("fleet_batch", 30))))  # ~1000+ rotating tentacles
     for url in (s.get("rss_feeds") or []):
         out.append(RssSource(url, weights))
     # keyed tentacles activate themselves only if their env keys exist

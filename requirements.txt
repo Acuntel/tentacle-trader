@@ -10,3 +10,4 @@ lxml>=5.0          # used by the Backtest Gauntlet (yfinance get_earnings_dates)
 # Optional — only used when API keys are present in .env
 # (alpaca news, finnhub, reddit, etc. activate themselves when keys exist)
 python-dotenv>=1.0
+beautifulsoup4>=4.12
