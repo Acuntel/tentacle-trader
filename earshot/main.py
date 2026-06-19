@@ -55,7 +55,8 @@ class Earshot:
         self.base_min = cfg["conviction"]["min_score_to_trade"]
         self.buffer: list = []                                  # rolling signal memory
         self.window = int(cfg["sources"].get("signal_window_sec", 1800))
-        self.macro_mon = MacroMonitor()                         # FRED alt-data / macro regime
+        self.macro_mon = MacroMonitor(                          # FRED alt-data / macro regime
+            expand_cap=int(cfg["sources"].get("fred_expand_cap", 0)))
         self.brain.patterns = self.learner.patterns            # share the learned pattern memory
 
     def _equity_now(self) -> float:

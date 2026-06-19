@@ -2,6 +2,7 @@
 (USASpending), biotech (ClinicalTrials), and whale 13F holdings (Berkshire/Buffett)."""
 from __future__ import annotations
 
+import datetime
 import json
 import re
 import requests
@@ -171,4 +172,52 @@ class Berkshire13FSource(Source):
             json.dump({"acc": acc}, open(self.STATE, "w"))
         except Exception:
             pass
+        return out
+
+
+WIKI_TITLES = {
+    "NVDA": "Nvidia", "AAPL": "Apple_Inc.", "MSFT": "Microsoft", "TSLA": "Tesla,_Inc.",
+    "AMZN": "Amazon_(company)", "GOOGL": "Google", "META": "Meta_Platforms",
+    "AMD": "Advanced_Micro_Devices", "NFLX": "Netflix", "PLTR": "Palantir_Technologies",
+    "COIN": "Coinbase", "HOOD": "Robinhood_Markets", "GME": "GameStop", "AMC": "AMC_Theatres",
+    "UBER": "Uber", "ABNB": "Airbnb", "DIS": "The_Walt_Disney_Company", "SHOP": "Shopify",
+    "PYPL": "PayPal", "INTC": "Intel", "MU": "Micron_Technology", "QCOM": "Qualcomm",
+    "ORCL": "Oracle_Corporation", "CRM": "Salesforce", "SMCI": "Supermicro", "ARM": "Arm_Holdings",
+    "TSM": "TSMC", "ASML": "ASML_Holding", "MRNA": "Moderna", "PFE": "Pfizer",
+    "LLY": "Eli_Lilly_and_Company", "BA": "Boeing", "LMT": "Lockheed_Martin",
+    "F": "Ford_Motor_Company", "GM": "General_Motors", "RIVN": "Rivian", "NIO": "Nio_Inc.",
+    "WMT": "Walmart", "COST": "Costco", "NKE": "Nike,_Inc.", "SBUX": "Starbucks", "KO": "Coca-Cola",
+}
+
+
+class WikiAttentionSource(Source):
+    """Web-visitor proxy: a spike in a company's Wikipedia pageviews = surging public attention,
+    which front-runs demand and earnings reactions. Free Wikimedia pageviews API (the closest free
+    stand-in for the site-traffic data quant funds buy)."""
+    key = "wiki_attention"
+    min_interval = 21600.0       # pageviews are daily; check every 6h
+
+    def fetch(self) -> list[RawSignal]:
+        end = datetime.date.today()
+        start = end - datetime.timedelta(days=31)
+        s, e = start.strftime("%Y%m%d"), end.strftime("%Y%m%d")
+        out: list[RawSignal] = []
+        for tk, title in WIKI_TITLES.items():
+            try:
+                url = ("https://wikimedia.org/api/rest_v1/metrics/pageviews/per-article/"
+                       f"en.wikipedia/all-access/user/{title}/daily/{s}/{e}")
+                r = requests.get(url, headers={"User-Agent": "EARSHOT/1.0 (market research)"}, timeout=10)
+                views = [it["views"] for it in r.json().get("items", [])]
+                if len(views) < 8:
+                    continue
+                base = sum(views[:-1]) / max(1, len(views) - 1)
+                latest = views[-1]
+                if base > 0 and latest / base >= 2.0:           # 2x normal attention
+                    ratio = latest / base
+                    out.append(RawSignal(
+                        source=self.key, weight=self.weight(), ts=now_ts(), tickers=[tk],
+                        headline=f"{tk} Wikipedia attention spike {ratio:.1f}x normal",
+                        url="https://wikimedia.org", strength=min(2.0, 0.5 + ratio / 4)))
+            except Exception:
+                pass
         return out

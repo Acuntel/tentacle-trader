@@ -52,6 +52,7 @@ source_weights:
   discord: 0.25
   telegram: 0.25
   polymarket: 0.55
+  wiki_attention: 0.45
 
 # Per-catalyst prior drift multiplier + default hold (learning tunes these too)
 catalysts:
@@ -98,6 +99,8 @@ sources:
   fleet_fast_batch: 25          # liquid-core feeds polled per tick (stay fresh)
   fleet_wide_batch: 20          # long-tail feeds polled per tick (slow sweep; anti-ban)
   fleet_wide_cap: 20000         # cover EVERY US-listed stock (~21k tentacles total). 100k isn't real — only ~10k stocks exist.
+  fred_expand_cap: 3000         # auto-discover this many MORE FRED series (housing/health/farmland/...) via the key
+  wiki_attention: true          # web-visitor proxy: Wikipedia pageview spikes per company (earnings predictor)
   rss_feeds:                    # generic RSS tentacle — drop RSSHub / Nitter / Telegram-RSS / Google-News URLs here
     # - https://www.globenewswire.com/RssFeed/orgclass/1/feedTitle/GlobeNewswire
     # - https://rsshub.app/twitter/user/DeItaone     # X-around via self-hosted RSSHub

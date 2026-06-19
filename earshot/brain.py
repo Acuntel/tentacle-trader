@@ -17,6 +17,7 @@ FAMILY = {
     "alpaca_news": "news", "finnhub": "news", "google_news": "news", "hackernews": "news",
     "fda": "regulatory", "gov_contract": "regulatory", "index_inclusion": "regulatory",
     "polymarket": "crowd",
+    "wiki_attention": "attention",
     "x_relay": "flow",
     "apewisdom": "social", "stocktwits": "social", "reddit": "social",
     "discord": "social", "telegram": "social",

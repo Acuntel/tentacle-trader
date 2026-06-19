@@ -26,8 +26,38 @@ FRED_SERIES = [
     "VIXCLS", "SP500", "NASDAQCOM", "DCOILWTICO", "DHHNGSP", "GASREGW", "DTWEXBGS",
     "IPMAN", "IPMINE", "IPUTIL", "IPDMAN", "IPNMAN", "IPCONGD", "IPBUSEQ", "IPDCONGD",
     "MSPUS", "CSUSHPINSA", "HSN1F", "EXHOSLUSM495S", "RRVRUSQ156N",
-    "PCE", "PSAVERT", "DSPIC96", "TOTALSA", "UMCSENT", "RSXFS",
+    "PCE", "PSAVERT", "DSPIC96", "TOTALSA", "RSXFS",
+    # --- farmland / agriculture (commodity + food prices feed agri/fertilizer names) ---
+    "PFOODINDEXM", "PMAIZMTUSDM", "PWHEAMTUSDM", "PSOYBUSDM", "CUSR0000SAF11",
+    "PORANGUSDM", "PBEEFUSDQ", "APU0000708111", "WPU012",
+    # --- housing (national activity + prices) ---
+    "HOUST1F", "COMPUTSA", "UNDCONTSA", "MSACSR", "RHORUSQ156N",
+    "USSTHPI", "ASPUS", "RRVRUSQ156N", "DRSFRMACBS",
+    # --- healthcare ---
+    "CPIMEDSL", "CUSR0000SAM", "CUSR0000SAM2", "DHLCRC1Q027SBEA", "PCU6216216211",
 ]
+
+# FRED tag families to auto-discover MANY more series from (housing/health/farmland/etc.)
+EXPAND_TAGS = ["housing", "agriculture", "health", "manufacturing", "employment", "income"]
+
+
+def _discover(cap: int) -> list[str]:
+    """Use the FRED tags API to pull hundreds–thousands more series in the domains we care about."""
+    if not FRED_KEY or cap <= 0:
+        return []
+    ids: list[str] = []
+    for tag in EXPAND_TAGS:
+        try:
+            r = requests.get("https://api.stlouisfed.org/fred/tags/series",
+                             params={"tag_names": tag, "api_key": FRED_KEY, "file_type": "json",
+                                     "order_by": "popularity", "sort_order": "desc",
+                                     "limit": min(1000, cap)}, headers={"User-Agent": UA}, timeout=20)
+            ids += [s["id"] for s in r.json().get("seriess", [])]
+        except Exception:
+            pass
+        if len(ids) >= cap:
+            break
+    return ids[:cap]
 
 
 def _series(sid: str):
@@ -58,21 +88,31 @@ def _series(sid: str):
 
 
 class MacroMonitor:
-    """Self-throttling (refreshes ~daily). Holds a compact regime tag + the raw latest values."""
-    series_count = len(FRED_SERIES)
+    """Self-throttling (refreshes ~daily). Holds a compact regime tag + the raw latest values.
+    With a FRED key it auto-discovers thousands more series (housing/health/farmland/...)."""
 
-    def __init__(self):
+    def __init__(self, expand_cap: int = 0):
+        self.series = list(dict.fromkeys(FRED_SERIES))
+        self.expand_cap = expand_cap
         self.context = ""
         self.values: dict = {}
         self._last = 0.0
+        self._expanded = False
+
+    @property
+    def series_count(self) -> int:
+        return len(self.series)
 
     def update(self):
         if time.time() - self._last < 86400 and self.context:
             return                                            # macro moves slowly; refresh daily
         self._last = time.time()
+        if self.expand_cap and not self._expanded and FRED_KEY:
+            self.series = list(dict.fromkeys(self.series + _discover(self.expand_cap)))
+            self._expanded = True
         pulled = {}
         with cf.ThreadPoolExecutor(max_workers=16) as ex:
-            for sid, res in zip(FRED_SERIES, ex.map(_series, FRED_SERIES)):
+            for sid, res in zip(self.series, ex.map(_series, self.series)):
                 if res[0] is not None:
                     pulled[sid] = res
         self.values = pulled
