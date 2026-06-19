@@ -14,12 +14,14 @@ class RiskGate:
         self.armed = False             # never armed in this build; flipping requires a live rung + human
         self.exec_count = 0
 
-    def check(self, c: Candidate, instinct, open_positions: int, today_pnl: float) -> tuple[bool, str]:
+    def check(self, c: Candidate, instinct, open_positions, today_pnl: float) -> tuple[bool, str]:
         if instinct.dead:
             return False, "bot is DEAD (ruin floor hit) — re-qualification required"
         if today_pnl <= -abs(self.r["daily_max_loss_usd"]):
             return False, f"daily max-loss kill switch tripped ({today_pnl:.2f})"
-        if open_positions >= self.r["max_open_positions"]:
+        if c.ticker in {p["ticker"] for p in open_positions}:
+            return False, f"already holding {c.ticker} — no doubling up on one name"
+        if len(open_positions) >= self.r["max_open_positions"]:
             return False, f"max open positions ({self.r['max_open_positions']}) reached"
         if self.exec_count >= self.r["repeated_exec_limit"]:
             return False, "repeated-execution limit -> auto-disarmed until re-armed"

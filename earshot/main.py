@@ -137,10 +137,17 @@ class Earshot:
                 ok, reason = self.brain.passes_gate(c)
                 if not ok:
                     why = f"{c.ticker}: {reason}"; continue
-                ok, reason = self.risk.check(c, self.instinct, len(self.learner.open), day_pnl)
+                ok, reason = self.risk.check(c, self.instinct, self.learner.open, day_pnl)
                 if not ok:
                     why = f"{c.ticker}: {reason}"; continue
                 chosen = c; break
+            # capital-aware sizing: never deploy more than what's left unspent
+            deployed = sum(p["size_usd"] for p in self.learner.open)
+            available = max(0.0, capital - deployed)
+            if chosen and chosen.size_usd > available:
+                chosen.size_usd = round(available, 2)
+            if chosen and chosen.size_usd < 25:
+                chosen, why = None, f"capital fully deployed (${deployed:.0f}/${capital:.0f}) — holding"
             if chosen:
                 fill = self.executor.buy(chosen)
                 self.risk.on_execute()
