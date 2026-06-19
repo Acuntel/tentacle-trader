@@ -8,11 +8,13 @@ regime wins'. FRED has ~800k series — this list is the seed; add IDs to scale 
 from __future__ import annotations
 
 import concurrent.futures as cf
+import os
 import time
 import requests
 
 UA = "Mozilla/5.0 (EARSHOT macro)"
 CSV = "https://fred.stlouisfed.org/graph/fredgraph.csv?id="
+FRED_KEY = os.getenv("FRED_API_KEY")   # free at fred.stlouisfed.org/docs/api/api_key.html
 
 # Seed set across rates / inflation / jobs / growth / credit / sectors / housing / energy / markets.
 FRED_SERIES = [
@@ -29,8 +31,16 @@ FRED_SERIES = [
 
 
 def _series(sid: str):
-    """Return (latest, prior) for a FRED series, or (None, None)."""
+    """Return (latest, prior~6obs-back) for a FRED series. Uses the official API when FRED_API_KEY
+    is set (reliable); otherwise tries the keyless CSV (often blocked on cloud IPs)."""
     try:
+        if FRED_KEY:
+            r = requests.get("https://api.stlouisfed.org/fred/series/observations",
+                             params={"series_id": sid, "api_key": FRED_KEY, "file_type": "json",
+                                     "sort_order": "desc", "limit": 7},
+                             headers={"User-Agent": UA}, timeout=12)
+            obs = [float(o["value"]) for o in r.json().get("observations", []) if o["value"] not in (".", "")]
+            return (obs[0], obs[-1]) if obs else (None, None)   # desc: [0]=latest, [-1]=~6 back
         r = requests.get(CSV + sid, headers={"User-Agent": UA}, timeout=12)
         vals = []
         for ln in r.text.splitlines()[1:]:
@@ -42,9 +52,7 @@ def _series(sid: str):
                     pass
         if not vals:
             return None, None
-        latest = vals[-1]
-        prior = vals[-7] if len(vals) >= 7 else vals[0]      # ~6 observations back
-        return latest, prior
+        return vals[-1], (vals[-7] if len(vals) >= 7 else vals[0])
     except Exception:
         return None, None
 
