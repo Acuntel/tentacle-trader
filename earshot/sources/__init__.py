@@ -21,6 +21,7 @@ from .onchain import OnChainCryptoSource
 from .hiring import MultiAtsHiringSource
 from .web import AppStoreReviewSource, CloudflareRadarSource
 from .jets import JetSpottingSource
+from .congress import CongressTradesSource
 
 
 def build_sources(cfg: dict, weights: dict) -> list[Source]:
@@ -75,6 +76,8 @@ def build_sources(cfg: dict, weights: dict) -> list[Source]:
         out.append(CloudflareRadarSource(weights))      # web-traffic rank (keyed; dark w/o CLOUDFLARE_API_TOKEN)
     if s.get("jets"):
         out.append(JetSpottingSource(weights))          # ADS-B corporate-jet movement (needs verified registry)
+    if s.get("congress"):
+        out.append(CongressTradesSource(weights))       # politician trades (keyed; dark w/o FMP_API_KEY)
     if s.get("scrape_targets"):
         out.append(HtmlScraperSource(weights, s["scrape_targets"]))
     if s.get("megafleet"):

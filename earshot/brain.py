@@ -20,7 +20,7 @@ FAMILY = {
     "sec_fulltext": "filing", "hiring": "alt", "hiring_ats": "alt",
     "appstore": "demand", "steam": "demand", "github": "demand",
     "pypi": "demand", "npm": "demand", "docker": "demand", "appreviews": "demand",
-    "web_traffic": "demand", "onchain": "onchain", "jets": "flow",
+    "web_traffic": "demand", "onchain": "onchain", "jets": "flow", "congress": "flow",
     "finnhub_earnings": "surprise",
     "alpaca_news": "news", "finnhub": "news", "google_news": "news", "hackernews": "news",
     "fda": "regulatory", "gov_contract": "regulatory", "index_inclusion": "regulatory",
