@@ -1,6 +1,6 @@
 """On-demand enrichment — the brain proactively collecting data it's missing.
 
-When EARSHOT sees an UNDER-CONFIRMED setup (a promising ticker with only ONE signal family), it
+When TENTACLE sees an UNDER-CONFIRMED setup (a promising ticker with only ONE signal family), it
 fires targeted probes at that specific name (StockTwits sentiment + a fresh Google-News query) to
 seek an independent second confirmation — then re-evaluates. That's "the brain realizes it needs to
 learn more about something and goes to get it." Bounded per cycle + per-ticker cooldown so we never
@@ -15,7 +15,7 @@ import feedparser
 
 from .models import RawSignal, now_ts
 
-UA = "Mozilla/5.0 (EARSHOT enrich)"
+UA = "Mozilla/5.0 (TENTACLE enrich)"
 
 
 def _stocktwits(ticker: str, weight: float) -> list[RawSignal]:

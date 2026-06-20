@@ -1,6 +1,6 @@
 """Daily circuit breaker.
 
-If the day's losses hit the limit (default -10% of capital), EARSHOT halts for the rest of the
+If the day's losses hit the limit (default -10% of capital), TENTACLE halts for the rest of the
 trading day, goes deep into the dungeon, and comes back the NEXT day more cautious — and it
 stays more cautious until it earns trust back. Caution decays on clean days, ratchets up on
 breached ones, and persists across restarts/redeploys (it's on the volume).

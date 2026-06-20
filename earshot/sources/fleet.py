@@ -18,7 +18,7 @@ import feedparser
 from ..models import RawSignal, now_ts
 from .base import Source, extract_tickers
 
-UA = "Mozilla/5.0 (EARSHOT fleet)"
+UA = "Mozilla/5.0 (TENTACLE fleet)"
 
 CORE_TICKERS = ("AAPL MSFT NVDA AMZN GOOGL META TSLA AVGO BRK-B LLY JPM V WMT XOM UNH MA JNJ PG "
                 "HD COST ORCL CVX MRK ABBV BAC KO PEP ADBE NFLX CRM AMD TMO LIN ACN MCD ABT CSCO "

@@ -1,7 +1,7 @@
-# EARSHOT — all thresholds in one place. Tune here, not in code.
+# TENTACLE — all thresholds in one place. Tune here, not in code.
 
 identity:
-  name: EARSHOT
+  name: TENTACLE
   mode: shadow          # shadow | live   (live is REFUSED until the Gauntlet passes + you arm it)
 
 # ---- The survival ethos (mother & baby) ----

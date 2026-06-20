@@ -206,7 +206,7 @@ class WikiAttentionSource(Source):
             try:
                 url = ("https://wikimedia.org/api/rest_v1/metrics/pageviews/per-article/"
                        f"en.wikipedia/all-access/user/{title}/daily/{s}/{e}")
-                r = requests.get(url, headers={"User-Agent": "EARSHOT/1.0 (market research)"}, timeout=10)
+                r = requests.get(url, headers={"User-Agent": "TENTACLE/1.0 (market research)"}, timeout=10)
                 views = [it["views"] for it in r.json().get("items", [])]
                 if len(views) < 8:
                     continue

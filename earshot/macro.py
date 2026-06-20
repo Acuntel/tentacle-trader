@@ -12,7 +12,7 @@ import os
 import time
 import requests
 
-UA = "Mozilla/5.0 (EARSHOT macro)"
+UA = "Mozilla/5.0 (TENTACLE macro)"
 CSV = "https://fred.stlouisfed.org/graph/fredgraph.csv?id="
 FRED_KEY = os.getenv("FRED_API_KEY")   # free at fred.stlouisfed.org/docs/api/api_key.html
 

@@ -1,4 +1,4 @@
-# EARSHOT 🐙
+# TENTACLE 🐙
 
 A **free**, self-learning news/whale auto-trader that treats its capital like a child.
 An octopus: many tentacles constantly scour the internet for catalysts; one brain scores
@@ -26,7 +26,7 @@ Optional free keys (Alpaca/Finnhub/etc.) light up extra tentacles automatically.
 
 | Var | Lights up |
 |---|---|
-| `EARSHOT_USER_AGENT` | SEC EDGAR requires a contact UA (set to your email) |
+| `TENTACLE_USER_AGENT` | SEC EDGAR requires a contact UA (set to your email) |
 | `ALPACA_API_KEY` / `ALPACA_API_SECRET` | Alpaca free Benzinga newswire |
 | `FINNHUB_API_KEY` | Finnhub news + earnings surprises |
 | `ALPHAVANTAGE_API_KEY`, `FMP_API_KEY` | extra free news/sentiment |

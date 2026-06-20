@@ -19,7 +19,7 @@ from .scrape import OpenInsiderSource, HtmlScraperSource
 def build_sources(cfg: dict, weights: dict) -> list[Source]:
     s = cfg.get("sources", {})
     out: list[Source] = []
-    ua = cfg.get("_user_agent", "EARSHOT bot")
+    ua = cfg.get("_user_agent", "TENTACLE bot")
     if s.get("edgar"):
         out.append(EdgarSource(weights, ua))
     if s.get("apewisdom"):

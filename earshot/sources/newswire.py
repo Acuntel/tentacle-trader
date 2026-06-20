@@ -18,7 +18,7 @@ from ..models import RawSignal, now_ts
 from .base import Source, extract_tickers
 
 TIMEOUT = 10
-UA = "Mozilla/5.0 (EARSHOT newswire aggregator)"
+UA = "Mozilla/5.0 (TENTACLE newswire aggregator)"
 
 # (url, source_key, strength) — press releases are primary (high weight 'newswire'),
 # market media is secondary ('google_news', lower weight). Both are the 'news' family.

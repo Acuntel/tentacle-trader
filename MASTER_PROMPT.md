@@ -1,6 +1,6 @@
-# EARSHOT — Master Prompt / Binding Spec
+# TENTACLE — Master Prompt / Binding Spec
 
-> Working codename: **EARSHOT** ("we just need to be in the know"). Rename freely.
+> Working codename: **TENTACLE** ("we just need to be in the know"). Rename freely.
 > Owner: Brady Schwartz. Started 2026-06-18. This document is the single source of truth — when code and this doc disagree, fix the code.
 
 ---

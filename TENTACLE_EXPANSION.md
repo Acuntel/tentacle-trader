@@ -1,4 +1,4 @@
-# EARSHOT — Tentacle Expansion Masterprompt
+# TENTACLE — Tentacle Expansion Masterprompt
 ### How to keep growing the data surface with FREE sources, by scraping the *hidden* databases
 
 > Goal: more tentacles that actually carry signal. The trick isn't more news sites — it's reaching

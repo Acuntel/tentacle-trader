@@ -1,6 +1,6 @@
 """Pattern recognition — the brain that learns WHICH setups actually win, and how to profit.
 
-Beyond "N sources agree," EARSHOT fingerprints every setup into a PATTERN signature
+Beyond "N sources agree," TENTACLE fingerprints every setup into a PATTERN signature
 (catalyst + which signal families aligned + the macro regime) and learns each pattern's real
 win-rate and average winning move from resolved outcomes. Then it:
   • AMPLIFIES proven patterns (confidence multiplier up),

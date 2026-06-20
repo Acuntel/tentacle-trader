@@ -1,4 +1,4 @@
-"""EARSHOT orchestrator. Polls the tentacles -> scores -> gates -> (shadow) executes -> learns.
+"""TENTACLE orchestrator. Polls the tentacles -> scores -> gates -> (shadow) executes -> learns.
 
 Run:
     python -m earshot.main --once     # one cycle (great for testing)
@@ -34,7 +34,7 @@ def load_config(path: str) -> dict:
         load_dotenv()
     except Exception:
         pass
-    cfg["_user_agent"] = os.getenv("EARSHOT_USER_AGENT", "EARSHOT research bot (contact: set EARSHOT_USER_AGENT)")
+    cfg["_user_agent"] = os.getenv("TENTACLE_USER_AGENT", "TENTACLE research bot (contact: set TENTACLE_USER_AGENT)")
     for d in ("state", "dungeon"):
         os.makedirs(d, exist_ok=True)
     return cfg
@@ -83,7 +83,7 @@ class Earshot:
     def run_once(self):
         st = self.instinct.status()
         print("\n" + "=" * 74)
-        print(f"EARSHOT [{st['mode'].upper()}]  rung {st['rung']} ({st['stage']})  "
+        print(f"TENTACLE [{st['mode'].upper()}]  rung {st['rung']} ({st['stage']})  "
               f"capital-unlocked ${st['capital_unlocked']}  mastery {st['mastery']}/{st['needs_mastery']}")
         print(f"mood: {st['mood']}")
         print(f"tentacles live: {', '.join(s.key for s in self.sources) or '(none)'}"
@@ -207,7 +207,7 @@ class Earshot:
 
     def loop(self):
         every = int(self.cfg["sources"].get("poll_seconds", 60))
-        print(f"EARSHOT looping every {every}s. Ctrl-C to stop.")
+        print(f"TENTACLE looping every {every}s. Ctrl-C to stop.")
         while True:
             try:
                 self.run_once()
@@ -219,7 +219,7 @@ class Earshot:
 
 
 def main():
-    ap = argparse.ArgumentParser(prog="earshot")
+    ap = argparse.ArgumentParser(prog="tentacle")
     ap.add_argument("--config", default="config.yaml")
     ap.add_argument("--once", action="store_true", help="run a single cycle (this is the default)")
     ap.add_argument("--loop", action="store_true", help="keep scouring (default: one cycle)")

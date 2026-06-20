@@ -1,4 +1,4 @@
-# Meet EARSHOT 🐙 — my self-learning trading bot
+# Meet TENTACLE 🐙 — my self-learning trading bot
 
 I built a trading bot that thinks like an octopus with a mother's instinct. Here's the whole idea in plain English.
 

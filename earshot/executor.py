@@ -55,7 +55,7 @@ class ShadowExecutor(Executor):
 class RobinhoodMCPExecutor(Executor):
     """Sanctioned path: orders flow through the Claude agent runtime, which holds the Robinhood
     MCP connection, into the agentic account ••8218. A standalone Python process cannot reach the
-    MCP, so this raises here — it executes only when EARSHOT runs as a scheduled Claude agent."""
+    MCP, so this raises here — it executes only when TENTACLE runs as a scheduled Claude agent."""
     name = "robinhood_mcp"
 
     def buy(self, c: Candidate, rung=0, armed=False, **kw) -> dict:
