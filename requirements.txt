@@ -11,3 +11,6 @@ lxml>=5.0          # used by the Backtest Gauntlet (yfinance get_earnings_dates)
 # (alpaca news, finnhub, reddit, etc. activate themselves when keys exist)
 python-dotenv>=1.0
 beautifulsoup4>=4.12
+
+# Optional — the Claude analyst judge (degrades to a free heuristic if absent or no ANTHROPIC_API_KEY)
+anthropic>=0.40

@@ -25,6 +25,8 @@ from .exits import ExitEngine
 from .macro import MacroMonitor
 from .enrich import EnrichmentEngine
 from .selfreview import SelfReview
+from .analyst import Analyst
+from .learnedgate import LearnedGate
 
 
 def load_config(path: str) -> dict:
@@ -60,6 +62,11 @@ class Earshot:
         self.macro_mon = MacroMonitor(                          # FRED alt-data / macro regime
             expand_cap=int(cfg["sources"].get("fred_expand_cap", 0)))
         self.brain.patterns = self.learner.patterns            # share the learned pattern memory
+        self.analyst = Analyst(cfg)                            # reasoning judge (heuristic / Claude)
+        self.lgate = LearnedGate(self.learner.know)            # learned P(win) over the dossier
+        self.brain.analyst = self.analyst
+        self.brain.lgate = self.lgate
+        self.learner.lgate = self.lgate                       # so resolved outcomes train the model
         self.enricher = EnrichmentEngine(cfg)                  # on-demand data collection
         self.enricher.weights = self.weights
         self.selfreview = SelfReview(cfg, self.learner, self.instinct)  # continuous self-diagnosis
@@ -87,6 +94,7 @@ class Earshot:
 
     def run_once(self):
         self.cycle += 1
+        self.analyst.reset_cycle()                             # refresh the per-cycle LLM budget
         st = self.instinct.status()
         mkt_open, mkt_why, mkt = market.can_open(self.cfg.get("market", {}))
         print("\n" + "=" * 74)
@@ -97,6 +105,9 @@ class Earshot:
         print(f"market: {'OPEN' if mkt_open else 'CLOSED'} — {mkt['reason']}  ({mkt['et']}){nxt}")
         print(f"tentacles live: {', '.join(s.key for s in self.sources) or '(none)'}"
               f"{'' if prices.have_prices() else '   [no yfinance: price filters degrade gracefully]'}")
+        print(f"analyst: {'Claude' if self.analyst.llm_live else 'heuristic (set ANTHROPIC_API_KEY for Claude)'}"
+              f"  |  learned P(win) model: {self.lgate.n} samples"
+              f"{' (gating)' if self.lgate.ready() else ' (advisory until 30)'}")
         print("-" * 74)
 
         # 1) scour — only poll tentacles that are DUE (each at its own rate-limit-safe cadence)

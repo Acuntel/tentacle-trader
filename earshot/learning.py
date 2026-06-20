@@ -48,6 +48,7 @@ class Learner:
         if self.know.get("weights"):
             self.weights.update(self.know["weights"])
         self.patterns = PatternMemory(self.know)   # learned pattern win-rates (persisted)
+        self.lgate = None                          # LearnedGate (P(win) model), attached by main
 
     def _persist_know(self):
         self.know["weights"] = self.weights      # learned weights ride along, survive restarts
@@ -60,6 +61,8 @@ class Learner:
             "hold_days": c.hold_days, "target_pct": c.target_pct, "stop_pct": c.stop_pct,
             "runup_pct": c.runup_pct, "sources": sorted({s.source for s in c.signals}),
             "pattern": getattr(c, "_signature", ""),
+            "lgate_features": getattr(c, "_lgate_features", None),   # train the P(win) model on exit
+            "pwin": getattr(c, "_pwin", None),
         })
         _save(OPEN_PATH, self.open)
 
@@ -90,6 +93,8 @@ class Learner:
             mind = instinct.record(p["confidence"], ret, p["size_usd"])
             self._learn(p, outcome)
             self.patterns.record(p.get("pattern", ""), outcome.win, ret)   # learn the pattern
+            if self.lgate is not None and p.get("lgate_features"):
+                self.lgate.update(p["lgate_features"], outcome.win)         # train P(win) on real outcome
             if not outcome.win:
                 self._dungeon(p, outcome, mind)
             resolved.append({"outcome": outcome.to_dict(), "mind": mind, "exit": reason})
@@ -135,7 +140,8 @@ class Learner:
                 continue
             self.obs.append({"ticker": c.ticker, "day": today, "ts": time.time(),
                              "entry": px, "sig": getattr(c, "_signature", ""),
-                             "sources": sorted({s.source for s in c.signals})})
+                             "sources": sorted({s.source for s in c.signals}),
+                             "feat": getattr(c, "_lgate_features", None)})
             have.add((c.ticker, today))
         _save(OBS_PATH, self.obs)
 
@@ -154,6 +160,8 @@ class Learner:
             win = ret > 0
             self.patterns.record(o.get("sig", ""), win, ret)        # learn the pattern from data
             self._credit_sources(o["sources"], win, ret, rate=0.05)  # gentler than a real trade
+            if self.lgate is not None and o.get("feat"):
+                self.lgate.update(o["feat"], win)                    # train P(win) from observations too
             learned += 1
         self.obs = still
         if learned:

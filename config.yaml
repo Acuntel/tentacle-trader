@@ -23,6 +23,7 @@ conviction:
   min_score_to_trade: 55        # below this -> shadow-log only, no trade
   min_independent_sources: 2    # >= 2 independent sources must confirm the SAME catalyst
   min_families: 2               # >= 2 DIFFERENT signal families (filing+surprise+flow...), not 2 of the same
+  min_pwin: 0.50                # once the learned model has >=30 samples, require P(win) above this to fire
   family_bonus: 0.18            # confidence multiplier per extra family that agrees (cross-confirmation)
   max_runup_pct: 4.0            # if price already ran > this since the signal, the easy move is gone
   size_bands:                   # confidence score -> fraction of the rung's live capital
@@ -150,6 +151,13 @@ sources:
 exits:
   trail_pct: 5.0               # give back 5% from the peak after a gain -> lock it in
   trail_arm_pct: 4.0           # only start trailing once up +4%
+
+# ---- Analyst brain: confirmation by REASONING, not source-counting ----
+analyst:
+  enabled: true
+  model: claude-opus-4-8        # used ONLY if ANTHROPIC_API_KEY is set; otherwise a free heuristic judge runs
+  max_llm_per_cycle: 3          # cap Claude calls per cycle (top candidates only) — bounded, opt-in cost
+  min_independent_pillars: 2    # need >=2 ORTHOGONAL evidence TYPES (filing+price+options...), not 2 echoes
 
 # ---- On-demand enrichment (brain pulls more data on under-confirmed names) ----
 enrichment:

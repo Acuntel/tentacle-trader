@@ -9,6 +9,7 @@ from . import prices
 from . import technicals
 from . import options
 from . import fundamentals
+from . import dossier
 
 RAW_SCALE = 2.0  # raw≈2 -> ~63, raw≈3 -> ~78, raw≈4 -> ~86
 
@@ -62,6 +63,8 @@ class Brain:
         self.conv = cfg["conviction"]
         self.cats = cfg["catalysts"]
         self.patterns = None        # PatternMemory, attached by main
+        self.analyst = None         # Analyst (reasoning judge), attached by main
+        self.lgate = None           # LearnedGate (P(win) model), attached by main
         self.macro = ""             # current macro regime tag, set by main each cycle
         self.tech = cfg.get("technicals", {})           # candlestick / indicator entry-timing layer
         self.tech_on = bool(self.tech.get("enabled", True))
@@ -176,6 +179,25 @@ class Brain:
             cand._tech_veto = tech_veto
             cand._options_confirm = opt_confirm
             cand._features = feats                          # fundamentals features for the learned model
+
+            # ANALYST BRAIN — reason over a real dossier (independence + judge + learned P(win)),
+            # not source-counting. Runs only on already-qualifying names (cheap, LLM-gated).
+            if qualifies and self.analyst is not None:
+                dos = dossier.build(cand, self.macro)
+                verdict = self.analyst.judge(dos)
+                cand._verdict = verdict
+                cand.confidence = max(0.0, min(100.0, cand.confidence * (0.6 + 0.008 * verdict["conviction"])))
+                if (not verdict.get("real", True)) or verdict.get("direction") != "up":
+                    cand._analyst_veto = "analyst: " + (verdict.get("bear_case") or "not a clean up-catalyst")
+                if self.lgate is not None:
+                    cand._lgate_features = self.lgate.featurize(dos, verdict)
+                    cand._pwin = round(self.lgate.predict(cand._lgate_features), 3)
+                cand.size_usd = self._size(cand.confidence, capital)
+                cand.reasons.append(
+                    f"analyst[{verdict.get('by')}]: real={verdict['real']} dir={verdict['direction']} "
+                    f"conv={verdict['conviction']} P(win)={getattr(cand, '_pwin', 'n/a')} "
+                    f"| independence {dos['independence']} pillars ({', '.join(dos['pillars'])}) "
+                    f"| {verdict.get('rationale', '')[:80]}")
             out.append(cand)
         out.sort(key=lambda c: c.confidence, reverse=True)
         return out
@@ -185,6 +207,11 @@ class Brain:
             return False, "pattern recognized as a persistent loser — vetoed"
         if getattr(c, "_tech_veto", None):
             return False, c._tech_veto
+        if getattr(c, "_analyst_veto", None):
+            return False, c._analyst_veto
+        if (self.lgate is not None and self.lgate.ready() and getattr(c, "_pwin", None) is not None
+                and c._pwin < self.conv.get("min_pwin", 0.5)):
+            return False, f"learned P(win) {c._pwin:.2f} < {self.conv.get('min_pwin', 0.5)} (model says low edge)"
         if c.n_independent < self.conv["min_independent_sources"]:
             return False, f"only {c.n_independent} source(s); need {self.conv['min_independent_sources']}"
         fams = getattr(c, "_families", 1)
