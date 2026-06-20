@@ -104,6 +104,10 @@ def _yahoo(t: str) -> str:
     return f"https://feeds.finance.yahoo.com/rss/2.0/headline?s={t}&region=US&lang=en-US"
 
 
+def _bing(t: str) -> str:
+    return f"https://www.bing.com/news/search?q=%22{t}%22+stock&format=rss"
+
+
 def _sp500() -> list[str]:
     try:
         r = requests.get("https://raw.githubusercontent.com/datasets/s-and-p-500-companies/"
@@ -145,6 +149,7 @@ def build_feed_list(universe: str = "sp500", wide_cap: int = 20000) -> tuple[lis
     for t in fast_tickers:
         fast.append((_gnews(f'"{t}" stock'), "google_news", 0.5))
         fast.append((_yahoo(t), "google_news", 0.55))
+        fast.append((_bing(t), "google_news", 0.5))                 # 3rd independent news angle/ticker
     fast += [(_gnews(q), "google_news", 0.5) for q in KEYWORDS]
     fast += [(f"https://www.reddit.com/r/{s}/.rss", "reddit", 0.35) for s in REDDIT]
     fast += MEDIA
@@ -157,6 +162,7 @@ def build_feed_list(universe: str = "sp500", wide_cap: int = 20000) -> tuple[lis
                 continue
             wide.append((_gnews(f'"{t}" stock'), "google_news", 0.4))
             wide.append((_yahoo(t), "google_news", 0.45))
+            wide.append((_bing(t), "google_news", 0.4))
             if len(wide) >= wide_cap:
                 break
     return fast, wide

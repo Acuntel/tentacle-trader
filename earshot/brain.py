@@ -17,8 +17,10 @@ RAW_SCALE = 2.0  # raw≈2 -> ~63, raw≈3 -> ~78, raw≈4 -> ~86
 # not two of the same kind (two Reddit posts). The brain rewards cross-family agreement.
 FAMILY = {
     "edgar_8k": "filing", "edgar_form4": "filing", "edgar_13d": "filing", "newswire": "filing",
-    "sec_fulltext": "filing", "hiring": "alt",
+    "sec_fulltext": "filing", "hiring": "alt", "hiring_ats": "alt",
     "appstore": "demand", "steam": "demand", "github": "demand",
+    "pypi": "demand", "npm": "demand", "docker": "demand", "appreviews": "demand",
+    "web_traffic": "demand", "onchain": "onchain", "jets": "flow",
     "finnhub_earnings": "surprise",
     "alpaca_news": "news", "finnhub": "news", "google_news": "news", "hackernews": "news",
     "fda": "regulatory", "gov_contract": "regulatory", "index_inclusion": "regulatory",

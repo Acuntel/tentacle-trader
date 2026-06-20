@@ -16,6 +16,11 @@ from .fleet import MegaFleetSource
 from .scrape import OpenInsiderSource, HtmlScraperSource
 from .altdata import SecFullTextSource, GreenhouseHiringSource
 from .demand import AppStoreDemandSource, SteamDemandSource, GithubActivitySource
+from .adoption import PyPiDownloadsSource, NpmDownloadsSource, DockerPullsSource
+from .onchain import OnChainCryptoSource
+from .hiring import MultiAtsHiringSource
+from .web import AppStoreReviewSource, CloudflareRadarSource
+from .jets import JetSpottingSource
 
 
 def build_sources(cfg: dict, weights: dict) -> list[Source]:
@@ -54,6 +59,22 @@ def build_sources(cfg: dict, weights: dict) -> list[Source]:
         out.append(SteamDemandSource(weights))          # Steam live-player usage surge
     if s.get("github"):
         out.append(GithubActivitySource(weights))       # dev-tool adoption (star velocity)
+    if s.get("pypi"):
+        out.append(PyPiDownloadsSource(weights))        # package adoption (PyPI download velocity)
+    if s.get("npm"):
+        out.append(NpmDownloadsSource(weights))         # package adoption (npm)
+    if s.get("docker"):
+        out.append(DockerPullsSource(weights))          # package adoption (Docker pulls)
+    if s.get("onchain"):
+        out.append(OnChainCryptoSource(weights))        # crypto read-through to COIN/MSTR/miners
+    if s.get("hiring_ats"):
+        out.append(MultiAtsHiringSource(weights))       # Lever/Ashby/SmartRecruiters hiring velocity
+    if s.get("appreviews"):
+        out.append(AppStoreReviewSource(weights))       # App Store review velocity + sentiment
+    if s.get("web_traffic"):
+        out.append(CloudflareRadarSource(weights))      # web-traffic rank (keyed; dark w/o CLOUDFLARE_API_TOKEN)
+    if s.get("jets"):
+        out.append(JetSpottingSource(weights))          # ADS-B corporate-jet movement (needs verified registry)
     if s.get("scrape_targets"):
         out.append(HtmlScraperSource(weights, s["scrape_targets"]))
     if s.get("megafleet"):

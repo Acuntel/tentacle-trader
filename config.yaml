@@ -60,6 +60,14 @@ source_weights:
   appstore: 0.55
   steam: 0.50
   github: 0.40
+  pypi: 0.55
+  npm: 0.50
+  docker: 0.50
+  appreviews: 0.50
+  onchain: 0.60
+  hiring_ats: 0.50
+  web_traffic: 0.55
+  jets: 0.35
 
 # Per-catalyst prior drift multiplier + default hold (learning tunes these too)
 catalysts:
@@ -139,11 +147,19 @@ sources:
   appstore: true                # DEMAND layer — App Store rank climbs (free primary, vs Sensor Tower)
   steam: true                   # DEMAND layer — Steam live concurrent-player surges (game publishers)
   github: true                  # DEMAND layer — dev-tool adoption via repo star velocity
+  pypi: true                    # DEMAND layer — PyPI download velocity (dev-tool revenue proxy)
+  npm: true                     # DEMAND layer — npm download velocity
+  docker: true                  # DEMAND layer — Docker Hub pull velocity
+  appreviews: true              # DEMAND layer — App Store review count velocity + rating sentiment
+  onchain: true                 # ONCHAIN layer — BTC/crypto read-through to COIN/MSTR/miners
+  hiring_ats: true              # ALT layer — Lever/Ashby/SmartRecruiters hiring velocity
+  web_traffic: true             # DEMAND layer — Cloudflare Radar domain traffic (needs CLOUDFLARE_API_TOKEN)
+  jets: true                    # FLOW layer — ADS-B corporate-jet movement (needs verified JET_REGISTRY)
   megafleet: true               # tiered rotating tentacles
   fleet_universe: all           # 'all' = full US listings (~10k+ tentacles) | 'sp500' = focused ~1155
-  fleet_fast_batch: 25          # liquid-core feeds polled per tick (stay fresh)
-  fleet_wide_batch: 20          # long-tail feeds polled per tick (slow sweep; anti-ban)
-  fleet_wide_cap: 20000         # cover EVERY US-listed stock (~21k tentacles total). 100k isn't real — only ~10k stocks exist.
+  fleet_fast_batch: 30          # liquid-core feeds polled per tick (stay fresh)
+  fleet_wide_batch: 30          # long-tail feeds polled per tick (slow sweep; anti-ban)
+  fleet_wide_cap: 40000         # every US-listed symbol x 3 news angles. ⚠️ count != edge: beyond ~10k real stocks the rest are warrants/units the liquidity gate blocks.
   fred_expand_cap: 3000         # auto-discover this many MORE FRED series (housing/health/farmland/...) via the key
   wiki_attention: true          # web-visitor proxy: Wikipedia pageview spikes per company (earnings predictor)
   rss_feeds:                    # generic RSS tentacle — drop RSSHub / Nitter / Telegram-RSS / Google-News URLs here

@@ -62,6 +62,10 @@ def build(candidate, macro: str = "") -> dict:
         pillars.add("altdata")
     if fams.get("demand"):
         pillars.add("demand")                            # consumer usage/adoption — an orthogonal pillar
+    if fams.get("onchain"):
+        pillars.add("onchain")                           # crypto network read-through
+    if fams.get("flow"):
+        pillars.add("flow")                              # jet/flow positioning
     if tech and tech.get("bias", 0) > 0.15:
         pillars.add("price")
     if opt and opt.get("bias", 0) >= 0.25:
