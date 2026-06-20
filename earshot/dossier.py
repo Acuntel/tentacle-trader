@@ -60,6 +60,8 @@ def build(candidate, macro: str = "") -> dict:
         pillars.add("crowd")
     if fams.get("alt"):
         pillars.add("altdata")
+    if fams.get("demand"):
+        pillars.add("demand")                            # consumer usage/adoption — an orthogonal pillar
     if tech and tech.get("bias", 0) > 0.15:
         pillars.add("price")
     if opt and opt.get("bias", 0) >= 0.25:

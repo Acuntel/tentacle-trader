@@ -57,6 +57,9 @@ source_weights:
   nasdaq_halts: 0.60
   sec_fulltext: 0.85
   hiring: 0.50
+  appstore: 0.55
+  steam: 0.50
+  github: 0.40
 
 # Per-catalyst prior drift multiplier + default hold (learning tunes these too)
 catalysts:
@@ -133,6 +136,9 @@ sources:
   nasdaq_halts: true            # NEW tentacle — Nasdaq trading halts/resumptions (volatility catalyst)
   sec_fulltext: true            # scrape pack — EDGAR full-text phrase search (merger/FDA/going-concern)
   hiring: true                  # scrape pack — Greenhouse hiring-velocity alt-data
+  appstore: true                # DEMAND layer — App Store rank climbs (free primary, vs Sensor Tower)
+  steam: true                   # DEMAND layer — Steam live concurrent-player surges (game publishers)
+  github: true                  # DEMAND layer — dev-tool adoption via repo star velocity
   megafleet: true               # tiered rotating tentacles
   fleet_universe: all           # 'all' = full US listings (~10k+ tentacles) | 'sp500' = focused ~1155
   fleet_fast_batch: 25          # liquid-core feeds polled per tick (stay fresh)

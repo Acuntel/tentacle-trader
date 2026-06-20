@@ -18,6 +18,7 @@ RAW_SCALE = 2.0  # raw≈2 -> ~63, raw≈3 -> ~78, raw≈4 -> ~86
 FAMILY = {
     "edgar_8k": "filing", "edgar_form4": "filing", "edgar_13d": "filing", "newswire": "filing",
     "sec_fulltext": "filing", "hiring": "alt",
+    "appstore": "demand", "steam": "demand", "github": "demand",
     "finnhub_earnings": "surprise",
     "alpaca_news": "news", "finnhub": "news", "google_news": "news", "hackernews": "news",
     "fda": "regulatory", "gov_contract": "regulatory", "index_inclusion": "regulatory",

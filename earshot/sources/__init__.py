@@ -15,6 +15,7 @@ from .newswire import MarketNewsSource
 from .fleet import MegaFleetSource
 from .scrape import OpenInsiderSource, HtmlScraperSource
 from .altdata import SecFullTextSource, GreenhouseHiringSource
+from .demand import AppStoreDemandSource, SteamDemandSource, GithubActivitySource
 
 
 def build_sources(cfg: dict, weights: dict) -> list[Source]:
@@ -47,6 +48,12 @@ def build_sources(cfg: dict, weights: dict) -> list[Source]:
         out.append(SecFullTextSource(weights, ua))      # EDGAR full-text phrase search (scrape pack)
     if s.get("hiring"):
         out.append(GreenhouseHiringSource(weights))     # hiring-velocity alt-data (scrape pack)
+    if s.get("appstore"):
+        out.append(AppStoreDemandSource(weights))       # App Store rank demand (free primary)
+    if s.get("steam"):
+        out.append(SteamDemandSource(weights))          # Steam live-player usage surge
+    if s.get("github"):
+        out.append(GithubActivitySource(weights))       # dev-tool adoption (star velocity)
     if s.get("scrape_targets"):
         out.append(HtmlScraperSource(weights, s["scrape_targets"]))
     if s.get("megafleet"):
