@@ -7,7 +7,7 @@ CONFIRMS or vetoes entries and flags exits. Degrades to neutral when chains are 
 """
 from __future__ import annotations
 
-from math import sqrt
+from math import sqrt, isfinite
 from statistics import pstdev
 
 from . import prices, technicals
@@ -34,6 +34,7 @@ def _realized_vol(ticker: str):
         return None
     c = d["c"]
     rets = [c[i] / c[i - 1] - 1 for i in range(len(c) - 20, len(c)) if c[i - 1]]
+    rets = [r for r in rets if isfinite(r)]               # never let a NaN reach pstdev
     return pstdev(rets) * sqrt(252) if len(rets) >= 10 else None
 
 

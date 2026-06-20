@@ -7,6 +7,8 @@ no TA-Lib / C deps. Output: a bias in [-1, +1], the patterns we saw, and explici
 """
 from __future__ import annotations
 
+import math
+
 from . import prices
 
 try:
@@ -28,9 +30,14 @@ def _fetch(ticker: str, days: int):
         h = yf.Ticker(ticker).history(period=f"{days}d")
         if len(h) < 6:
             return None
-        return {"o": [float(x) for x in h["Open"]], "h": [float(x) for x in h["High"]],
-                "l": [float(x) for x in h["Low"]], "c": [float(x) for x in h["Close"]],
-                "v": [float(x) for x in h["Volume"]]}
+        o, hi, lo, cl, v = [], [], [], [], []
+        for oo, hh, ll, cc, vv in zip(h["Open"], h["High"], h["Low"], h["Close"], h["Volume"]):
+            oo, hh, ll, cc, vv = float(oo), float(hh), float(ll), float(cc), float(vv)
+            if not all(math.isfinite(x) for x in (oo, hh, ll, cc)):
+                continue                                  # drop NaN/inf rows (yfinance holiday/partial gaps)
+            o.append(oo); hi.append(hh); lo.append(ll); cl.append(cc)
+            v.append(vv if math.isfinite(vv) else 0.0)
+        return {"o": o, "h": hi, "l": lo, "c": cl, "v": v} if len(cl) >= 6 else None
     except Exception:
         return None
 
