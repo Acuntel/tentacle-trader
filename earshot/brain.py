@@ -7,6 +7,8 @@ from collections import defaultdict
 from .models import RawSignal, Candidate, Catalyst
 from . import prices
 from . import technicals
+from . import options
+from . import fundamentals
 
 RAW_SCALE = 2.0  # raw≈2 -> ~63, raw≈3 -> ~78, raw≈4 -> ~86
 
@@ -14,6 +16,7 @@ RAW_SCALE = 2.0  # raw≈2 -> ~63, raw≈3 -> ~78, raw≈4 -> ~86
 # not two of the same kind (two Reddit posts). The brain rewards cross-family agreement.
 FAMILY = {
     "edgar_8k": "filing", "edgar_form4": "filing", "edgar_13d": "filing", "newswire": "filing",
+    "sec_fulltext": "filing", "hiring": "alt",
     "finnhub_earnings": "surprise",
     "alpaca_news": "news", "finnhub": "news", "google_news": "news", "hackernews": "news",
     "fda": "regulatory", "gov_contract": "regulatory", "index_inclusion": "regulatory",
@@ -62,6 +65,10 @@ class Brain:
         self.macro = ""             # current macro regime tag, set by main each cycle
         self.tech = cfg.get("technicals", {})           # candlestick / indicator entry-timing layer
         self.tech_on = bool(self.tech.get("enabled", True))
+        self.opt = cfg.get("options", {})               # options/IV positioning layer
+        self.opt_on = bool(self.opt.get("enabled", True))
+        self.fund = cfg.get("fundamentals", {})          # float / short-interest / quality layer
+        self.fund_on = bool(self.fund.get("enabled", True))
 
     def _score(self, sources_strength: dict[str, float], prior: float,
                earliness: float, n_families: int) -> float:
@@ -127,21 +134,36 @@ class Brain:
             # PRICE ACTION (candlesticks + RSI/trend) decides the TIMING — only for names that already
             # cleared the catalyst gate, so we never price-scan the whole fleet (anti-ban).
             tech_notes, tech_veto = [], None
+            opt_notes, opt_confirm = [], False
             if qualifies and self.tech_on:
                 allow, tmult, tech_notes = technicals.entry_read(tk, self.tech)
                 score *= tmult
                 if not allow:
                     tech_veto = "price action says wait — bearish reversal at the highs"
+            if qualifies and self.opt_on:
+                omult, opt_confirm, opt_notes = options.entry_read(tk, self.opt)
+                score *= omult                              # options agreement strengthens, fear weakens
+            fund_notes, feats = [], {}
+            if qualifies and self.fund_on:
+                fmult, fund_notes = fundamentals.entry_read(tk, self.fund)
+                score *= fmult                              # squeeze fuel boosts, zombie quality shrinks
+                feats = fundamentals.features(tk)
             score = max(0.0, min(100.0, score))
 
+            eff_families = len(families) + (1 if opt_confirm else 0)
             reasons = [
-                f"{len(per_source)} sources / {len(families)} families "
-                f"({', '.join(sorted(families))}): {', '.join(sorted(per_source))}",
+                f"{len(per_source)} sources / {eff_families} families "
+                f"({', '.join(sorted(families))}{', options' if opt_confirm else ''}): "
+                f"{', '.join(sorted(per_source))}",
                 f"catalyst={catalyst.value}, macro={self.macro or 'n/a'}, pattern={sig or 'new'}",
                 f"take-profit {target}% / stop {ccfg['stop_pct']}%",
             ]
             if tech_notes:
                 reasons.append("price action: " + " | ".join(tech_notes))
+            if opt_notes:
+                reasons.append("options: " + " | ".join(opt_notes))
+            if fund_notes:
+                reasons.append("fundamentals: " + " | ".join(fund_notes))
             cand = Candidate(
                 ticker=tk, catalyst=catalyst, confidence=score,
                 size_usd=self._size(score, capital), signals=sigs, runup_pct=runup,
@@ -149,9 +171,11 @@ class Brain:
                 stop_pct=ccfg["stop_pct"], target_pct=target, hold_days=ccfg["hold_days"],
                 reasons=reasons,
             )
-            cand._families = len(families)
+            cand._families = eff_families
             cand._signature = sig
             cand._tech_veto = tech_veto
+            cand._options_confirm = opt_confirm
+            cand._features = feats                          # fundamentals features for the learned model
             out.append(cand)
         out.sort(key=lambda c: c.confidence, reverse=True)
         return out

@@ -14,6 +14,7 @@ from .extra import (PolymarketSource, UsaSpendingSource, ClinicalTrialsSource,
 from .newswire import MarketNewsSource
 from .fleet import MegaFleetSource
 from .scrape import OpenInsiderSource, HtmlScraperSource
+from .altdata import SecFullTextSource, GreenhouseHiringSource
 
 
 def build_sources(cfg: dict, weights: dict) -> list[Source]:
@@ -42,6 +43,10 @@ def build_sources(cfg: dict, weights: dict) -> list[Source]:
         out.append(WikiAttentionSource(weights))        # web-visitor proxy (pageview spikes)
     if s.get("nasdaq_halts"):
         out.append(NasdaqHaltsSource(weights))          # live trading halts / resumptions (volatility catalyst)
+    if s.get("sec_fulltext"):
+        out.append(SecFullTextSource(weights, ua))      # EDGAR full-text phrase search (scrape pack)
+    if s.get("hiring"):
+        out.append(GreenhouseHiringSource(weights))     # hiring-velocity alt-data (scrape pack)
     if s.get("scrape_targets"):
         out.append(HtmlScraperSource(weights, s["scrape_targets"]))
     if s.get("megafleet"):

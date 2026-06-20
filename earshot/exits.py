@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import time
 
-from . import technicals
+from . import technicals, options
 
 
 class ExitEngine:
@@ -21,6 +21,8 @@ class ExitEngine:
         self.trail_arm_pct = float(e.get("trail_arm_pct", 4.0))  # only trail after this much gain
         self.tech = cfg.get("technicals", {})
         self.tech_on = bool(self.tech.get("enabled", True))
+        self.opt = cfg.get("options", {})
+        self.opt_on = bool(self.opt.get("enabled", True))
 
     def evaluate(self, pos: dict, price: float, bearish_tickers: set | None = None,
                  now: float | None = None) -> tuple[str | None, float]:
@@ -41,6 +43,11 @@ class ExitEngine:
         # PRICE ACTION: a fresh bearish reversal candle (overbought / trend-break) -> the move is done.
         if self.tech_on:
             should, why = technicals.exit_read(pos["ticker"], self.tech)
+            if should:
+                return why, chg
+        # OPTIONS TAPE: a strong bearish positioning shift on a name we hold long -> get out.
+        if self.opt_on:
+            should, why = options.exit_read(pos["ticker"], self.opt)
             if should:
                 return why, chg
         if bearish_tickers and pos["ticker"] in bearish_tickers:

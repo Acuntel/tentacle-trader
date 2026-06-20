@@ -54,6 +54,8 @@ source_weights:
   polymarket: 0.55
   wiki_attention: 0.45
   nasdaq_halts: 0.60
+  sec_fulltext: 0.85
+  hiring: 0.50
 
 # Per-catalyst prior drift multiplier + default hold (learning tunes these too)
 catalysts:
@@ -97,6 +99,19 @@ technicals:
   entry_veto_on_bearish_reversal: true   # block a BUY into a shooting-star / bearish-engulfing at the highs
   exit_on_bearish_reversal: true         # a bearish reversal candle (+overbought / trend-break) -> take the exit
 
+# ---- Options & volatility intelligence (where informed money positions BEFORE the catalyst) ----
+options:
+  enabled: true
+  confirm_bias: 0.25            # options tape this bullish -> counts as an ORTHOGONAL confirmation pillar
+  contra_bias: 0.35            # heavy put positioning into a long -> shrink the score (caution)
+  exit_bias: 0.50              # strongly bearish options flow on a held long -> take the exit
+
+# ---- Fundamentals / float / short interest (how violently it can move + zombie filter) ----
+fundamentals:
+  enabled: true
+  squeeze_boost: 0.2           # small-float + heavily-shorted -> a confirmed long can run further
+  zombie_quality_floor: 0.3   # below this quality (cash-burning, shrinking) -> trust the catalyst less
+
 # ---- Continuous self-review (diagnoses its own behaviour, auto-applies safe fixes, flags the rest) ----
 selfreview:
   enabled: true
@@ -115,6 +130,8 @@ sources:
   berkshire_13f: true           # §18 track Buffett's reported holdings (quarterly, low weight)
   openinsider: true             # SCRAPED whale signal — OpenInsider cluster buys (no API)
   nasdaq_halts: true            # NEW tentacle — Nasdaq trading halts/resumptions (volatility catalyst)
+  sec_fulltext: true            # scrape pack — EDGAR full-text phrase search (merger/FDA/going-concern)
+  hiring: true                  # scrape pack — Greenhouse hiring-velocity alt-data
   megafleet: true               # tiered rotating tentacles
   fleet_universe: all           # 'all' = full US listings (~10k+ tentacles) | 'sp500' = focused ~1155
   fleet_fast_batch: 25          # liquid-core feeds polled per tick (stay fresh)
