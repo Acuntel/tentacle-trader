@@ -221,3 +221,42 @@ class WikiAttentionSource(Source):
             except Exception:
                 pass
         return out
+
+
+class NasdaqHaltsSource(Source):
+    """Live NYSE/Nasdaq trading halts + resumptions (free Nasdaq Trader feed). A news-pending halt
+    or a fresh resumption is a real volatility catalyst — the stock is about to move on something.
+    Volatility (LUDP) halts on micro-caps get filtered downstream by the liquidity floor."""
+    key = "nasdaq_halts"
+    min_interval = 90.0
+    URL = "http://www.nasdaqtrader.com/rss.aspx?feed=tradehalts"
+    NEWS_CODES = {"T1", "T2", "T6", "T8", "T12", "H10", "H4", "M", "MWC1", "MWC2", "MWC3"}
+
+    @staticmethod
+    def _tag(block: str, name: str) -> str:
+        m = re.search(rf"<[^>]*{name}>([^<]*)<", block)
+        return (m.group(1).strip() if m else "")
+
+    def fetch(self) -> list[RawSignal]:
+        try:
+            r = requests.get(self.URL, headers={"User-Agent": "TENTACLE/1.0 (market research)"},
+                             timeout=TIMEOUT)
+        except Exception:
+            return []
+        out: list[RawSignal] = []
+        for block in r.text.split("<item>")[1:]:
+            sym = self._tag(block, "IssueSymbol")
+            if not sym or not sym.isalpha() or len(sym) > 5:
+                continue
+            code = self._tag(block, "ReasonCode")
+            resumed = bool(self._tag(block, "ResumptionTradeTime"))
+            news_halt = code in self.NEWS_CODES
+            if not (news_halt or resumed):
+                continue                                  # skip routine non-news halts
+            what = "resuming after" if resumed else "halted —"
+            out.append(RawSignal(
+                source=self.key, weight=self.weight(), ts=now_ts(), tickers=[sym],
+                headline=f"{sym} {what} trading halt ({code or 'n/a'})",
+                url="https://www.nasdaqtrader.com/Trader.aspx?id=TradeHalts",
+                catalyst_hint=None, strength=1.0 if (news_halt and resumed) else 0.7))
+        return out

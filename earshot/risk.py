@@ -3,7 +3,7 @@ Emotion (survival.py) guides choices; this binds them."""
 from __future__ import annotations
 
 from .models import Candidate
-from . import prices
+from . import prices, market
 
 SOCIAL_SOURCES = {"apewisdom", "x_relay", "reddit", "discord", "telegram", "stocktwits"}
 
@@ -11,10 +11,15 @@ SOCIAL_SOURCES = {"apewisdom", "x_relay", "reddit", "discord", "telegram", "stoc
 class RiskGate:
     def __init__(self, cfg: dict):
         self.r = cfg["risk"]
+        self.market = cfg.get("market", {})
         self.armed = False             # never armed in this build; flipping requires a live rung + human
         self.exec_count = 0
 
     def check(self, c: Candidate, instinct, open_positions, today_pnl: float) -> tuple[bool, str]:
+        # HARD LAW: a closed market cannot be traded. No entry off-hours, ever — the price isn't real.
+        ok, why, _ = market.can_open(self.market)
+        if not ok:
+            return False, why
         if instinct.dead:
             return False, "bot is DEAD (ruin floor hit) — re-qualification required"
         if today_pnl <= -abs(self.r["daily_max_loss_usd"]):

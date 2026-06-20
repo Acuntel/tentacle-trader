@@ -10,7 +10,7 @@ from .base import Source
 from .free import EdgarSource, ApeWisdomSource, HackerNewsSource, RssSource
 from .keyed import AlpacaNewsSource, FinnhubSource
 from .extra import (PolymarketSource, UsaSpendingSource, ClinicalTrialsSource,
-                    Berkshire13FSource, WikiAttentionSource)
+                    Berkshire13FSource, WikiAttentionSource, NasdaqHaltsSource)
 from .newswire import MarketNewsSource
 from .fleet import MegaFleetSource
 from .scrape import OpenInsiderSource, HtmlScraperSource
@@ -40,6 +40,8 @@ def build_sources(cfg: dict, weights: dict) -> list[Source]:
         out.append(OpenInsiderSource(weights))          # scraped whale signal (cluster buys)
     if s.get("wiki_attention"):
         out.append(WikiAttentionSource(weights))        # web-visitor proxy (pageview spikes)
+    if s.get("nasdaq_halts"):
+        out.append(NasdaqHaltsSource(weights))          # live trading halts / resumptions (volatility catalyst)
     if s.get("scrape_targets"):
         out.append(HtmlScraperSource(weights, s["scrape_targets"]))
     if s.get("megafleet"):

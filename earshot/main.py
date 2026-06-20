@@ -12,7 +12,7 @@ import time
 
 import yaml
 
-from . import prices
+from . import prices, market
 from .sources import build_sources
 from .brain import Brain
 from .survival import MotherInstinct
@@ -24,6 +24,7 @@ from .daily import DailyGuard
 from .exits import ExitEngine
 from .macro import MacroMonitor
 from .enrich import EnrichmentEngine
+from .selfreview import SelfReview
 
 
 def load_config(path: str) -> dict:
@@ -61,6 +62,10 @@ class Earshot:
         self.brain.patterns = self.learner.patterns            # share the learned pattern memory
         self.enricher = EnrichmentEngine(cfg)                  # on-demand data collection
         self.enricher.weights = self.weights
+        self.selfreview = SelfReview(cfg, self.learner, self.instinct)  # continuous self-diagnosis
+        self.review = cfg.get("selfreview", {})
+        self.cycle = 0
+        self.last_review_day = None
 
     def _dedup(self) -> list:
         seen, out = set(), []
@@ -81,11 +86,15 @@ class Earshot:
         return eq
 
     def run_once(self):
+        self.cycle += 1
         st = self.instinct.status()
+        mkt_open, mkt_why, mkt = market.can_open(self.cfg.get("market", {}))
         print("\n" + "=" * 74)
         print(f"TENTACLE [{st['mode'].upper()}]  rung {st['rung']} ({st['stage']})  "
               f"capital-unlocked ${st['capital_unlocked']}  mastery {st['mastery']}/{st['needs_mastery']}")
         print(f"mood: {st['mood']}")
+        nxt = "" if mkt_open else f"  | next open {mkt['next_open']}"
+        print(f"market: {'OPEN' if mkt_open else 'CLOSED'} — {mkt['reason']}  ({mkt['et']}){nxt}")
         print(f"tentacles live: {', '.join(s.key for s in self.sources) or '(none)'}"
               f"{'' if prices.have_prices() else '   [no yfinance: price filters degrade gracefully]'}")
         print("-" * 74)
@@ -153,10 +162,13 @@ class Earshot:
                   f"{getattr(c, '_families', 1)} fam  ~${c.size_usd:.0f}")
         self.learner.observe(cands)        # every confirmed setup -> a labeled example to learn from
 
-        # 5) act — but NOT if the day is halted (in the dungeon until tomorrow)
+        # 5) act — but NOT if the day is halted, and NEVER when the market is closed (can't trade it)
         if self.daily.halted():
             print("\n  >> HALTED for the rest of the day (-10% breaker). In the dungeon. "
                   "Back tomorrow, more cautious.")
+        elif not mkt_open:
+            print(f"\n  >> NO ENTRIES — {mkt_why}. "
+                  "Open positions still managed; stops/exits stay armed for the next session.")
         else:
             chosen, why = None, "nothing cleared the bar — staying patient protects the child"
             for c in cands:
@@ -203,6 +215,17 @@ class Earshot:
             print("  patterns learned — best:", [f"{r['sig']}={r['win']}({r['n']})" for r in prep["best"][:3]])
             if prep["worst"]:
                 print("    vetoed/weak:", [f"{r['sig']}={r['win']}({r['n']})" for r in prep["worst"][:3]])
+
+        # 7) SELF-REVIEW — diagnose its own behaviour and recommend (auto-apply the safe) fixes
+        every = max(1, int(self.review.get("every_cycles", 240)))
+        day = time.strftime("%Y-%m-%d")
+        if self.review.get("enabled", True) and (
+                self.cycle == 1 or self.cycle % every == 0 or day != self.last_review_day):
+            self.last_review_day = day
+            rep = self.selfreview.run()
+            print(f"\n  self-review — {rep['n_auto_applied']} safe fix(es) auto-applied:")
+            for line in SelfReview.summarize(rep):
+                print(f"    - {line}")
         print("=" * 74)
 
     def loop(self):

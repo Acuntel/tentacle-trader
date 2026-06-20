@@ -11,12 +11,16 @@ from __future__ import annotations
 
 import time
 
+from . import technicals
+
 
 class ExitEngine:
     def __init__(self, cfg: dict):
         e = cfg.get("exits", {})
         self.trail_pct = float(e.get("trail_pct", 5.0))        # give back this much from peak -> sell
         self.trail_arm_pct = float(e.get("trail_arm_pct", 4.0))  # only trail after this much gain
+        self.tech = cfg.get("technicals", {})
+        self.tech_on = bool(self.tech.get("enabled", True))
 
     def evaluate(self, pos: dict, price: float, bearish_tickers: set | None = None,
                  now: float | None = None) -> tuple[str | None, float]:
@@ -34,6 +38,11 @@ class ExitEngine:
             return "target", chg
         if peak_gain >= self.trail_arm_pct and drop_from_peak <= -self.trail_pct:
             return "trailing", chg
+        # PRICE ACTION: a fresh bearish reversal candle (overbought / trend-break) -> the move is done.
+        if self.tech_on:
+            should, why = technicals.exit_read(pos["ticker"], self.tech)
+            if should:
+                return why, chg
         if bearish_tickers and pos["ticker"] in bearish_tickers:
             return "decay", chg
         if held_days >= pos.get("hold_days", 5):

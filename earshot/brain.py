@@ -6,6 +6,7 @@ from collections import defaultdict
 
 from .models import RawSignal, Candidate, Catalyst
 from . import prices
+from . import technicals
 
 RAW_SCALE = 2.0  # raw≈2 -> ~63, raw≈3 -> ~78, raw≈4 -> ~86
 
@@ -16,6 +17,7 @@ FAMILY = {
     "finnhub_earnings": "surprise",
     "alpaca_news": "news", "finnhub": "news", "google_news": "news", "hackernews": "news",
     "fda": "regulatory", "gov_contract": "regulatory", "index_inclusion": "regulatory",
+    "nasdaq_halts": "regulatory",
     "polymarket": "crowd",
     "wiki_attention": "attention",
     "x_relay": "flow",
@@ -58,6 +60,8 @@ class Brain:
         self.cats = cfg["catalysts"]
         self.patterns = None        # PatternMemory, attached by main
         self.macro = ""             # current macro regime tag, set by main each cycle
+        self.tech = cfg.get("technicals", {})           # candlestick / indicator entry-timing layer
+        self.tech_on = bool(self.tech.get("enabled", True))
 
     def _score(self, sources_strength: dict[str, float], prior: float,
                earliness: float, n_families: int) -> float:
@@ -119,22 +123,35 @@ class Brain:
                 sig = self.patterns.signature(catalyst.value, families, self.macro)
                 score *= self.patterns.multiplier(sig)
                 target = self.patterns.suggested_target(sig, ccfg["target_pct"])
+
+            # PRICE ACTION (candlesticks + RSI/trend) decides the TIMING — only for names that already
+            # cleared the catalyst gate, so we never price-scan the whole fleet (anti-ban).
+            tech_notes, tech_veto = [], None
+            if qualifies and self.tech_on:
+                allow, tmult, tech_notes = technicals.entry_read(tk, self.tech)
+                score *= tmult
+                if not allow:
+                    tech_veto = "price action says wait — bearish reversal at the highs"
             score = max(0.0, min(100.0, score))
 
+            reasons = [
+                f"{len(per_source)} sources / {len(families)} families "
+                f"({', '.join(sorted(families))}): {', '.join(sorted(per_source))}",
+                f"catalyst={catalyst.value}, macro={self.macro or 'n/a'}, pattern={sig or 'new'}",
+                f"take-profit {target}% / stop {ccfg['stop_pct']}%",
+            ]
+            if tech_notes:
+                reasons.append("price action: " + " | ".join(tech_notes))
             cand = Candidate(
                 ticker=tk, catalyst=catalyst, confidence=score,
                 size_usd=self._size(score, capital), signals=sigs, runup_pct=runup,
                 regime_ok=not regime_down,
                 stop_pct=ccfg["stop_pct"], target_pct=target, hold_days=ccfg["hold_days"],
-                reasons=[
-                    f"{len(per_source)} sources / {len(families)} families "
-                    f"({', '.join(sorted(families))}): {', '.join(sorted(per_source))}",
-                    f"catalyst={catalyst.value}, macro={self.macro or 'n/a'}, pattern={sig or 'new'}",
-                    f"take-profit {target}% / stop {ccfg['stop_pct']}%",
-                ],
+                reasons=reasons,
             )
             cand._families = len(families)
             cand._signature = sig
+            cand._tech_veto = tech_veto
             out.append(cand)
         out.sort(key=lambda c: c.confidence, reverse=True)
         return out
@@ -142,6 +159,8 @@ class Brain:
     def passes_gate(self, c: Candidate) -> tuple[bool, str]:
         if self.patterns is not None and self.patterns.is_loser(getattr(c, "_signature", "")):
             return False, "pattern recognized as a persistent loser — vetoed"
+        if getattr(c, "_tech_veto", None):
+            return False, c._tech_veto
         if c.n_independent < self.conv["min_independent_sources"]:
             return False, f"only {c.n_independent} source(s); need {self.conv['min_independent_sources']}"
         fams = getattr(c, "_families", 1)

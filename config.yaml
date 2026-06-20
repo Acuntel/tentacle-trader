@@ -53,6 +53,7 @@ source_weights:
   telegram: 0.25
   polymarket: 0.55
   wiki_attention: 0.45
+  nasdaq_halts: 0.60
 
 # Per-catalyst prior drift multiplier + default hold (learning tunes these too)
 catalysts:
@@ -83,6 +84,25 @@ regime:
   proxy: SPY
   downtrend_lookback_days: 20
 
+# ---- Market clock (the bot must KNOW when the exchange is open — a closed market can't be traded) ----
+market:
+  require_open: true            # HARD LAW: never OPEN a position off-hours (weekend/holiday/after-hours)
+  allow_extended_hours: false   # if true, also allow pre-market (04:00-09:30 ET) + after-hours (16:00-20:00 ET)
+
+# ---- Price action: candlesticks + indicators decide WHEN to enter / exit (the catalyst decides WHAT) ----
+technicals:
+  enabled: true
+  rsi_overbought: 70
+  rsi_oversold: 30
+  entry_veto_on_bearish_reversal: true   # block a BUY into a shooting-star / bearish-engulfing at the highs
+  exit_on_bearish_reversal: true         # a bearish reversal candle (+overbought / trend-break) -> take the exit
+
+# ---- Continuous self-review (diagnoses its own behaviour, auto-applies safe fixes, flags the rest) ----
+selfreview:
+  enabled: true
+  every_cycles: 240            # ~hourly at a 15s tick; also runs on the first cycle and each new day
+  min_samples: 5              # don't "recommend" anything until there's enough real data to back it
+
 # ---- Tentacles (sources) to poll ----
 sources:
   edgar: true
@@ -94,6 +114,7 @@ sources:
   clinicaltrials: true          # §18 biotech trial status
   berkshire_13f: true           # §18 track Buffett's reported holdings (quarterly, low weight)
   openinsider: true             # SCRAPED whale signal — OpenInsider cluster buys (no API)
+  nasdaq_halts: true            # NEW tentacle — Nasdaq trading halts/resumptions (volatility catalyst)
   megafleet: true               # tiered rotating tentacles
   fleet_universe: all           # 'all' = full US listings (~10k+ tentacles) | 'sp500' = focused ~1155
   fleet_fast_batch: 25          # liquid-core feeds polled per tick (stay fresh)

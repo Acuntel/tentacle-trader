@@ -29,16 +29,41 @@ EXTRA_TICKERS = ("IONQ RGTI QBTS QUBT SOUN BBAI PLTR SMCI MU ARM SOFI HOOD COIN 
                  "MSTR GME AMC UBER LYFT ABNB DKNG RIVN LCID NIO XPEV LI CHPT PLUG ENPH FSLR NVAX "
                  "MRNA BNTX SAVA AXSM CRSP NTLA BEAM VKTX RXRX TEM HIMS OSCR DNA PATH AI GTLB NET "
                  "DDOG SNOW CRWD ZS PANW MDB OKTA TTD ROKU PINS SHOP SQ PYPL AFRM UPST TSM ASML "
-                 "MRVL LRCX KLAC AMAT ON WOLF LMT NOC GD OXY").split()
+                 "MRVL LRCX KLAC AMAT ON WOLF LMT NOC GD OXY "
+                 # — expanded fleet —
+                 "LHX LDOS BAH HII KTOS AVAV RKLB ASTS LUNR ACHR JOBY EH RCAT ONDS "
+                 "GILD BIIB VRTX REGN BMY SRPT BLUE EXEL ALNY INCY MRTX IOVA CYTK DVAX KRYS "
+                 "TSLA F GM FORD STLA TM HMC NKLA HYLN GOEV FFIE "
+                 "CVNA CHWY ETSY W RH BBWI ELF DECK CROX ONON BIRK "
+                 "DELL HPQ HPE WDC STX ANET CIEN JNPR FFIV NTAP PSTG "
+                 "T VZ TMUS CMCSA CHTR WBD PARA FUBO RDDT SPOT DASH ZG "
+                 "XOM CVX COP SLB HAL DVN FANG MPC PSX VLO KMI WMB ET LNG "
+                 "FCX NEM AA CLF X NUE STLD MP ALB LAC SQM CCJ UEC URA UUUU "
+                 "JPM BAC WFC C GS MS SCHW BLK KKR APO BX ALLY DFS SYF "
+                 "ABNB MGM LVS WYNN CZR PENN RCL CCL NCLH UAL DAL AAL LUV "
+                 "AMD INTC TSM ASML AMAT KLAC TER ENTG COHR INDI MBLY "
+                 "CRSP NTLA BEAM PRME VERV EDIT NVCR TDOC DOCS GH NTRA "
+                 "PLTR SNOW NET CFLT S DT ESTC FROG BRZE PD GTLB ASAN MNDY").split()
 
 KEYWORDS = ["FDA approval", "phase 3 results", "to acquire", "merger agreement", "added to S&P 500",
             "raises full-year guidance", "earnings beat", "wins contract", "stock halted",
             "files for bankruptcy", "activist investor stake", "stock buyback", "reverse stock split",
             "FDA rejects", "clinical trial results", "government contract awarded", "analyst upgrade",
-            "price target raised", "guides above", "strategic review"]
+            "price target raised", "guides above", "strategic review",
+            # — expanded catalysts —
+            "definitive agreement", "to be acquired", "takeover bid", "going private", "tender offer",
+            "PDUFA date", "breakthrough therapy", "fast track designation", "topline results",
+            "DoD contract", "NASA awards", "Pentagon awards", "billion contract", "task order",
+            "raises dividend", "initiates dividend", "special dividend", "secondary offering",
+            "short squeeze", "13D filed", "stake in", "joins Nasdaq-100", "index reconstitution",
+            "CEO resigns", "CFO departs", "guidance cut", "profit warning", "recalls",
+            "data readout", "interim analysis", "primary endpoint met", "license agreement",
+            "wins approval", "halts trading", "resumes trading", "all-time high", "record bookings"]
 
 REDDIT = ["wallstreetbets", "stocks", "options", "investing", "StockMarket", "biotechstocks",
-          "SPACs", "pennystocks", "Shortsqueeze"]
+          "SPACs", "pennystocks", "Shortsqueeze", "ValueInvesting", "SecurityAnalysis",
+          "smallstreetbets", "Biotechplays", "Vitards", "weedstocks", "EVStocks", "wallstreetbetsELITE",
+          "trakstocks", "robinhoodpennystocks", "stockstobuytoday"]
 
 MEDIA = [
     ("https://www.fiercebiotech.com/rss/xml", "newswire", 0.8),
@@ -51,6 +76,23 @@ MEDIA = [
     ("https://www.defense.gov/DesktopModules/ArticleCS/RSS.ashx?ContentType=1&Site=945&max=20", "gov_contract", 0.8),
     ("https://seekingalpha.com/market_currents.xml", "google_news", 0.9),
     ("https://www.cnbc.com/id/10000664/device/rss/rss.html", "google_news", 0.9),
+    # — expanded media / wire feeds (all free RSS) —
+    ("https://www.globenewswire.com/RssFeed/orgclass/1/feedTitle/GlobeNewswire", "newswire", 0.9),
+    ("https://www.prnewswire.com/rss/news-releases-list.rss", "newswire", 0.85),
+    ("https://feeds.content.dowjones.io/public/rss/mw_topstories", "google_news", 0.7),
+    ("https://www.businesswire.com/portal/site/home/news/", "newswire", 0.8),
+    ("https://www.fiercepharma.com/rss/xml", "newswire", 0.8),
+    ("https://endpts.com/feed/", "newswire", 0.75),
+    ("https://www.statnews.com/feed/", "google_news", 0.6),
+    ("https://www.fda.gov/about-fda/contact-fda/stay-informed/rss-feeds/press-releases/rss.xml", "fda", 0.9),
+    ("https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=8-K&output=atom", "edgar_8k", 0.9),
+    ("https://www.federalreserve.gov/feeds/press_all.xml", "google_news", 0.5),
+    ("https://home.treasury.gov/system/files/126/ofac.xml", "google_news", 0.4),
+    ("https://www.reuters.com/markets/us/rss", "google_news", 0.8),
+    ("https://www.marketwatch.com/rss/topstories", "google_news", 0.7),
+    ("https://www.benzinga.com/feed", "google_news", 0.7),
+    ("https://finance.yahoo.com/news/rssindex", "google_news", 0.7),
+    ("https://www.ainvest.com/rss", "google_news", 0.4),
 ]
 
 
