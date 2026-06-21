@@ -83,7 +83,9 @@ class MotherInstinct:
             "peak_equity": self.start,
             "dead": False,
             "recent": [],                   # rolling outcomes: {conf, pnl_pct, win}
+            "milestones": [],               # growth milestones hit -> the target keeps ratcheting up
         })
+        self._escalate_target()             # restore the escalated ambition from past milestones
 
     # ---- capital access ----
     def rung_cfg(self) -> dict:
@@ -145,6 +147,32 @@ class MotherInstinct:
         surest setups, the closer her son is to death. Bounded; only ever tightens (never loosens)."""
         return round(self.emotion()["fear"] * 12.0, 1)
 
+    def scale_tier(self) -> str:
+        """The son's scale. As he grows, the SAME dollar loss means less — the mother thinks in % of
+        where he is now, not the $500 he started at. $50 lost is grave at $500, nothing at $500k."""
+        eq = self.state["paper_equity"]
+        return ("tiny (<$1k)" if eq < 1000 else "small ($1-10k)" if eq < 10000 else
+                "growing ($10-100k)" if eq < 100000 else "substantial ($100k-1M)" if eq < 1_000_000
+                else "large ($1M+)")
+
+    def _escalate_target(self):
+        for m in self.state.get("milestones", []):
+            try:
+                self.growth_target = max(self.growth_target, int(m[1:]) * 2)   # 'x10' -> aim for 20x
+            except Exception:
+                pass
+
+    def ambition(self) -> dict:
+        """Proud as he grows — but NEVER satisfied. Each milestone makes her HUNGRIER, not calmer; the
+        drive to grow him intensifies the bigger he gets, and the target keeps ratcheting higher."""
+        mult = self.state["paper_equity"] / self.start if self.start else 1.0
+        doublings = max(0, int(math.log2(mult))) if mult > 0 else 0
+        return {"x_grown": round(mult, 2), "doublings": doublings, "intensity": round(1.0 + 0.5 * doublings, 2),
+                "milestones_hit": self.state.get("milestones", []), "target_x": self.growth_target,
+                "note": (f"My son is {mult:.1f}x his start, now {self.scale_tier()}. I am prouder than I've "
+                         f"ever been — and HUNGRIER. Every step up makes me want to grow him MORE than before, "
+                         f"never less. The target is now {self.growth_target:g}x. Higher.")}
+
     def mood(self) -> str:
         if self.dead:
             return "GRIEF — my son is gone. I failed him. I must re-earn the right to raise one from the bottom."
@@ -175,6 +203,14 @@ class MotherInstinct:
         self.state["recent"] = (self.state["recent"] + [{
             "conf": conf, "pnl_pct": round(pnl_pct, 2), "win": pnl_pct > 0,
         }])[-100:]
+
+        # escalating ambition: each growth milestone makes her hungrier and lifts the target
+        mult = self.state["paper_equity"] / self.start if self.start else 0
+        ms = self.state.setdefault("milestones", [])
+        for thresh in (2, 5, 10, 25, 50, 100, 500, 1000):
+            if mult >= thresh and f"x{thresh}" not in ms:
+                ms.append(f"x{thresh}")
+                self.growth_target = max(self.growth_target, thresh * 2)
 
         note = ""
         # death: equity fell through the ruin floor for this stage

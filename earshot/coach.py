@@ -16,6 +16,7 @@ import time
 from . import llm, evolve, persist
 from .learning import WMIN, WMAX
 from .models import iso
+from .strategies import StrategyBook
 
 EVO_DIR = "state/evolution"
 LOG_MD = os.path.join(EVO_DIR, "EVOLUTION_LOG.md")
@@ -47,6 +48,7 @@ class Coach:
         self.sim = sim
         self.scout = scout
         self.core = core
+        self.book = StrategyBook(cfg, core) if core is not None else None   # the strategy tournament
         self.last = 0.0
         self.last_backup_day = None
         self.know = learner.know
@@ -72,9 +74,11 @@ class Coach:
         except Exception:
             pass
         rep = {"creed": self.instinct.creed(), "mood": self.instinct.mood(),
-               "emotion": self.instinct.emotion(),
+               "emotion": self.instinct.emotion(), "ambition": self.instinct.ambition(),
+               "scale_tier": self.instinct.scale_tier(),
                "mastery": self.instinct.mastery(), "growth_progress": self.instinct.growth_progress(),
                "sim": self.sim.report(), "macro_regime": macro_ctx,
+               "strategy_leaderboard": self.book.leaderboard(6) if self.book else [],
                "recent_losses": losses, "tonight_news": heads}
         rep.update(self.core.snapshot())                  # the WHOLE shared brain, in one view
         return rep
@@ -91,6 +95,9 @@ class Coach:
         studies = evolve.run_studies(self.core, patterns)
         rt = evolve.redteam(self.cfg); self.know["redteam"] = rt
         bench = evolve.benchmark(self.core, self.sim, int(self.cfg.get("sim", {}).get("history_years", 10)))
+        # STRATEGY TOURNAMENT — N strategies compete on the decade; adopt the champion's rules as live
+        tour = self.book.evaluate() if self.book else {"ran": 0}
+        champ = self.book.adopt_champion(self.cfg) if self.book else None
 
         # RECURSIVE GROWTH LEDGER — snapshot the whole son today, track whether he's growing FASTER,
         # and back the brain up daily so an update can never lose progress.
@@ -160,6 +167,8 @@ class Coach:
             f"calib x{cal.get('factor', 1.0)}, +{len(lessons)} lessons, {len(code_props)} code + "
             f"{len(new_sources)} source ideas, redteam {'OK' if rt['ok'] else 'FAIL ' + str(rt['failed'])}, "
             f"edge/trade vs SPY {bench.get('edge_per_trade_pct', 'n/a')}%, "
+            f"champion {champ['style'] + ' ' + str(champ['stop']) + '/' + str(champ['target']) + '/' + str(champ['hold']) + 'd' if champ else 'forming'} "
+            f"of {len(self.book.book) if self.book else 0} strategies, "
             f"trajectory {'↑ growing faster' if traj.get('improving') else 'flat (day ' + str(traj.get('days', 0)) + ')'}")
         return {"syn": syn, "rules": rules, "studies": studies, "calib": cal, "redteam": rt,
                 "benchmark": bench, "lessons": lessons, "code_proposals": code_props,
@@ -186,6 +195,9 @@ class Coach:
                  f"- safety red-team: {'ALL GATES HOLD' if rt['ok'] else '⚠ FAILED: ' + str(rt['failed'])}",
                  f"- vs SPY buy-and-hold: edge/trade {bench.get('edge_per_trade_pct','n/a')}% "
                  f"(sim {bench.get('sim_avg_pct','?')}% vs SPY {bench.get('spy_avg_hold_pct','?')}% per hold)",
+                 f"- strategy tournament (top by loss-averse expectancy): "
+                 + ", ".join(f"{r['style']} {r['rule']} win{r['win']}" for r in rep.get('strategy_leaderboard', [])[:3]),
+                 f"- ambition: {rep.get('ambition', {}).get('note', '')}",
                  f"- new data-source ideas: {', '.join(new_sources) if new_sources else 'none'}",
                  f"- lessons: {'; '.join(lessons) if lessons else 'none'}",
                  f"- code proposals (await review): {len(code_props)}"]

@@ -211,6 +211,13 @@ audit:
   enabled: true
   every_minutes: 60            # one module reviewed per pass; the whole codebase gets swept over time
 
+# ---- Strategy tournament: N strategies compete on the decade; the champion's rules go LIVE ----
+strategies:
+  enabled: true
+  count: 24                    # strategies in the tournament (5/10/100/1000 allowed — but count != edge)
+  events_per_cycle: 200        # historical events each strategy trades per heartbeat (a fair shared set)
+  min_trades_to_rank: 40       # don't crown a strategy until it has this many trades
+
 # ---- On-demand enrichment (brain pulls more data on under-confirmed names) ----
 enrichment:
   max_per_cycle: 2             # probe at most N under-confirmed tickers per tick
