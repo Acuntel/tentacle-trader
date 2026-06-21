@@ -48,6 +48,21 @@ class PatternMemory:
         st = self._stats(sig)
         return st["trades"] >= 12 and _wilson_lower(st["wins"], st["trades"]) < 0.30
 
+    def is_decayed(self, sig: str) -> bool:
+        """CONCEPT DRIFT: a once-good pattern whose RECENT window is much worse than its lifetime —
+        a regime shift killed it. Veto it until it proves itself again, instead of trusting stale stats."""
+        st = self._stats(sig)
+        rec = st.get("recent", [])
+        if len(rec) < 10 or st["trades"] < 12:
+            return False
+        recent_wr = sum(rec) / len(rec)
+        life_wr = st["wins"] / st["trades"]
+        return recent_wr < life_wr - 0.25 and recent_wr < 0.45
+
+    def refresh_decay(self) -> list[str]:
+        """All patterns currently in decay — computed in the brain core's simultaneous synthesis."""
+        return [s for s in self.p if self.is_decayed(s)]
+
     def suggested_target(self, sig: str, default: float) -> float:
         """How much this pattern usually pays when it wins -> the profit target to aim for."""
         st = self._stats(sig)
@@ -64,6 +79,7 @@ class PatternMemory:
         if win:
             st["wins"] += 1
             st["sum_win_ret"] += pnl_pct
+        st["recent"] = (st.get("recent", []) + [1 if win else 0])[-20:]   # rolling window for decay
 
     def report(self, k: int = 5) -> dict:
         rows = [{"sig": s, "n": v["trades"], "win": round(v["wins"] / v["trades"], 2),

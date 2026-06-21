@@ -30,6 +30,7 @@ from .learnedgate import LearnedGate
 from .sim import SimEngine
 from .coach import Coach
 from .audit import Auditor
+from .core import BrainCore
 
 
 def load_config(path: str) -> dict:
@@ -70,11 +71,14 @@ class Earshot:
         self.brain.analyst = self.analyst
         self.brain.lgate = self.lgate
         self.learner.lgate = self.lgate                       # so resolved outcomes train the model
+        self.core = BrainCore(self.learner.know, self.weights, cfg)  # THE shared brain — wired to everything
+        self.brain.core = self.core                           # learned trading rules + calibration in decisions
+        self.learner.core = self.core                         # lead-time learning on every confirmed setup
         self.enricher = EnrichmentEngine(cfg)                  # on-demand data collection
         self.enricher.weights = self.weights
         self.selfreview = SelfReview(cfg, self.learner, self.instinct)  # continuous self-diagnosis
         self.sim = SimEngine(cfg, self.learner)                # 24/7 backtests on the cached decade
-        self.coach = Coach(cfg, self.learner, self.instinct, self.sim, self.scout)  # self-improvement
+        self.coach = Coach(cfg, self.learner, self.instinct, self.sim, self.scout, self.core)  # self-improvement
         self.auditor = Auditor(cfg)                            # 24/7 self-code audit loop (propose-only)
         self.review = cfg.get("selfreview", {})
         self.hist_every = int(cfg.get("sim", {}).get("history_refresh_seconds", 120))
@@ -267,6 +271,8 @@ class Earshot:
         if self.coach.due():
             cr = self.coach.run(signals, self.macro_mon.context)
             print(f"\n  coach [{cr['by']}] — {self.coach.last_summary}")
+            if not cr["redteam"]["ok"]:
+                print(f"    ⚠ SAFETY RED-TEAM FAILED: {cr['redteam']['failed']} — a protective gate no longer holds!")
             if cr["code_proposals"] or cr.get("new_sources"):
                 print(f"    {len(cr['code_proposals'])} code + {len(cr.get('new_sources', []))} new-source "
                       "idea(s) journaled -> state/evolution/ (review); diary in EVOLUTION_LOG.md")

@@ -49,6 +49,7 @@ class Learner:
             self.weights.update(self.know["weights"])
         self.patterns = PatternMemory(self.know)   # learned pattern win-rates (persisted)
         self.lgate = None                          # LearnedGate (P(win) model), attached by main
+        self.core = None                           # shared BrainCore, attached by main
 
     def _persist_know(self):
         self.know["weights"] = self.weights      # learned weights ride along, survive restarts
@@ -133,6 +134,8 @@ class Learner:
         for c in candidates:
             if getattr(c, "_families", 1) < 2:        # only confirmed (multi-family) setups
                 continue
+            if self.core is not None:
+                self.core.record_leadtime(c)          # which source got here FIRST (lead-time learning)
             if (c.ticker, today) in have or len(self.obs) >= max_pending:
                 continue
             px = prices.last_price(c.ticker)

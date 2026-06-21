@@ -68,6 +68,7 @@ class Brain:
         self.patterns = None        # PatternMemory, attached by main
         self.analyst = None         # Analyst (reasoning judge), attached by main
         self.lgate = None           # LearnedGate (P(win) model), attached by main
+        self.core = None            # shared BrainCore (learned rules + calibration), attached by main
         self.macro = ""             # current macro regime tag, set by main each cycle
         self.tech = cfg.get("technicals", {})           # candlestick / indicator entry-timing layer
         self.tech_on = bool(self.tech.get("enabled", True))
@@ -115,6 +116,8 @@ class Brain:
                 catalyst = max(votes, key=votes.get)
 
             ccfg = self.cats.get(catalyst.value, {"prior": 1.0, "hold_days": 5, "stop_pct": 8, "target_pct": 12})
+            if self.core is not None:                 # use the decade-optimized trading rules when learned
+                ccfg = self.core.rule(catalyst.value, ccfg)
 
             # only spend a yfinance price call on candidates that could ACTUALLY qualify
             # (>= min sources AND min families) — at 10k tentacles this prevents a Yahoo ban
@@ -154,6 +157,8 @@ class Brain:
                 fmult, fund_notes = fundamentals.entry_read(tk, self.fund)
                 score *= fmult                              # squeeze fuel boosts, zombie quality shrinks
                 feats = fundamentals.features(tk)
+            if self.core is not None:                  # calibration: scale conviction to realized win-rate
+                score *= self.core.calib_factor(score)
             score = max(0.0, min(100.0, score))
 
             eff_families = len(families) + (1 if opt_confirm else 0)
@@ -208,6 +213,8 @@ class Brain:
     def passes_gate(self, c: Candidate) -> tuple[bool, str]:
         if self.patterns is not None and self.patterns.is_loser(getattr(c, "_signature", "")):
             return False, "pattern recognized as a persistent loser — vetoed"
+        if self.patterns is not None and self.patterns.is_decayed(getattr(c, "_signature", "")):
+            return False, "pattern decayed (its recent edge collapsed — regime shift) — vetoed"
         if getattr(c, "_tech_veto", None):
             return False, c._tech_veto
         if getattr(c, "_analyst_veto", None):
