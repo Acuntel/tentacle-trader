@@ -193,7 +193,7 @@ sim:
   history_years: 10            # how much old data to load + study (S&P500 + watchlist, daily bars)
   history_slice: 25            # tickers topped-up per refresh (incremental, never blocks)
   history_refresh_seconds: 120 # how often to top up the decade cache (the full ~1,200 fills in ~1.5h)
-  episodes_per_cycle: 25       # historical replays per loop tick (learns 24/7, even mid-session)
+  episodes_per_cycle: 60       # historical replays per loop tick (cached data, no ban risk -> learn the decade faster)
   event_move_pct: 3.0          # a 1-day move >= this counts as a catalyst-like event to study
   hold_days: 5
   stop_pct: 8.0
@@ -215,7 +215,7 @@ audit:
 strategies:
   enabled: true
   count: 200                   # hundreds competing at once (5/10/100/1000 allowed — but count != edge)
-  events_per_cycle: 150        # historical events each strategy trades per heartbeat (a fair shared set)
+  events_per_cycle: 250        # historical events each strategy trades per heartbeat (cached -> faster out-of-sample convergence)
   min_trades_to_rank: 40       # don't rank a strategy until it has this many trades
   # each heartbeat: all compete on the same events -> blend the top-5 into the live rule -> breed the
   # best / retire the worst so the population keeps drifting toward what beats the market.
