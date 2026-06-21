@@ -76,7 +76,7 @@ class ApeWisdomSource(Source):
         out: list[RawSignal] = []
         for row in r.json().get("results", [])[:50]:
             tk = row.get("ticker")
-            m, m0 = row.get("mentions", 0), max(row.get("mentions_24h_ago", 0), 1)
+            m, m0 = (row.get("mentions") or 0), max(row.get("mentions_24h_ago") or 0, 1)
             vel = (m - m0) / m0
             if tk and vel > 1.5 and m >= 25:  # mentions >2.5x in 24h
                 out.append(RawSignal(
