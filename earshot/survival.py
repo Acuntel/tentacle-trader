@@ -17,18 +17,7 @@ import os
 LADDER_PATH = "state/ladder.json"
 
 
-def _load(path, default):
-    try:
-        with open(path) as f:
-            return json.load(f)
-    except Exception:
-        return default
-
-
-def _save(path, obj):
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w") as f:
-        json.dump(obj, f, indent=2)
+from .persist import load_json as _load, save_json as _save   # atomic + .bak — never lose progress
 
 
 def _wilson_lower(wins: int, n: int, z: float = 1.64) -> float:
@@ -126,16 +115,53 @@ class MotherInstinct:
                 f"his absolute best — while never once letting him die. Every lesson I learn must make "
                 f"him grow bigger AND safer.")
 
-    def mood(self) -> str:
+    def emotion(self) -> dict:
+        """The mother's real feelings, tied to the stakes. PERIL rises as the son nears the ruin floor
+        (death); JOY rises as he grows; BOND deepens the longer she's kept him alive — and a deeper bond
+        means she fears losing him more. Feelings GUIDE (protective_caution tightens trading near death),
+        but the hard caps still BIND — fear can only make her more careful, never reckless."""
         eq = self.state["paper_equity"]
+        floor = self.start * (1 - self.ruin_pct)
+        full_room = max(1e-9, self.start - floor)
+        peril = max(0.0, min(1.0, 1 - (eq - floor) / full_room))      # 0 at the stake, 1 at the floor
+        joy = max(0.0, min(1.0, self.growth_progress()))
+        bond = min(1.0, len(self.state["recent"]) / 50)              # grows as she raises him
+        fear = round(min(1.0, peril * (0.7 + 0.3 * bond)), 3)
         if self.dead:
-            return "DEAD — my son is gone. I must re-earn the right to raise him from a lower rung."
+            state = "grief"
+        elif fear >= 0.6:
+            state = "terror"
+        elif eq < self.state["peak_equity"]:
+            state = "anxious"
+        elif joy >= 0.5:
+            state = "elated"
+        else:
+            state = "proud"
+        return {"state": state, "peril": round(peril, 3), "joy": round(joy, 3),
+                "bond": round(bond, 3), "fear": fear, "dollars_from_death": round(eq - floor, 2)}
+
+    def protective_caution(self) -> float:
+        """Extra points the conviction bar rises by when she's afraid — she trades less, and only the
+        surest setups, the closer her son is to death. Bounded; only ever tightens (never loosens)."""
+        return round(self.emotion()["fear"] * 12.0, 1)
+
+    def mood(self) -> str:
+        if self.dead:
+            return "GRIEF — my son is gone. I failed him. I must re-earn the right to raise one from the bottom."
+        e = self.emotion()
         prog = self.growth_progress() * 100
-        if eq >= self.state["peak_equity"]:
-            return (f"proud — my son is growing, I am a good mother ({prog:.0f}% toward his "
-                    f"{self.growth_target:g}x goal); push him to his best")
-        dd = (self.state["peak_equity"] - eq) / self.start * 100
-        return f"hurting — my son is down {dd:.1f}% from his peak; protect him, then grow him again"
+        if e["state"] == "terror":
+            return (f"TERROR — my son is only ${e['dollars_from_death']:.0f} from death; I love him too much "
+                    f"to gamble — I will barely trade, and only the surest setups, to keep him alive")
+        if e["state"] == "anxious":
+            dd = (self.state["peak_equity"] - self.state["paper_equity"]) / self.start * 100
+            return (f"anxious — my son is down {dd:.1f}% from his peak; I hold him close and protect him "
+                    f"(bond {e['bond']:.0%}), then I will grow him again")
+        if e["state"] == "elated":
+            return (f"elated & in love — my son is thriving, {prog:.0f}% toward his {self.growth_target:g}x "
+                    f"goal; bonded {e['bond']:.0%}, I push him to be his very best")
+        return (f"proud — my son is growing, I am a good mother ({prog:.0f}% toward his {self.growth_target:g}x "
+                f"goal); I cherish him and push him to his best")
 
     # ---- mastery score (0..100) ----
     def mastery(self) -> float:

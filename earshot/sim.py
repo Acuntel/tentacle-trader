@@ -22,18 +22,7 @@ from . import history
 SIM_PATH = "state/sim.json"
 
 
-def _load(path, default):
-    try:
-        with open(path) as f:
-            return json.load(f)
-    except Exception:
-        return default
-
-
-def _save(path, obj):
-    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    with open(path, "w") as f:
-        json.dump(obj, f, indent=2)
+from .persist import load_json as _load, save_json as _save   # atomic + .bak — never lose progress
 
 
 class SimEngine:

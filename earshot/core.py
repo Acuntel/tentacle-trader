@@ -89,6 +89,37 @@ class BrainCore:
         self.know["meta"]["last_synth"] = time.time()
         return {"weights_moved": len(moved), "decayed_patterns": len(decayed)}
 
+    # ---- the RECURSIVE growth ledger: snapshot the whole son daily, track the RATE of improvement ----
+    def record_day(self, day: str, metrics: dict) -> dict:
+        hist = self.know["growth"].setdefault("history", [])
+        row = {"day": day, **metrics}
+        if hist and hist[-1].get("day") == day:
+            hist[-1] = row                                   # keep one row per day, latest wins
+        else:
+            hist.append(row)
+        self.know["growth"]["history"] = hist[-180:]         # ~6 months of daily snapshots
+        return self.trajectory()
+
+    def trajectory(self) -> dict:
+        """Is the son growing — and growing FASTER? The recursive target: improve the rate of improvement.
+        The coach reads this and is told to accelerate it; the benchmark + calibration keep it honest."""
+        hist = self.know["growth"].get("history", [])
+        if len(hist) < 2:
+            return {"days": len(hist), "note": "building the growth curve"}
+        cur, prev = hist[-1], hist[-2]
+        wk = hist[-8] if len(hist) >= 8 else hist[0]
+
+        def dd(k):
+            return round(float(cur.get(k, 0) or 0) - float(prev.get(k, 0) or 0), 3)
+
+        def d7(k):
+            return round(float(cur.get(k, 0) or 0) - float(wk.get(k, 0) or 0), 3)
+
+        return {"days": len(hist), "mastery_dod": dd("mastery"), "mastery_7d": d7("mastery"),
+                "sim_son_dod": dd("sim_son"), "sim_son_7d": d7("sim_son"),
+                "edge_dod": dd("edge"), "patterns_7d": d7("n_patterns"),
+                "improving": (d7("mastery") + d7("edge") + d7("sim_son")) > 0}
+
     # ---- the whole brain in one view — fed to the coach so it reasons across EVERYTHING at once ----
     def snapshot(self) -> dict:
         k = self.know
@@ -102,5 +133,9 @@ class BrainCore:
             "catalyst_rules": k["catalyst_rules"], "calibration_factor": self.calib_factor(0),
             "decayed_patterns": k.get("decay", {}).get("decayed", []),
             "studies": k["studies"], "benchmark": k["benchmark"], "redteam": k["redteam"],
-            "synth_runs": k["meta"]["synth_runs"],
+            "synth_runs": k["meta"]["synth_runs"], "trajectory": self.trajectory(),
+            "totals": {"sources_tracked": len(k["sources"]), "catalysts": len(k["catalysts"]),
+                       "patterns_learned": len(k["patterns"]), "lessons": len(k["lessons"]),
+                       "leadtime_tracked": len(k["leadtime"]), "catalyst_rules": len(k["catalyst_rules"]),
+                       "growth_days": len(k["growth"].get("history", []))},
         }

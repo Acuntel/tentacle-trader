@@ -13,7 +13,7 @@ import json
 import os
 import time
 
-from . import llm, evolve
+from . import llm, evolve, persist
 from .learning import WMIN, WMAX
 from .models import iso
 
@@ -48,6 +48,7 @@ class Coach:
         self.scout = scout
         self.core = core
         self.last = 0.0
+        self.last_backup_day = None
         self.know = learner.know
         self.know.setdefault("lessons", [])
         self.know.setdefault("coach_notes", {})
@@ -71,6 +72,7 @@ class Coach:
         except Exception:
             pass
         rep = {"creed": self.instinct.creed(), "mood": self.instinct.mood(),
+               "emotion": self.instinct.emotion(),
                "mastery": self.instinct.mastery(), "growth_progress": self.instinct.growth_progress(),
                "sim": self.sim.report(), "macro_regime": macro_ctx,
                "recent_losses": losses, "tonight_news": heads}
@@ -90,11 +92,27 @@ class Coach:
         rt = evolve.redteam(self.cfg); self.know["redteam"] = rt
         bench = evolve.benchmark(self.core, self.sim, int(self.cfg.get("sim", {}).get("history_years", 10)))
 
-        # (3) the LLM reasons across the ENTIRE brain snapshot + the mother's creed
+        # RECURSIVE GROWTH LEDGER — snapshot the whole son today, track whether he's growing FASTER,
+        # and back the brain up daily so an update can never lose progress.
+        day = time.strftime("%Y-%m-%d")
+        sr = self.sim.report()
+        self.core.record_day(day, {
+            "mastery": self.instinct.mastery(), "sim_son": sr["sim_equity"], "sim_win": sr["win_rate"],
+            "n_patterns": len(self.know["patterns"]), "edge": bench.get("edge_per_trade_pct", 0),
+            "calib": cal.get("factor", 1.0), "n_outcomes": cal.get("n", 0),
+            "growth": self.instinct.growth_progress()})
+        if day != self.last_backup_day:
+            persist.backup("state/knowledge.json", day)
+            self.last_backup_day = day
+
+        # (3) the LLM reasons across the ENTIRE brain snapshot + the mother's creed + her feelings
         rep = self._report(news_signals, macro_ctx)
+        traj = rep.get("trajectory", {})
         tuned, lessons, code_props, watch = list(syn.get("weights_moved", []) and ["synthesis"] or []), [], [], []
         v = llm.ask_json(SYSTEM,
-                         "Review your son's whole brain and propose improvements. Reply as JSON with keys: "
+                         "Review your son's WHOLE brain and his growth trajectory. Your goal is recursive: "
+                         "make him grow FASTER than he grew yesterday, every day, without ever risking his "
+                         "life. Propose improvements as JSON with keys: "
                          'reweight (object src->"up"|"down"), lessons (array of short strings), '
                          "watchlist (array of tickers), code_proposals (array of {file, change, why}). "
                          "Evidence:\n" + json.dumps(rep, default=str)[:9000], max_tokens=1200)
@@ -141,7 +159,8 @@ class Coach:
             f"rules stop{rules.get('stop_pct', '?')}/tgt{rules.get('target_pct', '?')}/hold{rules.get('hold_days', '?')}, "
             f"calib x{cal.get('factor', 1.0)}, +{len(lessons)} lessons, {len(code_props)} code + "
             f"{len(new_sources)} source ideas, redteam {'OK' if rt['ok'] else 'FAIL ' + str(rt['failed'])}, "
-            f"edge/trade vs SPY {bench.get('edge_per_trade_pct', 'n/a')}%")
+            f"edge/trade vs SPY {bench.get('edge_per_trade_pct', 'n/a')}%, "
+            f"trajectory {'↑ growing faster' if traj.get('improving') else 'flat (day ' + str(traj.get('days', 0)) + ')'}")
         return {"syn": syn, "rules": rules, "studies": studies, "calib": cal, "redteam": rt,
                 "benchmark": bench, "lessons": lessons, "code_proposals": code_props,
                 "new_sources": new_sources, "by": "groq+brain" if v else "brain"}

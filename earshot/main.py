@@ -170,11 +170,12 @@ class Earshot:
         newly_breached = self.daily.update(equity_now, capital)
         day_pnl = self.daily.day_pnl(equity_now)
         # caution ratchets the conviction bar up after bad days, decays on clean ones
-        eff_min = self.base_min + self.daily.caution_bump()
+        fear_caution = self.instinct.protective_caution()       # love -> caution: fear tightens entries near death
+        eff_min = self.base_min + self.daily.caution_bump() + fear_caution
         self.brain.conv["min_score_to_trade"] = eff_min
         limit = self.daily.loss_pct * capital
         print(f"\n  day P&L ${day_pnl:+.2f} / limit -${limit:.0f}   conviction bar {eff_min:.0f} "
-              f"(caution +{self.daily.caution_bump():.0f})")
+              f"(caution +{self.daily.caution_bump():.0f}, fear +{fear_caution:.0f})")
         if newly_breached:
             reflection = self.learner.deep_daily_reflection(day_pnl, self.learner.open)
             print("\n  !! DAILY -10% CIRCUIT BREAKER TRIPPED — HALTING FOR THE DAY !!")

@@ -18,18 +18,7 @@ DUNGEON_PATH = "state/dungeon/post_mortems.jsonl"  # under state/ so one volume 
 WMIN, WMAX = 0.1, 1.2
 
 
-def _load(path, default):
-    try:
-        with open(path) as f:
-            return json.load(f)
-    except Exception:
-        return default
-
-
-def _save(path, obj):
-    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    with open(path, "w") as f:
-        json.dump(obj, f, indent=2)
+from .persist import load_json as _load, save_json as _save   # atomic + .bak — never lose progress
 
 
 def _append(path, obj):
