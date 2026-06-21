@@ -11,6 +11,8 @@ from __future__ import annotations
 import json
 import os
 
+from . import llm
+
 try:
     import anthropic
     _HAVE = True
@@ -39,23 +41,39 @@ SYSTEM = ("You are a skeptical event-driven equity analyst vetting ONE long setu
 
 
 class Analyst:
+    """Combination judge: the rule-based heuristic AND a free LLM (Groq) BOTH score every setup,
+    and their verdicts are FUSED — not a fallback. The heuristic votes on every candidate; the LLM
+    votes on the top few (bounded). When both speak, firing requires CONSENSUS (both must call it
+    real and agree on direction), which is a stronger gate than either alone. The heuristic also
+    guarantees the bot never goes blind if the free brain blips. Anthropic stays optional + OFF
+    (provider != 'anthropic') so the running cost is $0."""
+
     def __init__(self, cfg: dict):
         a = cfg.get("analyst", {})
         self.on = bool(a.get("enabled", True))
-        self.model = a.get("model", "claude-opus-4-8")
+        self.provider = a.get("provider", "groq")          # groq (free) | anthropic (paid) | heuristic
+        self.model = a.get("model", "claude-opus-4-8")     # only used if provider == anthropic
         self.max_llm = int(a.get("max_llm_per_cycle", 3))
         self.min_pillars = int(a.get("min_independent_pillars", 2))
         self._client = None
         self._used = 0
-        if _HAVE and os.getenv("ANTHROPIC_API_KEY"):
+        if self.provider == "anthropic" and _HAVE and os.getenv("ANTHROPIC_API_KEY"):
             try:
                 self._client = anthropic.Anthropic()
             except Exception:
                 self._client = None
+        self._groq = (self.provider == "groq" and llm.have_free_brain())
 
     @property
     def llm_live(self) -> bool:
-        return self._client is not None
+        return self._client is not None or self._groq
+
+    def brain_name(self) -> str:
+        if self._groq and self.on:
+            return f"groq+heuristic (combined, {llm.provider()})"
+        if self._client and self.on:
+            return "claude+heuristic (combined, paid)"
+        return "heuristic (free; set GROQ_API_KEY to combine in the free LLM)"
 
     def reset_cycle(self):
         self._used = 0
@@ -64,13 +82,30 @@ class Analyst:
         if not self.on:
             return {"real": True, "direction": "up", "conviction": 60, "fresh": True,
                     "bear_case": "analyst disabled", "rationale": "analyst off"}
-        if self._client and self._used < self.max_llm:
-            v = self._llm(dossier)
-            if v:
-                self._used += 1
-                v["by"] = "claude"
-                return v
-        return self._heuristic(dossier)
+        h = self._heuristic(dossier)                        # the rules ALWAYS vote
+        v = None
+        if self._used < self.max_llm:
+            if self._groq:
+                v = self._llm_groq(dossier)
+            elif self._client:
+                v = self._llm(dossier)
+        if not v:
+            return h                                          # rules carry it (brain offline this call)
+        self._used += 1
+        return self._combine(h, v)
+
+    def _combine(self, h: dict, l: dict) -> dict:
+        """Fuse the rule verdict and the LLM verdict — consensus to fire, blended conviction."""
+        agree_dir = h["direction"] if h["direction"] == l.get("direction") else "unclear"
+        real = bool(h["real"] and l.get("real") and agree_dir == "up")
+        conv = round(0.5 * h["conviction"] + 0.5 * int(l.get("conviction", 0)))
+        if not real:
+            conv = int(conv * 0.6)
+        bears = [b for b in (h.get("bear_case"), l.get("bear_case")) if b and b != "none obvious"]
+        return {"real": real, "direction": agree_dir, "conviction": int(conv),
+                "fresh": bool(h.get("fresh", True) and l.get("fresh", True)), "by": "groq+heuristic",
+                "bear_case": "; ".join(dict.fromkeys(bears)) or "none obvious",
+                "rationale": f"COMBINED — rules: {h['rationale']} || llm: {l.get('rationale', '')}"}
 
     def _heuristic(self, d: dict) -> dict:
         tech = d.get("tech") or {}
@@ -93,6 +128,18 @@ class Analyst:
                 "rationale": f"{indep} orthogonal pillars ({', '.join(d['pillars'])}); "
                              f"{d['news_events']} distinct news events; "
                              f"options bias {opt.get('bias')}, price bias {tech.get('bias')}"}
+
+    def _llm_groq(self, d: dict) -> dict | None:
+        """Free Groq verdict. Same shape as the heuristic so _combine can fuse them."""
+        user = ("Judge this ONE long setup and reply as a JSON object with EXACTLY these keys: "
+                'real (bool), direction ("up"/"down"/"unclear"), conviction (int 0-100), '
+                "fresh (bool), bear_case (string), rationale (string, one terse sentence).\n\n"
+                + json.dumps(d, default=str))
+        v = llm.ask_json(SYSTEM, user, max_tokens=512)
+        if not v or "real" not in v or "direction" not in v:
+            return None
+        v["by"] = "groq"
+        return v
 
     def _llm(self, d: dict) -> dict | None:
         try:

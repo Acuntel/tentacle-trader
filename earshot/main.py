@@ -12,7 +12,7 @@ import time
 
 import yaml
 
-from . import prices, market
+from . import prices, market, history
 from .sources import build_sources
 from .brain import Brain
 from .survival import MotherInstinct
@@ -27,6 +27,8 @@ from .enrich import EnrichmentEngine
 from .selfreview import SelfReview
 from .analyst import Analyst
 from .learnedgate import LearnedGate
+from .sim import SimEngine
+from .coach import Coach
 
 
 def load_config(path: str) -> dict:
@@ -70,7 +72,13 @@ class Earshot:
         self.enricher = EnrichmentEngine(cfg)                  # on-demand data collection
         self.enricher.weights = self.weights
         self.selfreview = SelfReview(cfg, self.learner, self.instinct)  # continuous self-diagnosis
+        self.sim = SimEngine(cfg, self.learner)                # 24/7 backtests on the cached decade
+        self.coach = Coach(cfg, self.learner, self.instinct, self.sim)  # self-improvement (propose-only)
         self.review = cfg.get("selfreview", {})
+        self.hist_every = int(cfg.get("sim", {}).get("history_refresh_seconds", 120))
+        self.hist_slice = int(cfg.get("sim", {}).get("history_slice", 25))
+        self.hist_years = int(cfg.get("sim", {}).get("history_years", 10))
+        self.last_hist = 0.0
         self.cycle = 0
         self.last_review_day = None
 
@@ -105,7 +113,7 @@ class Earshot:
         print(f"market: {'OPEN' if mkt_open else 'CLOSED'} — {mkt['reason']}  ({mkt['et']}){nxt}")
         print(f"tentacles live: {', '.join(s.key for s in self.sources) or '(none)'}"
               f"{'' if prices.have_prices() else '   [no yfinance: price filters degrade gracefully]'}")
-        print(f"analyst: {'Claude' if self.analyst.llm_live else 'heuristic (set ANTHROPIC_API_KEY for Claude)'}"
+        print(f"brain: {self.analyst.brain_name()}"
               f"  |  learned P(win) model: {self.lgate.n} samples"
               f"{' (gating)' if self.lgate.ready() else ' (advisory until 30)'}")
         print("-" * 74)
@@ -124,6 +132,20 @@ class Earshot:
         signals = self._dedup()
         print(f"  polled: {' '.join(polled) or '(nothing due this tick)'}")
         print(f"  signal memory: {len(signals)} live signals (last {self.window // 60}m)")
+
+        # 24/7 LEARNING — keep loading the decade (incremental) and simulate on it every cycle,
+        # market open or closed. Live TRADING waits for the open; LEARNING never stops.
+        now2 = time.time()
+        if history.have_yf() and now2 - self.last_hist >= self.hist_every:
+            self.last_hist = now2
+            cov = history.ensure_slice(self.hist_years, self.hist_slice)
+            print(f"  history: {cov['have']}/{cov['total']} names hold {self.hist_years}y of bars "
+                  f"(+{cov['fetched']} this top-up)")
+        simr = self.sim.step()
+        if simr.get("ran"):
+            sr = self.sim.report()
+            print(f"  sims: +{simr['ran']} replays (total {sr['episodes']}, win {sr['win_rate']}, "
+                  f"avg {sr['avg_ret']}%) — sim-son ${sr['sim_equity']} ({sr['grown_pct']:+.1f}%)")
 
         # 2) MANAGE open positions against the live price FIRST (exit engine decides sells)
         for r in self.learner.resolve_due(self.instinct, self.exits):
@@ -237,6 +259,15 @@ class Earshot:
             print(f"\n  self-review — {rep['n_auto_applied']} safe fix(es) auto-applied:")
             for line in SelfReview.summarize(rep):
                 print(f"    - {line}")
+
+        # 8) SELF-IMPROVEMENT (propose-only) — fuse hard stats + the free LLM to tune weights live,
+        # write lessons, and JOURNAL proposed code changes for Brady to review. Runs 24/7 on cadence.
+        if self.coach.due():
+            cr = self.coach.run(signals, self.macro_mon.context)
+            print(f"\n  coach [{cr['by']}] — {self.coach.last_summary}")
+            if cr["code_proposals"]:
+                print(f"    {len(cr['code_proposals'])} code change(s) PROPOSED -> "
+                      "state/evolution/code_proposals.jsonl (review & merge); diary in EVOLUTION_LOG.md")
         print("=" * 74)
 
     def loop(self):

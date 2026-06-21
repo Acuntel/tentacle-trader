@@ -1,8 +1,12 @@
-"""MotherInstinct — how the bot values its capital (the child) and earns access to more.
+"""MotherInstinct — how the bot values its capital (its SON) and earns access to more.
 
-Capital is the child. Growing it = thriving. Losing it = harm. Zeroing it = death.
-Loss is felt ~lambda x harder than gain. The bot climbs a ladder to earn the full $500,
-and a drawdown demotes it. Hard caps live in risk.py — this is the *psychology*, not the law.
+The capital is the mother's SON. She is raising him, and she wants two things at once:
+  • GROW HIM AS LARGE AS HE CAN POSSIBLY BE — she trains him to perform at his best and
+    compound toward a stretch target (growth_target x the starting stake). Growing = pride.
+  • NEVER LET HIM DIE — loss is felt ~lambda x harder than gain; zeroing him = death.
+The growth ambition and the loss aversion pull together: a great mother is ambitious for her
+son AND ruin-averse. She climbs a ladder to earn him more capital, and a drawdown demotes her.
+Hard caps live in risk.py — this is the *psychology* (drive + fear), not the law.
 """
 from __future__ import annotations
 
@@ -82,6 +86,7 @@ class MotherInstinct:
         self.start = float(s["starting_capital"])
         self.lam = float(s["loss_aversion_lambda"])
         self.ruin_pct = float(s["ruin_floor_pct"])
+        self.growth_target = float(s.get("growth_target", 10.0))   # grow the son this many x the stake
         self.ladder = s["ladder"]
         self.state = _load(LADDER_PATH, {
             "rung": 0,                      # start at Live Shadow
@@ -106,14 +111,31 @@ class MotherInstinct:
     def dead(self) -> bool:
         return bool(self.state["dead"])
 
+    def growth_progress(self) -> float:
+        """How far the son has grown toward his stretch target (0..1+). 1.0 = goal reached."""
+        goal = self.start * self.growth_target
+        grown = self.state["paper_equity"] - self.start
+        return round(grown / (goal - self.start), 4) if goal > self.start else 0.0
+
+    def creed(self) -> str:
+        """The mother's training creed — fed to the night coach so self-improvement is driven by
+        the same two forces: grow the son to his greatest, and never let him die."""
+        tgt = self.start * self.growth_target
+        return (f"I am raising my son. Today he is worth ${self.state['paper_equity']:.0f}; I will "
+                f"train him to reach ${tgt:.0f} ({self.growth_target:g}x) and beyond — performing at "
+                f"his absolute best — while never once letting him die. Every lesson I learn must make "
+                f"him grow bigger AND safer.")
+
     def mood(self) -> str:
         eq = self.state["paper_equity"]
         if self.dead:
-            return "DEAD — the child is gone. Must re-earn trust from a lower rung."
+            return "DEAD — my son is gone. I must re-earn the right to raise him from a lower rung."
+        prog = self.growth_progress() * 100
         if eq >= self.state["peak_equity"]:
-            return "thriving — the child is growing, I am a good mother"
+            return (f"proud — my son is growing, I am a good mother ({prog:.0f}% toward his "
+                    f"{self.growth_target:g}x goal); push him to his best")
         dd = (self.state["peak_equity"] - eq) / self.start * 100
-        return f"hurting — down {dd:.1f}% from the peak; protect the child"
+        return f"hurting — my son is down {dd:.1f}% from his peak; protect him, then grow him again"
 
     # ---- mastery score (0..100) ----
     def mastery(self) -> float:
@@ -134,7 +156,7 @@ class MotherInstinct:
         if self.state["paper_equity"] <= floor and not self.dead:
             self.state["dead"] = True
             self.state["rung"] = 0
-            note = f"RUIN FLOOR HIT (${floor:.0f}) — the child died. Halted; back to shadow to re-qualify."
+            note = f"RUIN FLOOR HIT (${floor:.0f}) — my son died. Halted; back to shadow to re-qualify."
         else:
             note = self._maybe_promote_demote()
         _save(LADDER_PATH, self.state)
