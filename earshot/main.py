@@ -29,6 +29,7 @@ from .analyst import Analyst
 from .learnedgate import LearnedGate
 from .sim import SimEngine
 from .coach import Coach
+from .audit import Auditor
 
 
 def load_config(path: str) -> dict:
@@ -73,7 +74,8 @@ class Earshot:
         self.enricher.weights = self.weights
         self.selfreview = SelfReview(cfg, self.learner, self.instinct)  # continuous self-diagnosis
         self.sim = SimEngine(cfg, self.learner)                # 24/7 backtests on the cached decade
-        self.coach = Coach(cfg, self.learner, self.instinct, self.sim)  # self-improvement (propose-only)
+        self.coach = Coach(cfg, self.learner, self.instinct, self.sim, self.scout)  # self-improvement
+        self.auditor = Auditor(cfg)                            # 24/7 self-code audit loop (propose-only)
         self.review = cfg.get("selfreview", {})
         self.hist_every = int(cfg.get("sim", {}).get("history_refresh_seconds", 120))
         self.hist_slice = int(cfg.get("sim", {}).get("history_slice", 25))
@@ -265,9 +267,16 @@ class Earshot:
         if self.coach.due():
             cr = self.coach.run(signals, self.macro_mon.context)
             print(f"\n  coach [{cr['by']}] — {self.coach.last_summary}")
-            if cr["code_proposals"]:
-                print(f"    {len(cr['code_proposals'])} code change(s) PROPOSED -> "
-                      "state/evolution/code_proposals.jsonl (review & merge); diary in EVOLUTION_LOG.md")
+            if cr["code_proposals"] or cr.get("new_sources"):
+                print(f"    {len(cr['code_proposals'])} code + {len(cr.get('new_sources', []))} new-source "
+                      "idea(s) journaled -> state/evolution/ (review); diary in EVOLUTION_LOG.md")
+
+        # 9) 24/7 SELF-CODE AUDIT — read & critique its own source on loop, journal fixes (propose-only)
+        if self.auditor.due():
+            ar = self.auditor.run()
+            broke = f" ⚠ {len(ar['broken'])} BROKEN" if ar.get("broken") else ""
+            print(f"\n  self-audit [{ar.get('by', 'static')}]: reviewed earshot/{ar['module']} — "
+                  f"{ar['findings']} finding(s) journaled{broke}")
         print("=" * 74)
 
     def loop(self):

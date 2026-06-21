@@ -41,7 +41,7 @@ def _append(path, obj):
 
 
 class Coach:
-    def __init__(self, cfg: dict, learner, instinct, sim):
+    def __init__(self, cfg: dict, learner, instinct, sim, scout=None):
         c = cfg.get("coach", {})
         self.on = bool(c.get("enabled", True))
         self.every = int(c.get("every_minutes", 30)) * 60       # cadence (still runs 24/7)
@@ -49,6 +49,7 @@ class Coach:
         self.learner = learner
         self.instinct = instinct
         self.sim = sim
+        self.scout = scout                                      # finds new data sources while Brady's away
         self.last = 0.0
         self.know = learner.know
         self.know.setdefault("lessons", [])
@@ -134,16 +135,28 @@ class Coach:
         for p in code_props:
             _append(PROPOSALS, {"ts": iso(time.time()), "status": "PROPOSED — review & merge",
                                 "file": p.get("file"), "change": p.get("change"), "why": p.get("why")})
+
+        # FIND NEW DATA SOURCES while Brady's away — the Scout proposes, we journal for review.
+        new_sources = []
+        if self.scout is not None:
+            try:
+                new_sources = [s for s, _ in self.scout.propose("smart_money")][:5]
+            except Exception:
+                new_sources = []
+            for name in new_sources:
+                _append(PROPOSALS, {"ts": iso(time.time()), "status": "NEW SOURCE — consider wiring",
+                                    "file": "earshot/sources/", "change": f"add/enable tentacle '{name}'",
+                                    "why": "scout: current sources decaying; this one could sharpen the edge"})
         self.learner._persist_know()
 
-        self._write_log(rep, tuned, lessons, code_props, by="groq+stats" if v else "stats")
+        self._write_log(rep, tuned, lessons, code_props, new_sources, by="groq+stats" if v else "stats")
         self.last_summary = (f"tuned {len(tuned)} weights, +{len(lessons)} lessons, "
-                             f"{len(code_props)} code proposals (review), "
-                             f"sim grown {rep['sim']['grown_pct']:+.1f}%")
+                             f"{len(code_props)} code proposals, {len(new_sources)} new-source ideas "
+                             f"(all review-only) — sim grown {rep['sim']['grown_pct']:+.1f}%")
         return {"tuned": tuned, "lessons": lessons, "code_proposals": code_props,
-                "by": "groq+stats" if v else "stats", "sim": rep["sim"]}
+                "new_sources": new_sources, "by": "groq+stats" if v else "stats", "sim": rep["sim"]}
 
-    def _write_log(self, rep, tuned, lessons, code_props, by):
+    def _write_log(self, rep, tuned, lessons, code_props, new_sources, by):
         os.makedirs(EVO_DIR, exist_ok=True)
         if not os.path.exists(LOG_MD):
             with open(LOG_MD, "w") as f:
@@ -159,6 +172,7 @@ class Coach:
                  f"sim-equity ${sim['sim_equity']} ({sim['grown_pct']:+.1f}%)",
                  f"- auto-tuned weights: {', '.join(tuned) if tuned else 'none'}",
                  f"- lessons learned: {'; '.join(lessons) if lessons else 'none'}",
+                 f"- new data-source ideas (await wiring): {', '.join(new_sources) if new_sources else 'none'}",
                  f"- code proposals (await review): {len(code_props)}"]
         for p in code_props:
             block.append(f"    - `{p.get('file')}`: {p.get('change')}  — {p.get('why')}")

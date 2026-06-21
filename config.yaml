@@ -206,6 +206,11 @@ coach:
   every_minutes: 30            # cadence (still runs 24/7, market open or closed)
   min_source_samples: 8        # don't retune a source's weight until it has this many resolved outcomes
 
+# ---- 24/7 self-code audit: read + critique its OWN source on loop, journal fixes (propose-only) ----
+audit:
+  enabled: true
+  every_minutes: 60            # one module reviewed per pass; the whole codebase gets swept over time
+
 # ---- On-demand enrichment (brain pulls more data on under-confirmed names) ----
 enrichment:
   max_per_cycle: 2             # probe at most N under-confirmed tickers per tick
