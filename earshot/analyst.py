@@ -62,7 +62,7 @@ class Analyst:
                 self._client = anthropic.Anthropic()
             except Exception:
                 self._client = None
-        self._groq = (self.provider == "groq" and llm.have_free_brain())
+        self._groq = (self.provider not in ("anthropic", "heuristic")) and llm.have_brain()
 
     @property
     def llm_live(self) -> bool:
@@ -70,10 +70,10 @@ class Analyst:
 
     def brain_name(self) -> str:
         if self._groq and self.on:
-            return f"groq+heuristic (combined, {llm.provider()})"
+            return f"llm+heuristic (combined, {llm.provider()})"
         if self._client and self.on:
             return "claude+heuristic (combined, paid)"
-        return "heuristic (free; set GROQ_API_KEY to combine in the free LLM)"
+        return "heuristic (free; set GROQ_API_KEY for the free LLM, or XAI_API_KEY for paid Grok)"
 
     def reset_cycle(self):
         self._used = 0

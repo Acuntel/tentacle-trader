@@ -97,7 +97,8 @@ class Coach:
         bench = evolve.benchmark(self.core, self.sim, int(self.cfg.get("sim", {}).get("history_years", 10)))
         # STRATEGY TOURNAMENT — N strategies compete on the decade; adopt the champion's rules as live
         tour = self.book.evaluate() if self.book else {"ran": 0}
-        champ = self.book.adopt_champion(self.cfg) if self.book else None
+        champ = self.book.adopt_blend(self.cfg) if self.book else None       # MIXTURE of the top strategies -> live
+        evo = self.book.evolve_book() if self.book else {"evolved": 0}       # strategies CHANGE (breed best, retire worst)
 
         # RECURSIVE GROWTH LEDGER — snapshot the whole son today, track whether he's growing FASTER,
         # and back the brain up daily so an update can never lose progress.
@@ -167,8 +168,8 @@ class Coach:
             f"calib x{cal.get('factor', 1.0)}, +{len(lessons)} lessons, {len(code_props)} code + "
             f"{len(new_sources)} source ideas, redteam {'OK' if rt['ok'] else 'FAIL ' + str(rt['failed'])}, "
             f"edge/trade vs SPY {bench.get('edge_per_trade_pct', 'n/a')}%, "
-            f"champion {champ['style'] + ' ' + str(champ['stop']) + '/' + str(champ['target']) + '/' + str(champ['hold']) + 'd' if champ else 'forming'} "
-            f"of {len(self.book.book) if self.book else 0} strategies, "
+            f"blend {str(champ['stop']) + '/' + str(champ['target']) + '/' + str(champ['hold']) + 'd' if champ else 'forming'} "
+            f"of {len(self.book.book) if self.book else 0} strategies ({evo['evolved']} evolved), "
             f"trajectory {'↑ growing faster' if traj.get('improving') else 'flat (day ' + str(traj.get('days', 0)) + ')'}")
         return {"syn": syn, "rules": rules, "studies": studies, "calib": cal, "redteam": rt,
                 "benchmark": bench, "lessons": lessons, "code_proposals": code_props,

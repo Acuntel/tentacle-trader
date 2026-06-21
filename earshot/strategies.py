@@ -11,6 +11,7 @@ repeating — more strategies = more compute, not automatically more edge. The l
 from __future__ import annotations
 
 import random
+import statistics
 
 from . import history
 
@@ -111,13 +112,48 @@ class StrategyBook:
         lb = self.leaderboard(1)
         return self.stats[lb[0]["id"]]["def"] if lb else None
 
-    def adopt_champion(self, cfg: dict):
-        """Fold the winning strategy's risk rules into the LIVE strategy (auto, params only, bounded)."""
-        ch = self.champion()
-        if not ch:
+    def adopt_blend(self, cfg: dict, k: int = 5):
+        """MIXTURE of strategies: take the MEDIAN rule of the top-K (robust — not one lucky champion,
+        which is the anti-overfit move) and make THAT the live strategy. This is 'mixtures of strategies'."""
+        lb = self.leaderboard(k)
+        if not lb:
             return None
+        defs = [self.stats[r["id"]]["def"] for r in lb]
+        blend = {"stop": round(statistics.median([d["stop"] for d in defs])),
+                 "target": round(statistics.median([d["target"] for d in defs])),
+                 "hold": round(statistics.median([d["hold"] for d in defs]))}
         for cat in cfg["catalysts"]:
-            self.core.know["catalyst_rules"][cat] = {"stop_pct": ch["stop"], "target_pct": ch["target"],
-                                                     "hold_days": ch["hold"]}
-        self.core.know["champion_strategy"] = ch
-        return ch
+            self.core.know["catalyst_rules"][cat] = {"stop_pct": blend["stop"], "target_pct": blend["target"],
+                                                     "hold_days": blend["hold"]}
+        self.core.know["champion_strategy"] = {"blend_of_top": len(defs),
+                                               "styles": sorted({d["style"] for d in defs}), **blend}
+        return blend
+
+    def _mutate(self, s: dict) -> dict:
+        def jit(v, opts):
+            return random.choice([x for x in opts if x != v] or [v])
+        return {"style": random.choice(STYLES) if random.random() < 0.2 else s["style"],
+                "min_move": jit(s["min_move"], (3, 5, 8)), "stop": jit(s["stop"], (5, 6, 8, 10, 12)),
+                "target": jit(s["target"], (8, 10, 12, 15, 20, 25)), "hold": jit(s["hold"], (2, 3, 5, 7, 10)),
+                "uptrend": s["uptrend"] if random.random() < 0.8 else (not s["uptrend"])}
+
+    def evolve_book(self) -> dict:
+        """Strategies CHANGE: retire the worst, breed mutations of the best — survival of the fittest, so
+        the population keeps drifting toward what actually beats the market."""
+        ranked = self.leaderboard(len(self.book))
+        if len(ranked) < max(8, len(self.book) // 2):
+            return {"evolved": 0}
+        cut = max(3, len(ranked) // 5)
+        top = ranked[:cut]
+        bottom_ids = [r["id"] for r in ranked[-cut:]]
+        evolved = 0
+        for sid in bottom_ids:
+            parent = self.stats[random.choice(top)["id"]]["def"]
+            child = {"id": sid, **self._mutate(parent)}
+            for i, b in enumerate(self.book):
+                if b["id"] == sid:
+                    self.book[i] = child
+                    break
+            self.stats[sid] = {"trades": 0, "wins": 0, "sum_ret": 0.0, "util": 0.0, "def": child}
+            evolved += 1
+        return {"evolved": evolved}
