@@ -24,6 +24,9 @@ SECTIONS = {
     "benchmark": dict,        # us vs SPY buy-and-hold
     "redteam": dict,          # last adversarial self-test result
     "growth": dict,           # milestones
+    "stream": list,           # rolling daily signal-stream summary (source co-occurrence + novelty)
+    "regime_timeline": list,  # the macro regime over time (so learning conditions on regime shifts)
+    "feature_stats": dict,    # persisted win/loss feature history (which features predict wins)
     "meta": dict,             # {synth_runs, last_synth}
 }
 
@@ -120,6 +123,36 @@ class BrainCore:
                 "edge_dod": dd("edge"), "patterns_7d": d7("n_patterns"),
                 "improving": (d7("mastery") + d7("edge") + d7("sim_son")) > 0}
 
+    # ---- newly-wired data streams: signal flow, regime over time, feature history ----
+    def record_stream(self, day: str, active_sources: list, n_signals: int, top_tickers: list):
+        """The live signal stream stored over time -> source co-occurrence + novelty (which tickers
+        light up across many tentacles at once = a fresh, real catalyst)."""
+        s = self.know["stream"]
+        row = {"day": day, "active_sources": active_sources[:30], "signals": n_signals,
+               "top_tickers": top_tickers[:15]}
+        if s and s[-1].get("day") == day:
+            s[-1] = row
+        else:
+            s.append(row)
+        self.know["stream"] = s[-120:]
+
+    def record_regime(self, day: str, regime: str):
+        """The macro regime timeline -> the brain can learn how each setup behaves ACROSS regime shifts."""
+        tl = self.know["regime_timeline"]
+        if not tl or tl[-1].get("regime") != regime:
+            tl.append({"day": day, "regime": regime})
+            self.know["regime_timeline"] = tl[-365:]
+
+    def record_features(self, feats: dict, win: bool):
+        """Persisted feature history -> which fundamental/quality features actually precede winners."""
+        fs = self.know["feature_stats"]
+        side = "win" if win else "loss"
+        for k, v in (feats or {}).items():
+            if isinstance(v, (int, float)):
+                d = fs.setdefault(k, {"win_n": 0, "win_sum": 0.0, "loss_n": 0, "loss_sum": 0.0})
+                d[f"{side}_n"] += 1
+                d[f"{side}_sum"] += float(v)
+
     # ---- the whole brain in one view — fed to the coach so it reasons across EVERYTHING at once ----
     def snapshot(self) -> dict:
         k = self.know
@@ -134,6 +167,11 @@ class BrainCore:
             "decayed_patterns": k.get("decay", {}).get("decayed", []),
             "studies": k["studies"], "benchmark": k["benchmark"], "redteam": k["redteam"],
             "synth_runs": k["meta"]["synth_runs"], "trajectory": self.trajectory(),
+            "regime_now": (k["regime_timeline"][-1]["regime"] if k["regime_timeline"] else "n/a"),
+            "regime_shifts": len(k["regime_timeline"]), "stream_days": len(k["stream"]),
+            "feature_edge": {f: round(d["win_sum"] / d["win_n"] - d["loss_sum"] / d["loss_n"], 3)
+                             for f, d in k["feature_stats"].items()
+                             if d.get("win_n", 0) >= 5 and d.get("loss_n", 0) >= 5},
             "totals": {"sources_tracked": len(k["sources"]), "catalysts": len(k["catalysts"]),
                        "patterns_learned": len(k["patterns"]), "lessons": len(k["lessons"]),
                        "leadtime_tracked": len(k["leadtime"]), "catalyst_rules": len(k["catalyst_rules"]),

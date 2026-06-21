@@ -185,6 +185,12 @@ class Earshot:
         # 4) think — refresh the macro regime (daily-throttled) and feed it to the brain
         self.macro_mon.update()
         self.brain.macro = self.macro_mon.context
+        # wire the live signal STREAM + macro REGIME into the shared brain, stored over time
+        from collections import Counter
+        _day = time.strftime("%Y-%m-%d")
+        _top = [t for t, _ in Counter(tk for sg in signals for tk in sg.tickers).most_common(15)]
+        self.core.record_stream(_day, sorted({s.source for s in signals}), len(signals), _top)
+        self.core.record_regime(_day, self.macro_mon.context or "n/a")
         regime_down = bool(self.cfg["risk"].get("regime_filter")) and prices.regime_downtrend(
             self.cfg["regime"]["proxy"], self.cfg["regime"]["downtrend_lookback_days"])
         cands = self.brain.evaluate(signals, capital, regime_down)

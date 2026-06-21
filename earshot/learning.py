@@ -52,6 +52,7 @@ class Learner:
             "runup_pct": c.runup_pct, "sources": sorted({s.source for s in c.signals}),
             "pattern": getattr(c, "_signature", ""),
             "lgate_features": getattr(c, "_lgate_features", None),   # train the P(win) model on exit
+            "features": getattr(c, "_features", None),               # persisted feature history (fundamentals/quality)
             "pwin": getattr(c, "_pwin", None),
         })
         _save(OPEN_PATH, self.open)
@@ -85,6 +86,8 @@ class Learner:
             self.patterns.record(p.get("pattern", ""), outcome.win, ret)   # learn the pattern
             if self.lgate is not None and p.get("lgate_features"):
                 self.lgate.update(p["lgate_features"], outcome.win)         # train P(win) on real outcome
+            if self.core is not None and p.get("features"):
+                self.core.record_features(p["features"], outcome.win)       # persist the feature history
             if not outcome.win:
                 self._dungeon(p, outcome, mind)
             resolved.append({"outcome": outcome.to_dict(), "mind": mind, "exit": reason})

@@ -79,6 +79,8 @@ class Coach:
                "mastery": self.instinct.mastery(), "growth_progress": self.instinct.growth_progress(),
                "sim": self.sim.report(), "macro_regime": macro_ctx,
                "strategy_leaderboard": self.book.leaderboard(6) if self.book else [],
+               "honesty_out_of_sample": self.know.get("honesty", {}),
+               "live_strategy": self.know.get("champion_strategy", {}),
                "recent_losses": losses, "tonight_news": heads}
         rep.update(self.core.snapshot())                  # the WHOLE shared brain, in one view
         return rep
@@ -97,8 +99,10 @@ class Coach:
         bench = evolve.benchmark(self.core, self.sim, int(self.cfg.get("sim", {}).get("history_years", 10)))
         # STRATEGY TOURNAMENT — N strategies compete on the decade; adopt the champion's rules as live
         tour = self.book.evaluate() if self.book else {"ran": 0}
-        champ = self.book.adopt_blend(self.cfg) if self.book else None       # MIXTURE of the top strategies -> live
+        champ = self.book.adopt_blend(self.cfg) if self.book else None       # MIXTURE of out-of-sample survivors -> live
         evo = self.book.evolve_book() if self.book else {"evolved": 0}       # strategies CHANGE (breed best, retire worst)
+        honesty = self.book.honesty() if self.book else {}                   # never let it believe its own backtest
+        self.know["honesty"] = honesty
 
         # RECURSIVE GROWTH LEDGER — snapshot the whole son today, track whether he's growing FASTER,
         # and back the brain up daily so an update can never lose progress.
@@ -168,8 +172,9 @@ class Coach:
             f"calib x{cal.get('factor', 1.0)}, +{len(lessons)} lessons, {len(code_props)} code + "
             f"{len(new_sources)} source ideas, redteam {'OK' if rt['ok'] else 'FAIL ' + str(rt['failed'])}, "
             f"edge/trade vs SPY {bench.get('edge_per_trade_pct', 'n/a')}%, "
-            f"blend {str(champ['stop']) + '/' + str(champ['target']) + '/' + str(champ['hold']) + 'd' if champ else 'forming'} "
-            f"of {len(self.book.book) if self.book else 0} strategies ({evo['evolved']} evolved), "
+            f"blend {str(champ['stop']) + '/' + str(champ['target']) + '/' + str(champ['hold']) + 'd' if champ else 'NONE (nothing survived out-of-sample)'} "
+            f"of {len(self.book.book) if self.book else 0} strategies ({evo['evolved']} evolved); "
+            f"HONESTY: {honesty.get('status', 'n/a')[:70]}; "
             f"trajectory {'↑ growing faster' if traj.get('improving') else 'flat (day ' + str(traj.get('days', 0)) + ')'}")
         return {"syn": syn, "rules": rules, "studies": studies, "calib": cal, "redteam": rt,
                 "benchmark": bench, "lessons": lessons, "code_proposals": code_props,
@@ -196,8 +201,10 @@ class Coach:
                  f"- safety red-team: {'ALL GATES HOLD' if rt['ok'] else '⚠ FAILED: ' + str(rt['failed'])}",
                  f"- vs SPY buy-and-hold: edge/trade {bench.get('edge_per_trade_pct','n/a')}% "
                  f"(sim {bench.get('sim_avg_pct','?')}% vs SPY {bench.get('spy_avg_hold_pct','?')}% per hold)",
-                 f"- strategy tournament (top by loss-averse expectancy): "
-                 + ", ".join(f"{r['style']} {r['rule']} win{r['win']}" for r in rep.get('strategy_leaderboard', [])[:3]),
+                 f"- strategy tournament (top by OUT-OF-SAMPLE expectancy): "
+                 + ", ".join(f"{r['style']} {r['rule']} train{r['train_u']}/test{r['test_u']}"
+                             for r in rep.get('strategy_leaderboard', [])[:3]),
+                 f"- HONESTY (overfit check): {rep.get('honesty_out_of_sample', {}).get('status', 'n/a')}",
                  f"- ambition: {rep.get('ambition', {}).get('note', '')}",
                  f"- new data-source ideas: {', '.join(new_sources) if new_sources else 'none'}",
                  f"- lessons: {'; '.join(lessons) if lessons else 'none'}",
