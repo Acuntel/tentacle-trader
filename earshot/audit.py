@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import os
 import py_compile
+import re
 import time
 
 from . import llm
@@ -33,16 +34,18 @@ def _modules() -> list[str]:
     return sorted(f for f in os.listdir(PKG) if f.endswith(".py") and f != "__init__.py")
 
 
+_MARKER_RE = re.compile(r"#\s*(TODO|FIXME|XXX|HACK)\b")    # only real leftover COMMENTS, not string/docstring mentions
+
+
 def _smells(src: str) -> list[str]:
     out = []
-    if "except:" in src or "except Exception: pass" in src:
+    if re.search(r"except\s*:|except Exception:\s*pass", src):   # bare/silent swallow only, not all handling
         out.append("broad/silent except — may swallow real errors")
     n = src.count("\n")
     if n > 300:
         out.append(f"{n} lines — over the 300-line limit, consider splitting")
-    for marker in ("TODO", "FIXME", "XXX", "HACK"):
-        if marker in src:
-            out.append(f"contains {marker}")
+    for marker in sorted({m.group(1) for m in _MARKER_RE.finditer(src)}):
+        out.append(f"contains a {marker} comment")
     return out
 
 

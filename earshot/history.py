@@ -8,11 +8,14 @@ is absent — the rest of the bot keeps running.
 """
 from __future__ import annotations
 
+import json
+import logging
 import os
 import time
 
 try:
     import yfinance as yf
+    logging.getLogger("yfinance").setLevel(logging.CRITICAL)   # mute per-ticker "possibly delisted" spam
     _HAVE = True
 except Exception:  # pragma: no cover
     _HAVE = False
@@ -21,6 +24,48 @@ from .sources.fleet import _sp500, CORE_TICKERS, EXTRA_TICKERS
 
 HIST_DIR = "state/history"
 STALE_DAYS = 7
+DEAD_PATH = "state/dead_tickers.json"
+DEAD_AFTER = 3                       # consecutive empty fetches -> treat as delisted; stop requesting it
+
+_DEAD: dict[str, int] = {}
+_DEAD_LOADED = False
+
+
+def _load_dead() -> dict:
+    global _DEAD, _DEAD_LOADED
+    if not _DEAD_LOADED:
+        try:
+            _DEAD = json.load(open(DEAD_PATH))
+        except Exception:
+            _DEAD = {}
+        _DEAD_LOADED = True
+    return _DEAD
+
+
+def _save_dead() -> None:
+    try:
+        os.makedirs(os.path.dirname(DEAD_PATH) or ".", exist_ok=True)
+        json.dump(_DEAD, open(DEAD_PATH, "w"))
+    except Exception:
+        pass
+
+
+def is_dead(ticker: str) -> bool:
+    """A name that returned no data DEAD_AFTER times running — almost certainly delisted/renamed."""
+    return _load_dead().get(ticker, 0) >= DEAD_AFTER
+
+
+def _mark_fail(ticker: str) -> None:
+    d = _load_dead()
+    d[ticker] = d.get(ticker, 0) + 1
+    _save_dead()
+
+
+def _mark_ok(ticker: str) -> None:
+    d = _load_dead()
+    if ticker in d:                 # any successful fetch clears the strikes (handles transient blips)
+        del d[ticker]
+        _save_dead()
 
 
 def have_yf() -> bool:
@@ -36,7 +81,7 @@ def universe() -> list[str]:
     global _UNI
     if not _UNI:
         sp = _sp500() or list(CORE_TICKERS)
-        _UNI = list(dict.fromkeys(sp + list(EXTRA_TICKERS)))
+        _UNI = [t for t in dict.fromkeys(sp + list(EXTRA_TICKERS)) if not is_dead(t)]
     return _UNI
 
 
@@ -82,11 +127,14 @@ def ensure_slice(years: int = 10, limit: int = 40, tickers: list[str] | None = N
     if not _HAVE:
         return {"fetched": 0, "have": 0, "total": 0, "note": "no yfinance"}
     uni = tickers or universe()
-    todo = [t for t in uni if not _fresh(t)][:limit]
+    todo = [t for t in uni if not _fresh(t) and not is_dead(t)][:limit]
     fetched = 0
     for t in todo:
         if _fetch_one(t, years):
             fetched += 1
+            _mark_ok(t)
+        else:
+            _mark_fail(t)                       # 3 strikes -> the reaper drops it from the universe
         time.sleep(0.2)                         # polite spacing — anti-ban
     have = sum(1 for t in uni if _fresh(t))
     return {"fetched": fetched, "have": have, "total": len(uni)}

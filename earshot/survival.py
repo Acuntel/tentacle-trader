@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import time
 
 LADDER_PATH = "state/ladder.json"
 
@@ -195,6 +196,19 @@ class MotherInstinct:
     def mastery(self) -> float:
         return compute_mastery(self.state["recent"], self.start)["mastery"]
 
+    def monthly_return_pct(self) -> float | None:
+        """Realized return of the shadow equity curve, normalized to a 30-day month — the number to
+        hold against the 10%/mo goal. None until enough calendar time has elapsed to be honest."""
+        c = self.state.get("equity_curve", [])
+        if len(c) < 2:
+            return None
+        t0, e0, t1, e1 = c[0]["t"], c[0]["eq"], c[-1]["t"], c[-1]["eq"]
+        days = (t1 - t0) / 86400.0
+        if days < 3 or e0 <= 0:                # too little elapsed time to extrapolate honestly
+            return None
+        monthly = (e1 / e0) ** (30.0 / days) - 1.0
+        return round(monthly * 100, 1)
+
     # ---- record an outcome, then maybe live/die/promote/demote ----
     def record(self, conf: float, pnl_pct: float, size_usd: float) -> dict:
         delta = size_usd * pnl_pct / 100.0
@@ -203,6 +217,9 @@ class MotherInstinct:
         self.state["recent"] = (self.state["recent"] + [{
             "conf": conf, "pnl_pct": round(pnl_pct, 2), "win": pnl_pct > 0,
         }])[-100:]
+        # timestamped equity curve -> realized monthly return vs the 10%/mo goal (the honest scorecard)
+        self.state["equity_curve"] = (self.state.get("equity_curve", []) + [
+            {"t": time.time(), "eq": round(self.state["paper_equity"], 2)}])[-1000:]
 
         # escalating ambition: each growth milestone makes her hungrier and lifts the target
         mult = self.state["paper_equity"] / self.start if self.start else 0
@@ -252,6 +269,7 @@ class MotherInstinct:
             "capital_unlocked": rc["capital"], "paper_equity": round(self.state["paper_equity"], 2),
             "mastery": self.mastery(), "needs_mastery": rc["promote_mastery"],
             "samples": len(self.state["recent"]), "dead": self.dead, "mood": self.mood(),
+            "monthly_return": self.monthly_return_pct(),
         }
 
     def audit(self, ledger_path: str = "state/outcomes.jsonl") -> dict:

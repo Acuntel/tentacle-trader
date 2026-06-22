@@ -70,6 +70,12 @@ class Brain:
         self.lgate = None           # LearnedGate (P(win) model), attached by main
         self.core = None            # shared BrainCore (learned rules + calibration), attached by main
         self.macro = ""             # current macro regime tag, set by main each cycle
+        # In SHADOW we EXPLORE: take every setup that clears hard safety so the learner gets real,
+        # labeled out-of-sample outcomes (the only way mastery/the P(win) model can ever grow).
+        # In LIVE we EXPLOIT: all soft/heuristic filters are enforced. Real money is separately
+        # gated by the Gauntlet + manual arm in executor.py — exploring here risks nothing.
+        self.mode = cfg.get("identity", {}).get("mode", "shadow")
+        self.explore = (self.mode == "shadow") and bool(self.conv.get("shadow_explore", True))
         self.tech = cfg.get("technicals", {})           # candlestick / indicator entry-timing layer
         self.tech_on = bool(self.tech.get("enabled", True))
         self.opt = cfg.get("options", {})               # options/IV positioning layer
@@ -211,17 +217,14 @@ class Brain:
         return out
 
     def passes_gate(self, c: Candidate) -> tuple[bool, str]:
+        # ---- HARD safety: enforced ALWAYS, even in shadow exploration ----
+        # These are data-backed (loser/decay) or structural (it isn't even a real setup otherwise).
         if self.patterns is not None and self.patterns.is_loser(getattr(c, "_signature", "")):
             return False, "pattern recognized as a persistent loser — vetoed"
         if self.patterns is not None and self.patterns.is_decayed(getattr(c, "_signature", "")):
             return False, "pattern decayed (its recent edge collapsed — regime shift) — vetoed"
         if getattr(c, "_tech_veto", None):
             return False, c._tech_veto
-        if getattr(c, "_analyst_veto", None):
-            return False, c._analyst_veto
-        if (self.lgate is not None and self.lgate.ready() and getattr(c, "_pwin", None) is not None
-                and c._pwin < self.conv.get("min_pwin", 0.5)):
-            return False, f"learned P(win) {c._pwin:.2f} < {self.conv.get('min_pwin', 0.5)} (model says low edge)"
         if c.n_independent < self.conv["min_independent_sources"]:
             return False, f"only {c.n_independent} source(s); need {self.conv['min_independent_sources']}"
         fams = getattr(c, "_families", 1)
@@ -229,6 +232,22 @@ class Brain:
             return False, f"only {fams} signal family; need {self.conv['min_families']} (combine signal types)"
         if c.confidence < self.conv["min_score_to_trade"]:
             return False, f"score {c.confidence:.0f} < {self.conv['min_score_to_trade']}"
+
+        # ---- SOFT filters: heuristic / not-yet-proven. In shadow we EXPLORE through them so the
+        #      learner gathers the labeled outcomes that prove (or kill) them. In live they bite. ----
+        if self.explore:
+            return True, "shadow-explore: cleared hard safety (soft filters logged, not enforced)"
+
+        if getattr(c, "_analyst_veto", None):
+            return False, c._analyst_veto
+        if (self.lgate is not None and self.lgate.ready() and getattr(c, "_pwin", None) is not None
+                and c._pwin < self.conv.get("min_pwin", 0.5)):
+            return False, f"learned P(win) {c._pwin:.2f} < {self.conv.get('min_pwin', 0.5)} (model says low edge)"
         if not c.regime_ok:
-            return False, "market regime is a downtrend (don't buy longs into a falling tape)"
+            # A falling broad tape doesn't go fully dark for a catalyst/momentum long book —
+            # it demands MORE conviction. Only the strongest idiosyncratic catalysts fire.
+            bar = self.conv["min_score_to_trade"] + self.conv.get("regime_downtrend_premium", 15)
+            if c.confidence < bar:
+                return False, (f"downtrend tape: score {c.confidence:.0f} < {bar:.0f} "
+                               "(raised the bar in a falling market)")
         return True, "passes conviction gate"

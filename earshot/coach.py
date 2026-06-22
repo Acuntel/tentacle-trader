@@ -153,7 +153,11 @@ class Coach:
                 new_sources = [s for s, _ in self.scout.propose("smart_money")][:5]
             except Exception:
                 new_sources = []
+            already = self.know.setdefault("proposed_sources", [])   # propose each idea ONCE, not every cycle
             for name in new_sources:
+                if name in already:
+                    continue
+                already.append(name)
                 _append(PROPOSALS, {"ts": iso(time.time()), "status": "NEW SOURCE — consider wiring",
                                     "file": "earshot/sources/", "change": f"add/enable tentacle '{name}'",
                                     "why": "scout: current sources decaying; could sharpen the edge"})

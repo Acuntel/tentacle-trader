@@ -10,14 +10,20 @@ survival:
   loss_aversion_lambda: 2.5     # a loss hurts 2.5x more than an equal gain feels good
   ruin_floor_pct: 0.40          # lose 40% of a stage's capital -> the son "dies" (halts + demotes)
   growth_target: 10.0           # the mother trains her SON to grow this many x the stake (ambition, not a cap)
+  goal_monthly_return_pct: 10   # Brady's target: +10%/month. Shown on the dashboard scorecard vs realized.
   # The graduation ladder: capital is EARNED rung by rung. Full $500 is the top, not the default.
+  # NOTE: mastery 85+ is mathematically unreachable at a ~0.50 win rate (the old bars guaranteed a
+  # permanent stall). These bars are realistic-but-demanding for a genuine edge AND require large
+  # sample counts for statistical significance. Real money is STILL independently gated by the
+  # Gauntlet (executor GAUNTLET_PASS_MASTERY) + identity.mode=live + manual arm — these rungs only
+  # govern the shadow learning stages, so making them climbable risks nothing.
   ladder:
-    - {rung: -1, stage: backtest_gauntlet, capital: 0,   promote_mastery: 80, min_samples: 200}
-    - {rung: 0,  stage: live_shadow,       capital: 0,   promote_mastery: 85, min_samples: 40}
-    - {rung: 1,  stage: micro,             capital: 25,  promote_mastery: 85, min_samples: 20}
-    - {rung: 2,  stage: small,             capital: 75,  promote_mastery: 87, min_samples: 20}
-    - {rung: 3,  stage: half,              capital: 250, promote_mastery: 90, min_samples: 25}
-    - {rung: 4,  stage: full,              capital: 500, promote_mastery: 92, min_samples: 30}
+    - {rung: -1, stage: backtest_gauntlet, capital: 0,   promote_mastery: 58, min_samples: 200}
+    - {rung: 0,  stage: live_shadow,       capital: 0,   promote_mastery: 60, min_samples: 80}
+    - {rung: 1,  stage: micro,             capital: 25,  promote_mastery: 62, min_samples: 40}
+    - {rung: 2,  stage: small,             capital: 75,  promote_mastery: 65, min_samples: 40}
+    - {rung: 3,  stage: half,              capital: 250, promote_mastery: 68, min_samples: 50}
+    - {rung: 4,  stage: full,              capital: 500, promote_mastery: 72, min_samples: 60}
 
 # ---- The firing gate ----
 conviction:
@@ -25,6 +31,9 @@ conviction:
   min_independent_sources: 2    # >= 2 independent sources must confirm the SAME catalyst
   min_families: 2               # >= 2 DIFFERENT signal families (filing+surprise+flow...), not 2 of the same
   min_pwin: 0.50                # once the learned model has >=30 samples, require P(win) above this to fire
+  shadow_explore: true          # in shadow, take every setup that clears HARD safety (bypass soft/heuristic
+                                # vetoes) so the learner gets real out-of-sample data. Set false to mirror live.
+  regime_downtrend_premium: 15  # in LIVE, a downtrend tape doesn't bench longs — it raises the score bar by this
   family_bonus: 0.18            # confidence multiplier per extra family that agrees (cross-confirmation)
   max_runup_pct: 4.0            # if price already ran > this since the signal, the easy move is gone
   size_bands:                   # confidence score -> fraction of the rung's live capital

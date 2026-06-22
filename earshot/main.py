@@ -114,6 +114,11 @@ class Earshot:
         print("\n" + "=" * 74)
         print(f"TENTACLE [{st['mode'].upper()}]  rung {st['rung']} ({st['stage']})  "
               f"capital-unlocked ${st['capital_unlocked']}  mastery {st['mastery']}/{st['needs_mastery']}")
+        goal = self.cfg.get("survival", {}).get("goal_monthly_return_pct", 10)
+        mr = st.get("monthly_return")
+        mr_str = f"{mr:+.1f}%/mo realized" if mr is not None else "warming up (need ~3d of trades)"
+        print(f"scorecard: {mr_str}  vs goal +{goal}%/mo   |   "
+              f"samples {st['samples']}/{self.instinct.rung_cfg()['min_samples']}")
         print(f"mood: {st['mood']}")
         nxt = "" if mkt_open else f"  | next open {mkt['next_open']}"
         print(f"market: {'OPEN' if mkt_open else 'CLOSED'} — {mkt['reason']}  ({mkt['et']}){nxt}")
@@ -217,14 +222,17 @@ class Earshot:
                   "Open positions still managed; stops/exits stay armed for the next session.")
         else:
             chosen, why = None, "nothing cleared the bar — staying patient protects the child"
-            for c in cands:
+            blocks = []                       # (ticker, reason) for names that didn't clear, BEST-first
+            for c in cands:                   # cands is sorted by confidence desc -> blocks[0] is the top pick
                 ok, reason = self.brain.passes_gate(c)
                 if not ok:
-                    why = f"{c.ticker}: {reason}"; continue
+                    blocks.append((c.ticker, reason)); continue
                 ok, reason = self.risk.check(c, self.instinct, self.learner.open, day_pnl)
                 if not ok:
-                    why = f"{c.ticker}: {reason}"; continue
+                    blocks.append((c.ticker, reason)); continue
                 chosen = c; break
+            if not chosen and blocks:
+                why = f"{blocks[0][0]}: {blocks[0][1]}"   # the TOP candidate's REAL blocker, not the last one's
             # capital-aware sizing: never deploy more than what's left unspent
             deployed = sum(p["size_usd"] for p in self.learner.open)
             available = max(0.0, capital - deployed)
@@ -242,6 +250,8 @@ class Earshot:
                 print(f"     plan: {chosen.reasons[2]} | pattern {getattr(chosen, '_signature', 'new')}")
             else:
                 print(f"\n  >> NO TRADE — {why}")
+                for tk, rsn in blocks[:5]:    # why the BEST candidates didn't fire (real per-name reasons)
+                    print(f"       · {tk}: {rsn}")
 
         # 6) scout + INTEGRITY AUDIT (recompute the score from the immutable ledger)
         rep = self.scout.report()
