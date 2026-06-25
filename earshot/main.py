@@ -43,6 +43,9 @@ def load_config(path: str) -> dict:
     except Exception:
         pass
     cfg["_user_agent"] = os.getenv("TENTACLE_USER_AGENT", "TENTACLE research bot (contact: set TENTACLE_USER_AGENT)")
+    # shared-bot mode (texting THROUGH Nessobot): SEND only, never poll its token -> Nesso keeps working
+    if cfg.get("telegram", {}).get("shared_bot") and not os.getenv("TELEGRAM_SHARED_BOT"):
+        os.environ["TELEGRAM_SHARED_BOT"] = "1"
     for d in ("state", "dungeon"):
         os.makedirs(d, exist_ok=True)
     return cfg

@@ -86,16 +86,24 @@ class ApprovalQueue:
         self.st["next"] += 1
         item = {"id": cid, "hash": h, "kind": kind, "title": title, "summary": summary,
                 "patches": patches, "meta": meta or {}, "ts": iso(time.time())}
-        self.st["pending"][cid] = item
         self.st["seen"][h] = cid
         self.st["day_count"] += 1
+        if notify.shared():
+            # Nessobot owns the inbound loop, so we can't receive taps here. Notify as TEXT only (no
+            # dead buttons); the approval relay is wired separately. Don't leave an un-tappable pending.
+            notify.send(self._render(item, interactive=False))
+            item["status"] = "notified (shared bot — interactive approval relay not wired yet)"
+            self.st["log"] = (self.st["log"] + [item])[-200:]
+            self.persist()
+            return cid
+        self.st["pending"][cid] = item
         mid = notify.send(self._render(item),
                           buttons=[("✅ Approve", f"ok:{cid}"), ("❌ Deny", f"no:{cid}")])
         item["message_id"] = mid
         self.persist()
         return cid
 
-    def _render(self, item: dict) -> str:
+    def _render(self, item: dict, interactive: bool = True) -> str:
         icon = {"code": "🧬", "config": "🎚️", "source": "📡"}.get(item["kind"], "🛠️")
         lines = [f"{icon} <b>TENTACLE wants to change itself</b>  <code>{item['id']}</code>",
                  f"<b>{notify.esc(item['title'])}</b>", "", notify.esc(item["summary"])]
@@ -105,9 +113,13 @@ class ApprovalQueue:
             repl = notify.esc(str(p.get("replace", ""))[:160])
             lines += ["", f"📄 <code>{f}</code>", f"<i>−</i> <code>{find}</code>",
                       f"<i>+</i> <code>{repl}</code>"]
-        tail = "Approve → tested by the gate, merged & redeployed live." if self.auto_deploy \
-            else "Approve → tested by the gate & merged to main (you deploy)."
-        lines += ["", tail + "  Real-money gate stays locked regardless."]
+        if interactive:
+            tail = ("Approve → tested by the gate, merged & redeployed live." if self.auto_deploy
+                    else "Approve → tested by the gate & merged to main (you deploy).")
+            tail += "  Real-money gate stays locked regardless."
+        else:
+            tail = "ℹ️ Heads-up: a change I want to make. Interactive ✅/❌ through Nessobot is being wired."
+        lines += ["", tail]
         return "\n".join(lines)
 
     # ---- handling taps ---------------------------------------------------

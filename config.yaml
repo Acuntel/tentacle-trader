@@ -253,10 +253,13 @@ enrichment:
   max_per_cycle: 2             # probe at most N under-confirmed tickers per tick
   cooldown_sec: 1800          # don't re-probe the same ticker within 30m (rate-limit safe)
 
-# ---- Telegram: the bot texts Brady each self-change for ✅/❌ before it ships (human-in-the-loop) ----
-# Needs Railway vars TELEGRAM_BOT_TOKEN (@BotFather) + TELEGRAM_CHAT_ID (@userinfobot). Off until set.
+# ---- Telegram: the bot texts Brady through the Nesso content-engine bot ("Nessobot") ----
+# Needs Railway vars TELEGRAM_BOT_TOKEN (= Nessobot's token) + TELEGRAM_CHAT_ID (@userinfobot). Off until set.
 telegram:
   enabled: true
+  shared_bot: true             # TRUE = we share Nessobot's token: SEND only, NEVER poll (Nesso owns the
+                               #        getUpdates loop; two pollers 409-conflict). Sets TELEGRAM_SHARED_BOT.
+                               #        FALSE = Tentacle owns a dedicated bot and polls for ✅/❌ taps itself.
   daily_digest: true           # once/day summary of the AUTO-applied tuning (weights/lessons) — no approval
   max_proposals_per_day: 4     # cap approval pings/day (anti-spam; dedupes repeats + remembers denials)
 

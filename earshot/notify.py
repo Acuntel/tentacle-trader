@@ -35,6 +35,13 @@ def enabled() -> bool:
     return bool(_HAVE and _token() and _chat())
 
 
+def shared() -> bool:
+    """Shared-bot mode: we're sending through ANOTHER bot (Nessobot) that already owns the getUpdates
+    loop. We must NEVER poll that token (two pollers 409-conflict and steal each other's updates), so
+    sending is allowed but receiving taps is disabled here — Nessobot owns the inbound side."""
+    return bool(os.getenv("TELEGRAM_SHARED_BOT"))
+
+
 def esc(s) -> str:
     """Escape for Telegram HTML parse mode."""
     return str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
@@ -69,8 +76,9 @@ def send(text: str, buttons=None) -> int | None:
 
 
 def poll(timeout: int = 0) -> list[dict]:
-    """Return new button taps since last poll, acking the offset. timeout=0 -> non-blocking."""
-    if not enabled():
+    """Return new button taps since last poll, acking the offset. timeout=0 -> non-blocking.
+    HARD no-op in shared-bot mode so we never fight Nessobot's poller."""
+    if shared() or not enabled():
         return []
     off = _load(OFFSET_PATH, {"offset": 0}).get("offset", 0)
     r = _call("getUpdates", {"offset": off, "timeout": timeout,
