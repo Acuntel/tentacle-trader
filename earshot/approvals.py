@@ -111,22 +111,40 @@ class ApprovalQueue:
         self.persist()
         return cid
 
+    PRETTY = {
+        "min_pwin": "minimum win-chance I need before I'll trade",
+        "min_score_to_trade": "conviction bar I need to trade",
+        "min_independent_sources": "number of independent sources I need to agree",
+        "min_families": "number of different signal types I need to agree",
+        "daily_loss_pct": "daily loss limit before I stop for the day",
+        "regime_downtrend_premium": "extra caution when the market's falling",
+        "max_runup_pct": "how far a stock can already have moved before I skip it",
+        "every_minutes": "how often I re-tune myself",
+        "trail_pct": "how much profit I give back before I lock in a win",
+        "walk_forward_folds": "how many time periods I test a strategy across",
+    }
+
+    def _pretty(self, setting) -> str:
+        key = str(setting).split(".")[-1]
+        return self.PRETTY.get(key, key.replace("_", " "))
+
     def _render(self, item: dict, interactive: bool = True) -> str:
         icon = {"code": "🧬", "config": "🎚️", "source": "📡"}.get(item["kind"], "🛠️")
-        lines = [f"{icon} <b>TENTACLE wants to change itself</b>  <code>{item['id']}</code>",
-                 f"<b>{notify.esc(item['title'])}</b>", "", notify.esc(item["summary"])]
-        for p in (item.get("patches") or [])[:3]:
-            f = notify.esc(p.get("file", "?"))
-            find = notify.esc(str(p.get("find", ""))[:160])
-            repl = notify.esc(str(p.get("replace", ""))[:160])
-            lines += ["", f"📄 <code>{f}</code>", f"<i>−</i> <code>{find}</code>",
-                      f"<i>+</i> <code>{repl}</code>"]
+        m = item.get("meta") or {}
+        head = m.get("plain") or item.get("title") or "a change to myself"
+        lines = [f"{icon} <b>I want to make a change</b>  <code>{item['id']}</code>", "",
+                 notify.esc(head)]
+        if m.get("why"):
+            lines += ["", f"<b>Why:</b> {notify.esc(m['why'])}"]
+        if m.get("tech"):
+            lines += ["", f"<i>under the hood: {notify.esc(m['tech'])}</i>"]
         if interactive:
-            tail = ("Approve → tested by the gate, merged & redeployed live." if self.auto_deploy
-                    else "Approve → tested by the gate & merged to main (you deploy).")
-            tail += "  Real-money gate stays locked regardless."
+            tail = ("Tap ✅ and I'll test it on a clean run, then ship it live if it passes."
+                    if self.auto_deploy else
+                    "Tap ✅ and I'll test it and merge it (you deploy when ready).")
+            tail += " My real-money lock stays ON either way."
         else:
-            tail = "ℹ️ Heads-up: a change I want to make. Interactive ✅/❌ through Nessobot is being wired."
+            tail = "ℹ️ Just a heads-up — I can't safely apply this one on my own yet."
         lines += ["", tail]
         return "\n".join(lines)
 

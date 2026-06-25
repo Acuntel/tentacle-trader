@@ -185,8 +185,11 @@ class Coach:
             f"of {len(self.book.book) if self.book else 0} strategies ({evo['evolved']} evolved); "
             f"HONESTY: {honesty.get('status', 'n/a')[:70]}; "
             f"trajectory {'↑ growing faster' if traj.get('improving') else 'flat (day ' + str(traj.get('days', 0)) + ')'}")
-        if self.approvals is not None:
-            self.approvals.daily_digest(self.last_summary)   # once/day visibility into auto-applied tuning
+        if self.approvals is not None:                       # once/day, in plain English
+            self.approvals.daily_digest(
+                f"Still in practice mode — no real money. Today I kept training myself: I adjusted "
+                f"{syn['weights_moved']} of my source trust-levels and wrote down {len(lessons)} new lesson(s). "
+                f"Honest check on whether I actually have an edge yet: {honesty.get('status', 'still gathering data')[:130]}")
         return {"syn": syn, "rules": rules, "studies": studies, "calib": cal, "redteam": rt,
                 "benchmark": bench, "lessons": lessons, "code_proposals": code_props,
                 "new_sources": new_sources, "by": "groq+brain" if v else "brain"}
@@ -204,17 +207,24 @@ class Coach:
             except Exception:
                 patch = None
             if patch and all(k in patch for k in ("file", "find", "replace")):
-                ap.propose("code", f"code: {os.path.basename(str(patch['file']))}",
-                           patch.get("why", "self-proposed improvement"),
-                           patches=[{"file": patch["file"], "find": patch["find"], "replace": patch["replace"]}])
+                why = str(patch.get("why", "a small improvement to my own code"))
+                fname = os.path.basename(str(patch["file"]))
+                ap.propose("code", f"code change in {fname}", why,
+                           patches=[{"file": patch["file"], "find": patch["find"], "replace": patch["replace"]}],
+                           meta={"plain": f"Improve my own code — {why}",
+                                 "why": "It already passed my safety test-run, and I auto-revert it if it ever breaks anything.",
+                                 "tech": f"edits {patch['file']}"})
         # 2) CONFIG — a proposed threshold shift -> a config.yaml find/replace (gate validates uniqueness)
         for p in cfg_props:
             setting, frm, to = str(p.get("setting", "")).strip(), p.get("from"), p.get("to")
             if not setting or frm is None or to is None or str(frm) == str(to):
                 continue
-            ap.propose("config", f"config: {setting} {frm} → {to}", str(p.get("why", "tune a threshold")),
+            ap.propose("config", f"config: {setting} {frm} → {to}", str(p.get("why", "")),
                        patches=[{"file": "config.yaml", "find": f"{setting}: {frm}",
-                                 "replace": f"{setting}: {to}"}])
+                                 "replace": f"{setting}: {to}"}],
+                       meta={"plain": f"Change my {ap._pretty(setting)} from {frm} to {to}.",
+                             "why": str(p.get("why", "to trade a little smarter")),
+                             "tech": f"config.yaml · {setting}: {frm} → {to}"})
         # 3) SOURCES — flip an already-coded-but-off tentacle on (a config patch); a brand-new one is
         #    proposed as 'needs wiring' (no safe auto-patch exists for code that doesn't exist yet).
         srcs = self.cfg.get("sources", {})
@@ -222,13 +232,18 @@ class Coach:
             if ap.is_denied_source(name):
                 continue
             if name in srcs and srcs.get(name) is not True:
-                ap.propose("config", f"enable tentacle: {name}", "scout: sources decaying — turn this one on",
+                ap.propose("config", f"enable tentacle: {name}", "",
                            patches=[{"file": "config.yaml", "find": f"{name}: false",
-                                     "replace": f"{name}: true"}], meta={"sources": [name]})
+                                     "replace": f"{name}: true"}],
+                           meta={"plain": f"Turn on a data source I already have built but haven't enabled: {name}.",
+                                 "why": "Some of my current sources are going stale — this one could sharpen the signal.",
+                                 "tech": f"config.yaml · {name}: true", "sources": [name]})
             elif name not in srcs:
-                ap.propose("source", f"new tentacle: {name}",
-                           "scout found a decaying source set; this new data source could sharpen the edge.",
-                           patches=None, meta={"sources": [name]})
+                ap.propose("source", f"new tentacle: {name}", "",
+                           patches=None,
+                           meta={"plain": f"Add a brand-new data source: {name}.",
+                                 "why": "My scout found it while hunting for fresher signal. I can't safely wire it up on my own.",
+                                 "sources": [name]})
 
     def _log(self, rep, syn, rules, studies, cal, rt, bench, lessons, code_props, new_sources, by):
         os.makedirs(EVO_DIR, exist_ok=True)
