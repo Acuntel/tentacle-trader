@@ -1,0 +1,62 @@
+name: apply-approved
+
+# Brady tapped ✅ Approve in Telegram. The always-on trader fired a repository_dispatch carrying the
+# EXACT patch he approved. Apply it here on GitHub's runners (the money container never writes its own
+# code), run the SAME gate selfcode uses (every module compiles + `import earshot.main` + a sim batch
+# runs), and if it passes: commit to main and redeploy Railway. The 3 rails (risk.py caps, executor.py
+# money gate, backtest.py Gauntlet) are refused by selfcode.apply_external regardless.
+#
+# Repo secret needed for the deploy step: RAILWAY_TOKEN (a Railway project token for tentacle-trader).
+
+on:
+  repository_dispatch:
+    types: [apply-approved]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: pip install -r requirements.txt
+
+      - name: Apply approved patch(es) through the test-gate
+        env:
+          PATCHES_JSON: ${{ github.event.client_payload.patches_json }}
+        run: python -m earshot.apply_patch | tee /tmp/apply.out
+
+      - name: Commit to main if the gate passed
+        id: commit
+        run: |
+          if [ -z "$(git status --porcelain)" ]; then
+            echo "Gate failed or no-op — nothing to commit."
+            echo "changed=0" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          git config user.name  "tentacle-self-evolve"
+          git config user.email "self-evolve@tentacle.bot"
+          git add -A
+          git commit -m "approved self-change (Telegram): ${{ github.event.client_payload.title }}"
+          git push origin main
+          echo "changed=1" >> "$GITHUB_OUTPUT"
+
+      - name: Redeploy Railway (only if a change shipped and auto_deploy is on)
+        if: steps.commit.outputs.changed == '1' && github.event.client_payload.auto_deploy == '1'
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: |
+          if [ -z "$RAILWAY_TOKEN" ]; then
+            echo "No RAILWAY_TOKEN secret — push is live on the next deploy. Skipping auto-deploy."; exit 0
+          fi
+          npm i -g @railway/cli
+          railway up --service tentacle-trader --detach --ci \
+            || echo "railway up failed — deploy manually from the repo with: railway up"

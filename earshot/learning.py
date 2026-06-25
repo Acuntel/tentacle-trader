@@ -15,6 +15,7 @@ OBS_PATH = "state/observations.json"
 OUTCOMES_PATH = "state/outcomes.jsonl"
 KNOW_PATH = "state/knowledge.json"
 DUNGEON_PATH = "state/dungeon/post_mortems.jsonl"  # under state/ so one volume persists everything
+RESOLVED_OBS_PATH = "state/resolved_obs.jsonl"     # ledger of labeled setups -> warm-starts the P(win) model
 WMIN, WMAX = 0.1, 1.2
 
 
@@ -39,6 +40,9 @@ class Learner:
         self.patterns = PatternMemory(self.know)   # learned pattern win-rates (persisted)
         self.lgate = None                          # LearnedGate (P(win) model), attached by main
         self.core = None                           # shared BrainCore, attached by main
+        # progressive resolution horizons: (hours_since_entry, credit_rate). Short = noisier = lighter.
+        # The long horizon is the real label; the short ones let learning accrue in HOURS, not days.
+        self._horizons = [(24.0, 0.05)]            # default; main overrides from config.learning
 
     def _persist_know(self):
         self.know["weights"] = self.weights      # learned weights ride along, survive restarts
@@ -140,24 +144,50 @@ class Learner:
             have.add((c.ticker, today))
         _save(OBS_PATH, self.obs)
 
-    def resolve_observations(self, horizon_days: float = 1.0, max_per_cycle: int = 25) -> int:
-        """Label matured observations by what the stock ACTUALLY did (entry-anchored), and teach
-        patterns + weights from it — learning from the whole data stream, not just trades."""
+    def set_horizons(self, hours: list, rates: list):
+        """Wire the progressive-resolution horizons from config (parallel lists)."""
+        pairs = [(float(h), float(r)) for h, r in zip(hours, rates) if float(h) > 0]
+        if pairs:
+            self._horizons = sorted(pairs)
+
+    def _ledger_resolved(self, o: dict, h: float, ret: float, win: bool):
+        """Append every labeled observation to an immutable ledger so a fresh boot can WARM-START the
+        P(win) model from real feature vectors instead of starting cold."""
+        if not o.get("feat"):
+            return
+        _append(RESOLVED_OBS_PATH, {"ts": iso(time.time()), "h": h, "ret": round(ret, 3),
+                                    "win": win, "feat": o["feat"], "sig": o.get("sig", "")})
+
+    def resolve_observations(self, max_per_cycle: int = 40) -> int:
+        """PROGRESSIVE resolution: label each observation at MULTIPLE horizons (e.g. 1h / 1d / 5d) by
+        what the stock actually did, crediting patterns + weights + the P(win) model at each one. Short
+        horizons are noisier so they carry a lighter credit rate — but they let the brain start learning
+        from a setup within HOURS instead of waiting a full hold. An obs is dropped once its longest
+        horizon resolves. This is the main lever that gets mastery off zero faster."""
         from . import prices
         still, learned = [], 0
         for o in self.obs:
-            if learned >= max_per_cycle or (time.time() - o["ts"]) < horizon_days * 86400:
-                still.append(o); continue
-            px = prices.last_price(o["ticker"])
-            if not px or not o.get("entry"):
-                still.append(o); continue
-            ret = (px / o["entry"] - 1) * 100
-            win = ret > 0
-            self.patterns.record(o.get("sig", ""), win, ret)        # learn the pattern from data
-            self._credit_sources(o["sources"], win, ret, rate=0.05)  # gentler than a real trade
-            if self.lgate is not None and o.get("feat"):
-                self.lgate.update(o["feat"], win)                    # train P(win) from observations too
-            learned += 1
+            done = set(o.get("done", []))
+            age_h = (time.time() - o["ts"]) / 3600.0
+            px = None
+            for h, rate in self._horizons:
+                if h in done or age_h < h or learned >= max_per_cycle:
+                    continue
+                if px is None:
+                    px = prices.last_price(o["ticker"])
+                if not px or not o.get("entry"):
+                    break
+                ret = (px / o["entry"] - 1) * 100
+                win = ret > 0
+                self.patterns.record(o.get("sig", ""), win, ret)        # learn the pattern from data
+                self._credit_sources(o["sources"], win, ret, rate=rate)  # horizon-scaled, < a real trade
+                if self.lgate is not None and o.get("feat"):
+                    self.lgate.update(o["feat"], win)                    # train P(win) from observations
+                self._ledger_resolved(o, h, ret, win)
+                done.add(h); learned += 1
+            o["done"] = sorted(done)
+            if len(done) < len(self._horizons):
+                still.append(o)                                          # keep until the last horizon lands
         self.obs = still
         if learned:
             _save(OBS_PATH, self.obs)

@@ -8,9 +8,10 @@ name: self-evolve
 # The 3 rails (risk.py caps, executor.py money gate, backtest.py Gauntlet) are refused by selfcode.py.
 
 on:
-  schedule:
-    - cron: "0 */6 * * *"        # every 6 hours, 24/7
-  workflow_dispatch: {}           # ...and on-demand from the Actions tab
+  # SUPERSEDED by the Telegram approve/deny loop (approvals.py -> apply-approved.yml): self-changes now
+  # go to Brady's Telegram for a tap, not an unattended PR. The autonomous 6h schedule is OFF so nothing
+  # self-merges behind his back. Left as a MANUAL fallback only (run it from the Actions tab).
+  workflow_dispatch: {}
 
 permissions:
   contents: write

@@ -12,8 +12,9 @@ import time
 
 import yaml
 
-from . import prices, market, history
+from . import prices, market, history, warmstart
 from .sources import build_sources
+from .approvals import ApprovalQueue
 from .brain import Brain
 from .survival import MotherInstinct
 from .risk import RiskGate
@@ -78,8 +79,22 @@ class Earshot:
         self.enricher.weights = self.weights
         self.selfreview = SelfReview(cfg, self.learner, self.instinct)  # continuous self-diagnosis
         self.sim = SimEngine(cfg, self.learner)                # 24/7 backtests on the cached decade
-        self.coach = Coach(cfg, self.learner, self.instinct, self.sim, self.scout, self.core)  # self-improvement
+        self.approvals = ApprovalQueue(cfg, self.learner.know, self.learner._persist_know)  # Telegram approve/deny
+        self.coach = Coach(cfg, self.learner, self.instinct, self.sim, self.scout, self.core,
+                           self.approvals)                     # self-improvement -> proposals to Telegram
         self.auditor = Auditor(cfg)                            # 24/7 self-code audit loop (propose-only)
+        # progressive multi-horizon resolution (1h/1d/5d): learning accrues in HOURS, not only after a hold
+        lc = cfg.get("learning", {})
+        self.learner.set_horizons(lc.get("horizons_hours", [24]), lc.get("horizon_credit", [0.05]))
+        # warm-start the P(win) model so a fresh volume isn't a cold start (mastery is NOT warm-started)
+        try:
+            ws = warmstart.run(self.lgate, self.learner, self.sim, cfg)
+            print(f"  warm-start: {ws}")
+        except Exception as e:
+            print(f"  warm-start skipped: {e}")
+        self.approvals.startup_ping(
+            f"rung {self.instinct.status()['rung']} {self.instinct.status()['mode']} · "
+            f"P(win) model {self.lgate.n} samples · I'll text you any self-change for ✅/❌ before it ships.")
         self.review = cfg.get("selfreview", {})
         self.hist_every = int(cfg.get("sim", {}).get("history_refresh_seconds", 120))
         self.hist_slice = int(cfg.get("sim", {}).get("history_slice", 25))
@@ -128,6 +143,10 @@ class Earshot:
               f"  |  learned P(win) model: {self.lgate.n} samples"
               f"{' (gating)' if self.lgate.ready() else ' (advisory until 30)'}")
         print("-" * 74)
+
+        # 0) HUMAN-IN-THE-LOOP — handle any Telegram approve/deny taps (approved patches -> apply Action)
+        for line in self.approvals.process():
+            print(f"  {line}")
 
         # 1) scour — only poll tentacles that are DUE (each at its own rate-limit-safe cadence)
         now = time.time()

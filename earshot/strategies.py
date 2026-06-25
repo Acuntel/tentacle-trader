@@ -1,18 +1,19 @@
-"""Multi-strategy tournament with OUT-OF-SAMPLE discipline — the antidote to false confidence.
+"""Multi-strategy tournament with WALK-FORWARD discipline — the antidote to false confidence.
 
 The #1 way a backtest lies: test hundreds of strategies on one slice of history, pick the best, and
-mistake luck for skill. So here every strategy is scored on TWO disjoint slices — TRAIN (older 70%) and
-TEST (held-out recent 30%). Strategies are SELECTED on train but only TRUSTED (adopted live) if they
-ALSO hold up out-of-sample. The train→test gap is reported as an overfitting score, and if NOTHING
-generalizes, it adopts NOTHING and says so. The live rule is a MIXTURE (median of the top survivors),
-not one lucky champion. Strategies EVOLVE (breed the best, retire the worst). Count is controllable.
+mistake luck for skill. A single 70/30 split barely helps — the 'test' tail can be lucky too. So here
+every event is bucketed into one of K time-ordered FOLDS (walk-forward cross-validation), and a
+strategy is only TRUSTED (adopted live) if it stays positive-expectancy across a MAJORITY of folds AND
+across market regimes (uptrend + downtrend), not just on one stretch. The fold spread is reported as an
+overfit score; if NOTHING generalizes, it adopts NOTHING and says so. The live rule is a MIXTURE
+(median of the survivors), not one lucky champion. Strategies EVOLVE (breed the best, retire the worst).
 
-Every strategy here is constrained to what Robinhood's agentic cash account can actually execute:
-LONG-only equities/ETFs, hold >= 1 day (T+1 settlement, no good-faith violations), no options, no
-shorting, no leverage. A strategy that isn't RH-executable is never generated or adopted.
+Every strategy is constrained to what Robinhood's agentic cash account can execute: LONG-only
+equities/ETFs, hold >= 1 day (T+1 settlement), no options, no shorting, no leverage.
 """
 from __future__ import annotations
 
+import math
 import random
 import statistics
 
@@ -30,20 +31,23 @@ def rh_ok(s: dict) -> bool:
 class StrategyBook:
     def __init__(self, cfg: dict, core):
         s = cfg.get("strategies", {})
+        v = cfg.get("validation", {})
         self.on = bool(s.get("enabled", True))
         self.cfg_count = int(s.get("count", 200))
         self.per_cycle_events = int(s.get("events_per_cycle", 150))
         self.min_rank = int(s.get("min_trades_to_rank", 40))
         self.lam = float(cfg["survival"]["loss_aversion_lambda"])
+        self.folds = max(2, int(v.get("walk_forward_folds", 4)))
+        self.min_fold_winrate = float(v.get("min_fold_winrate", 0.5))
+        self.regime_stratify = bool(v.get("regime_stratify", True))
         self.core = core
         self.stats = core.know.setdefault("strategies", {})
-        for k in list(self.stats):              # migrate: drop any pre-out-of-sample-schema stats so we
-            if not (isinstance(self.stats[k], dict) and "tr_n" in self.stats[k]):   # never crash on old data
+        for k in list(self.stats):              # migrate: drop any pre-walk-forward stats so we never
+            if not (isinstance(self.stats[k], dict) and "folds" in self.stats[k]):  # crash on old schema
                 del self.stats[k]
         self.book = self._generate(self._count())
 
     def _count(self) -> int:
-        # controllable: the bot (or config) can set strategy_count; bounded so it can't run away
         return max(COUNT_MIN, min(COUNT_MAX, int(self.core.know.get("strategy_count", self.cfg_count))))
 
     def _generate(self, n: int) -> list[dict]:
@@ -87,11 +91,15 @@ class StrategyBook:
             ret = chg
         return round(ret, 3)
 
-    def _acc(self, st: dict, side: str, r: float):
-        st[f"{side}_n"] += 1
-        st[f"{side}_w"] += 1 if r > 0 else 0
-        n = st[f"{side}_n"]
-        st[f"{side}_u"] = round((st[f"{side}_u"] * (n - 1) + (r if r >= 0 else self.lam * r)) / n, 4)
+    def _bump(self, b: dict, r: float):
+        b["n"] += 1
+        b["w"] += 1 if r > 0 else 0
+        n = b["n"]
+        b["u"] = round((b["u"] * (n - 1) + (r if r >= 0 else self.lam * r)) / n, 4)
+
+    @staticmethod
+    def _blank(strat: dict) -> dict:
+        return {"folds": {}, "reg": {}, "n": 0, "def": strat}
 
     def evaluate(self) -> dict:
         if not self.on:
@@ -100,54 +108,78 @@ class StrategyBook:
         tickers = history.cached_tickers()
         if len(tickers) < 5:
             return {"ran": 0, "note": "history loading"}
-        train_evs, test_evs = [], []                       # DISJOINT slices: older 70% vs held-out 30%
-        for _ in range(self.per_cycle_events * 10):
-            if len(train_evs) >= self.per_cycle_events and len(test_evs) >= self.per_cycle_events // 2:
+        events = []                                        # (closes, i, fold, regime)
+        for _ in range(self.per_cycle_events * 12):
+            if len(events) >= self.per_cycle_events:
                 break
             bars = history.load(random.choice(tickers))
             if len(bars) < 320:
                 continue
             closes = [c for _, c in bars]
-            split = int(len(closes) * 0.7)
-            if len(train_evs) < self.per_cycle_events and split - 11 > 252:
-                train_evs.append((closes, random.randint(252, split - 11)))
-            if len(test_evs) < self.per_cycle_events // 2 and len(closes) - 11 > split:
-                test_evs.append((closes, random.randint(split, len(closes) - 11)))
+            i = random.randint(252, len(closes) - 11)
+            fold = min(self.folds - 1, int((i / len(closes)) * self.folds))   # which TIME period (walk-forward)
+            regime = "up" if closes[i] > (sum(closes[i - 50:i]) / 50) else "down"
+            events.append((closes, i, fold, regime))
         ran = 0
         for strat in self.book:
-            st = self.stats.setdefault(strat["id"], {"tr_n": 0, "tr_w": 0, "tr_u": 0.0,
-                                                     "te_n": 0, "te_w": 0, "te_u": 0.0, "def": strat})
-            for closes, i in train_evs:
+            st = self.stats.setdefault(strat["id"], self._blank(strat))
+            for closes, i, fold, regime in events:
                 r = self._trade(strat, closes, i)
-                if r is not None:
-                    self._acc(st, "tr", r); ran += 1
-            for closes, i in test_evs:
-                r = self._trade(strat, closes, i)
-                if r is not None:
-                    self._acc(st, "te", r)
+                if r is None:
+                    continue
+                self._bump(st["folds"].setdefault(str(fold), {"n": 0, "w": 0, "u": 0.0}), r)
+                self._bump(st["reg"].setdefault(regime, {"n": 0, "w": 0, "u": 0.0}), r)
+                st["n"] += 1
+                ran += 1
         return {"ran": ran, "strategies": len(self.book)}
 
+    def _fold_us(self, st: dict) -> list[float]:
+        floor = max(8, self.min_rank // self.folds)
+        return [b["u"] for b in st.get("folds", {}).values() if b["n"] >= floor]
+
+    def _score(self, st: dict) -> float:
+        us = self._fold_us(st)
+        return statistics.mean(us) if us else -99.0
+
     def _ranked(self):
-        return sorted((s for s in self.stats.values()
-                       if s["tr_n"] >= self.min_rank and s["te_n"] >= self.min_rank // 2),
-                      key=lambda s: -s["te_u"])           # ranked by OUT-OF-SAMPLE expectancy
+        elig = [s for s in self.stats.values()
+                if s.get("n", 0) >= self.min_rank and len(self._fold_us(s)) >= max(2, self.folds // 2)]
+        return sorted(elig, key=self._score, reverse=True)    # by mean OUT-OF-SAMPLE fold expectancy
 
     def survivors(self):
-        """Strategies that work IN AND OUT of sample, are RH-executable — the only ones we trust."""
-        return [s for s in self._ranked() if s["tr_u"] > 0 and s["te_u"] > 0 and rh_ok(s["def"])]
+        """Strategies positive across a MAJORITY of walk-forward folds AND every regime with enough
+        data, and RH-executable — the only ones we trust live. This is the anti-false-confidence gate."""
+        need = math.ceil(self.folds * self.min_fold_winrate)
+        out = []
+        for s in self._ranked():
+            us = self._fold_us(s)
+            if sum(1 for u in us if u > 0) < need:
+                continue
+            if self.regime_stratify:
+                reg = s.get("reg", {})
+                both = [g for g in ("up", "down") if reg.get(g, {}).get("n", 0) >= self.min_rank // 2]
+                if both and not all(reg[g]["u"] > 0 for g in both):
+                    continue
+            if rh_ok(s["def"]):
+                out.append(s)
+        return out
 
     def leaderboard(self, k: int = 6) -> list[dict]:
-        return [{"id": s["def"]["id"], "style": s["def"]["style"], "te_n": s["te_n"],
-                 "train_u": s["tr_u"], "test_u": s["te_u"],
-                 "rule": f"{s['def']['stop']}/{s['def']['target']}/{s['def']['hold']}d"}
-                for s in self._ranked()[:k]]
+        out = []
+        for s in self._ranked()[:k]:
+            us = self._fold_us(s)
+            out.append({"id": s["def"]["id"], "style": s["def"]["style"], "n": s["n"],
+                        "folds_pos": sum(1 for u in us if u > 0), "folds": len(us),
+                        "oos_u": round(statistics.mean(us), 3) if us else 0.0,
+                        "rule": f"{s['def']['stop']}/{s['def']['target']}/{s['def']['hold']}d"})
+        return out
 
     def adopt_blend(self, cfg: dict, k: int = 5):
-        """Live rule = MEDIAN of the top-K SURVIVORS (out-of-sample-validated + RH-executable). If none
-        generalize, adopt NOTHING — refuse to trust an overfit champion. This is the anti-false-confidence."""
+        """Live rule = MEDIAN of the top-K SURVIVORS (walk-forward + regime validated + RH-executable).
+        If none generalize, adopt NOTHING — refuse to trust an overfit champion."""
         surv = self.survivors()[:k]
         if not surv:
-            self.core.know["champion_strategy"] = {"status": "no out-of-sample survivor — not adopting"}
+            self.core.know["champion_strategy"] = {"status": "no walk-forward survivor — not adopting"}
             return None
         defs = [s["def"] for s in surv]
         blend = {"stop": round(statistics.median([d["stop"] for d in defs])),
@@ -159,26 +191,27 @@ class StrategyBook:
             self.core.know["catalyst_rules"][cat] = {"stop_pct": blend["stop"], "target_pct": blend["target"],
                                                      "hold_days": blend["hold"]}
         self.core.know["champion_strategy"] = {"blend_of": len(defs), "styles": sorted({d["style"] for d in defs}),
-                                               "rh_executable": True, **blend}
+                                               "rh_executable": True, "validated": "walk_forward", **blend}
         return blend
 
     def honesty(self) -> dict:
-        """The bot grading itself HONESTLY: how big is the train->test gap, did anything survive
-        out-of-sample, and is its confidence earned or fake? Never lets it believe its own backtest."""
+        """The bot grading itself HONESTLY: how wide is the fold spread, did anything survive
+        walk-forward, is its confidence earned or fake? Never lets it believe its own backtest."""
         ranked = self._ranked()
         if not ranked:
             return {"status": "NO out-of-sample data yet — zero proven edge, learning only", "survivors": 0}
-        top = ranked[0]
-        gap = round(top["tr_u"] - top["te_u"], 3)          # how much the edge shrinks out-of-sample
+        us = self._fold_us(ranked[0])
+        folds_pos = sum(1 for u in us if u > 0)
+        spread = round(max(us) - min(us), 3) if us else 0.0
         n_surv = len(self.survivors())
         if n_surv == 0:
-            status = "OVERFIT — the best strategies FAIL out-of-sample. No trustworthy edge. Confidence = false."
-        elif gap > 1.0:
-            status = f"PARTIAL — edge shrinks a lot out-of-sample (gap {gap}); treat with suspicion."
+            status = "OVERFIT — the best strategy fails the walk-forward folds. No trustworthy edge. Confidence = false."
+        elif spread > 1.5:
+            status = f"PARTIAL — edge swings across folds (spread {spread}); treat with suspicion."
         else:
-            status = f"HOLDS — {n_surv} strategies survive out-of-sample (gap {gap}). Tentative, still shadow."
-        return {"status": status, "survivors": n_surv, "train_test_gap": gap,
-                "ranked": len(ranked), "of_strategies": len(self.book)}
+            status = f"HOLDS — {n_surv} strategies positive across {folds_pos}/{len(us)} folds (spread {spread}). Tentative, still shadow."
+        return {"status": status, "survivors": n_surv, "fold_spread": spread, "folds_positive": folds_pos,
+                "folds": len(us), "ranked": len(ranked), "of_strategies": len(self.book)}
 
     def _mutate(self, s: dict) -> dict:
         def jit(v, opts):
@@ -204,6 +237,6 @@ class StrategyBook:
                 if b["id"] == sid:
                     self.book[i] = child
                     break
-            self.stats[sid] = {"tr_n": 0, "tr_w": 0, "tr_u": 0.0, "te_n": 0, "te_w": 0, "te_u": 0.0, "def": child}
+            self.stats[sid] = self._blank(child)
             evolved += 1
         return {"evolved": evolved}

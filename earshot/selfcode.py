@@ -119,6 +119,54 @@ def attempt() -> dict:
     return {"status": "reverted", **rec}
 
 
+def _restore(originals: dict):
+    for path, src in originals.items():
+        open(path, "w").write(src)
+
+
+def apply_external(patches: list) -> dict:
+    """Apply a list of APPROVED {file, find, replace} patches, then prove the whole tree still passes
+    the gate (compile + import + sim). Allows earshot/*.py and config.yaml; refuses the 3 locked rails.
+    On any gate failure, reverts EVERY patch. Used by the apply-approved Action after a Telegram tap —
+    the live trader never writes its own code; an isolated runner applies exactly what Brady approved."""
+    repo = os.path.dirname(PKG)
+    originals: dict = {}
+    applied: list = []
+    for p in patches or []:
+        rel = str(p.get("file", "")).strip().lstrip("./")
+        fname = os.path.basename(rel)
+        if rel == "config.yaml":
+            path = os.path.join(repo, "config.yaml")
+        elif fname in LOCKED:
+            _restore(originals)
+            return {"status": "refused", "why": f"{fname} is a locked rail"}
+        elif rel.startswith("earshot/") and fname.endswith(".py"):
+            path = os.path.join(PKG, fname)
+        else:
+            _restore(originals)
+            return {"status": "refused", "why": f"path not allowed: {rel}"}
+        if not os.path.exists(path):
+            _restore(originals)
+            return {"status": "refused", "why": f"unknown file {rel}"}
+        src = open(path).read()
+        find, repl = p.get("find", ""), p.get("replace", "")
+        if not find or find not in src or src.count(find) != 1 or repl == find:
+            _restore(originals)
+            return {"status": "refused", "why": f"find not uniquely present in {rel}"}
+        originals.setdefault(path, src)
+        open(path, "w").write(src.replace(find, repl))
+        applied.append(rel)
+    if not applied:
+        return {"status": "skipped", "why": "no patches"}
+    ok, reason = _gate()
+    if ok:
+        _append(APPLIED, {"ts": iso(time.time()), "status": "APPROVED+TESTED (apply-approved)",
+                          "files": applied, "gate": reason})
+        return {"status": "applied", "files": applied, "gate": reason}
+    _restore(originals)
+    return {"status": "reverted", "files": applied, "gate": reason}
+
+
 def main():
     r = attempt()
     print(json.dumps(r, indent=2))

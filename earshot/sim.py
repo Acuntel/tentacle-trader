@@ -35,6 +35,7 @@ class SimEngine:
         self.stop = float(s.get("stop_pct", 8.0))
         self.target = float(s.get("target_pct", 12.0))
         self.risk = float(s.get("sim_risk_frac", 0.10))         # notional risked per episode (for the curve)
+        self.workers = max(1, int(s.get("parallel_workers", 1)))  # concurrent bar-cache pre-warm
         self.learner = learner
         start = float(cfg["survival"]["starting_capital"])
         self.state = _load(SIM_PATH, {
@@ -70,6 +71,19 @@ class SimEngine:
             ret = chg
         return {"sig": sig, "ticker": t, "ret": round(ret, 3), "win": ret > 0, "move": round(r1, 2)}
 
+    def feature_episode(self, tickers: list[str]):
+        """A historical episode mapped into the P(win) model's FEATURE space — used by warm-start as a
+        WEAK momentum/trend prior so the live model doesn't boot ice-cold. Returns (feats, win)."""
+        ep = self._episode(tickers)
+        if not ep:
+            return None
+        up = ep["sig"].endswith("uptrend")
+        feats = {"independence": 0.4, "news_events": 0.2, "opt_bias": 0.0,
+                 "tech_bias": 0.3 if up else -0.3, "squeeze": 0.0, "quality": 0.5,
+                 "analyst_conv": min(1.0, 0.4 + ep["move"] / 40.0),
+                 "is_filing": 0.0, "is_options": 0.0, "is_price": 1.0}
+        return feats, ep["win"]
+
     def step(self) -> dict:
         """Run a bounded batch of episodes, teach the pattern memory, grow the sim curve. 24/7-safe."""
         if not self.on:
@@ -77,6 +91,12 @@ class SimEngine:
         tickers = history.cached_tickers()
         if len(tickers) < 5:
             return {"ran": 0, "note": "history still loading"}
+        if self.workers > 1:                                   # parallel: pre-warm the bar cache concurrently
+            from concurrent.futures import ThreadPoolExecutor
+            import random as _r
+            sample = [_r.choice(tickers) for _ in range(min(self.workers * 4, len(tickers)))]
+            with ThreadPoolExecutor(max_workers=self.workers) as ex:
+                list(ex.map(history.load, sample))
         ran = 0
         for _ in range(self.per_cycle * 3):                     # extra tries since most days aren't events
             if ran >= self.per_cycle:

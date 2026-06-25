@@ -13,7 +13,7 @@ import json
 import os
 import time
 
-from . import llm, evolve, persist
+from . import llm, evolve, persist, selfcode
 from .learning import WMIN, WMAX
 from .models import iso
 from .strategies import StrategyBook
@@ -38,7 +38,7 @@ def _append(path, obj):
 
 
 class Coach:
-    def __init__(self, cfg, learner, instinct, sim, scout=None, core=None):
+    def __init__(self, cfg, learner, instinct, sim, scout=None, core=None, approvals=None):
         c = cfg.get("coach", {})
         self.cfg = cfg
         self.on = bool(c.get("enabled", True))
@@ -48,6 +48,7 @@ class Coach:
         self.sim = sim
         self.scout = scout
         self.core = core
+        self.approvals = approvals                         # Telegram approve/deny queue (optional)
         self.book = StrategyBook(cfg, core) if core is not None else None   # the strategy tournament
         self.last = 0.0
         self.last_backup_day = None
@@ -120,13 +121,15 @@ class Coach:
         # (3) the LLM reasons across the ENTIRE brain snapshot + the mother's creed + her feelings
         rep = self._report(news_signals, macro_ctx)
         traj = rep.get("trajectory", {})
-        tuned, lessons, code_props, watch = list(syn.get("weights_moved", []) and ["synthesis"] or []), [], [], []
+        tuned, lessons, code_props, watch, cfg_props = (
+            list(syn.get("weights_moved", []) and ["synthesis"] or []), [], [], [], [])
         v = llm.ask_json(SYSTEM,
                          "Review your son's WHOLE brain and his growth trajectory. Your goal is recursive: "
                          "make him grow FASTER than he grew yesterday, every day, without ever risking his "
                          "life. Propose improvements as JSON with keys: "
                          'reweight (object src->"up"|"down"), lessons (array of short strings), '
-                         "watchlist (array of tickers), code_proposals (array of {file, change, why}). "
+                         "watchlist (array of tickers), code_proposals (array of {file, change, why}), "
+                         "config_changes (array of {setting, from, to, why} — a config.yaml threshold to shift). "
                          "Evidence:\n" + json.dumps(rep, default=str)[:9000], max_tokens=1200)
         if v:
             for s, dirn in (v.get("reweight") or {}).items():
@@ -137,6 +140,7 @@ class Coach:
             lessons = [str(x) for x in (v.get("lessons") or [])][:6]
             watch = [str(x) for x in (v.get("watchlist") or [])][:20]
             code_props = [p for p in (v.get("code_proposals") or []) if isinstance(p, dict)][:6]
+            cfg_props = [p for p in (v.get("config_changes") or []) if isinstance(p, dict)][:4]
 
         for ls in lessons:
             if ls not in self.know["lessons"]:
@@ -161,6 +165,7 @@ class Coach:
                 _append(PROPOSALS, {"ts": iso(time.time()), "status": "NEW SOURCE — consider wiring",
                                     "file": "earshot/sources/", "change": f"add/enable tentacle '{name}'",
                                     "why": "scout: current sources decaying; could sharpen the edge"})
+        self._route_to_approval(code_props, cfg_props, new_sources)   # -> Telegram approve/deny (concrete patches)
         self.learner._persist_know()
 
         if not rt["ok"]:                                  # a safety rail got weakened — scream
@@ -180,9 +185,50 @@ class Coach:
             f"of {len(self.book.book) if self.book else 0} strategies ({evo['evolved']} evolved); "
             f"HONESTY: {honesty.get('status', 'n/a')[:70]}; "
             f"trajectory {'↑ growing faster' if traj.get('improving') else 'flat (day ' + str(traj.get('days', 0)) + ')'}")
+        if self.approvals is not None:
+            self.approvals.daily_digest(self.last_summary)   # once/day visibility into auto-applied tuning
         return {"syn": syn, "rules": rules, "studies": studies, "calib": cal, "redteam": rt,
                 "benchmark": bench, "lessons": lessons, "code_proposals": code_props,
                 "new_sources": new_sources, "by": "groq+brain" if v else "brain"}
+
+    # ---- route the bot's desired self-changes to Telegram as CONCRETE, gateable patches ----
+    def _route_to_approval(self, code_props, cfg_props, new_sources):
+        ap = self.approvals
+        if ap is None:
+            return
+        # 1) CODE — the LLM's code_props are prose; turn the urge into a real find/replace patch the
+        #    gate can verify, and propose that. Bounded to one concrete patch per pass.
+        if code_props and llm.have_free_brain():
+            try:
+                patch = selfcode._propose()
+            except Exception:
+                patch = None
+            if patch and all(k in patch for k in ("file", "find", "replace")):
+                ap.propose("code", f"code: {os.path.basename(str(patch['file']))}",
+                           patch.get("why", "self-proposed improvement"),
+                           patches=[{"file": patch["file"], "find": patch["find"], "replace": patch["replace"]}])
+        # 2) CONFIG — a proposed threshold shift -> a config.yaml find/replace (gate validates uniqueness)
+        for p in cfg_props:
+            setting, frm, to = str(p.get("setting", "")).strip(), p.get("from"), p.get("to")
+            if not setting or frm is None or to is None or str(frm) == str(to):
+                continue
+            ap.propose("config", f"config: {setting} {frm} → {to}", str(p.get("why", "tune a threshold")),
+                       patches=[{"file": "config.yaml", "find": f"{setting}: {frm}",
+                                 "replace": f"{setting}: {to}"}])
+        # 3) SOURCES — flip an already-coded-but-off tentacle on (a config patch); a brand-new one is
+        #    proposed as 'needs wiring' (no safe auto-patch exists for code that doesn't exist yet).
+        srcs = self.cfg.get("sources", {})
+        for name in new_sources:
+            if ap.is_denied_source(name):
+                continue
+            if name in srcs and srcs.get(name) is not True:
+                ap.propose("config", f"enable tentacle: {name}", "scout: sources decaying — turn this one on",
+                           patches=[{"file": "config.yaml", "find": f"{name}: false",
+                                     "replace": f"{name}: true"}], meta={"sources": [name]})
+            elif name not in srcs:
+                ap.propose("source", f"new tentacle: {name}",
+                           "scout found a decaying source set; this new data source could sharpen the edge.",
+                           patches=None, meta={"sources": [name]})
 
     def _log(self, rep, syn, rules, studies, cal, rt, bench, lessons, code_props, new_sources, by):
         os.makedirs(EVO_DIR, exist_ok=True)
@@ -205,8 +251,8 @@ class Coach:
                  f"- safety red-team: {'ALL GATES HOLD' if rt['ok'] else '⚠ FAILED: ' + str(rt['failed'])}",
                  f"- vs SPY buy-and-hold: edge/trade {bench.get('edge_per_trade_pct','n/a')}% "
                  f"(sim {bench.get('sim_avg_pct','?')}% vs SPY {bench.get('spy_avg_hold_pct','?')}% per hold)",
-                 f"- strategy tournament (top by OUT-OF-SAMPLE expectancy): "
-                 + ", ".join(f"{r['style']} {r['rule']} train{r['train_u']}/test{r['test_u']}"
+                 f"- strategy tournament (top by walk-forward expectancy): "
+                 + ", ".join(f"{r['style']} {r['rule']} oos{r['oos_u']} ({r['folds_pos']}/{r['folds']} folds+)"
                              for r in rep.get('strategy_leaderboard', [])[:3]),
                  f"- HONESTY (overfit check): {rep.get('honesty_out_of_sample', {}).get('status', 'n/a')}",
                  f"- ambition: {rep.get('ambition', {}).get('note', '')}",

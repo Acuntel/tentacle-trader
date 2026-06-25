@@ -208,11 +208,30 @@ sim:
   stop_pct: 8.0
   target_pct: 12.0
   sim_risk_frac: 0.10          # notional risked per episode (drives the visible sim-equity curve)
+  parallel_workers: 4          # concurrent bar-cache pre-warm per sim batch (faster replays; 1 = serial)
+
+# ---- Progressive learning: label every setup at MULTIPLE horizons so learning accrues in HOURS ----
+learning:
+  horizons_hours: [1, 24, 120]      # resolve each observation at 1h / 1d / 5d (short = fast, long = real)
+  horizon_credit: [0.03, 0.05, 0.08]  # credit rate per horizon (short = noisier = lighter); < a real trade's 0.15
+
+# ---- Walk-forward validation: the overfit killer (replaces a single train/test split) ----
+validation:
+  walk_forward_folds: 4        # bucket events into K time-ordered folds; a survivor must hold across them
+  min_fold_winrate: 0.5        # must be positive-expectancy in a MAJORITY of folds, not one lucky stretch
+  regime_stratify: true        # AND positive across uptrend + downtrend regimes (no bull-only edge)
+
+# ---- Warm-start: a fresh boot/volume starts smart, not cold (mastery is NEVER warm-started) ----
+warmstart:
+  enabled: true
+  skip_above_n: 150            # don't warm-start once the P(win) model already has this many real samples
+  ledger_cap: 5000             # replay up to this many resolved observations (real feature vectors)
+  sim_episodes: 300            # weak momentum/trend prior from historical episodes (low learning rate)
 
 # ---- Night coach: self-improvement (PROPOSE-ONLY for code; auto-tunes weights/lessons live) ----
 coach:
   enabled: true
-  every_minutes: 15            # cadence (30->15: re-tunes weights/lessons twice as often)
+  every_minutes: 10            # cadence (15->10: re-tunes + reasons over the whole brain more often)
   min_source_samples: 8        # don't retune a source's weight until it has this many resolved outcomes
 
 # ---- 24/7 self-code audit: read + critique its OWN source on loop, journal fixes (propose-only) ----
@@ -233,3 +252,18 @@ strategies:
 enrichment:
   max_per_cycle: 2             # probe at most N under-confirmed tickers per tick
   cooldown_sec: 1800          # don't re-probe the same ticker within 30m (rate-limit safe)
+
+# ---- Telegram: the bot texts Brady each self-change for ✅/❌ before it ships (human-in-the-loop) ----
+# Needs Railway vars TELEGRAM_BOT_TOKEN (@BotFather) + TELEGRAM_CHAT_ID (@userinfobot). Off until set.
+telegram:
+  enabled: true
+  daily_digest: true           # once/day summary of the AUTO-applied tuning (weights/lessons) — no approval
+  max_proposals_per_day: 4     # cap approval pings/day (anti-spam; dedupes repeats + remembers denials)
+
+# ---- Approve/deny: an approved change is gate-tested + merged + redeployed by the apply-approved Action ----
+# Needs Railway var GITHUB_DISPATCH_TOKEN (fine-grained PAT, contents+actions write) and repo secret
+# RAILWAY_TOKEN (project token) for the auto-deploy. Without them, approvals are saved to a queue file.
+approvals:
+  enabled: true
+  scope: notable               # code + new sources + config/strategy threshold shifts ("everything notable")
+  auto_deploy: true            # approve -> commit to main + railway up (real-money gate stays locked regardless)
