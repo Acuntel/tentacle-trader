@@ -82,20 +82,14 @@ jobs:
         if: github.event.action == 'apply-approved' && steps.apply.outputs.ok == '1'
         env:
           AUTO_DEPLOY: ${{ github.event.client_payload.auto_deploy }}
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}            # a project token (scoped) — preferred
-          RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}    # OR an account token (needs explicit link)
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}    # a PROJECT token (scoped to tentacle-trader/production)
         run: |
           if [ "$AUTO_DEPLOY" = "0" ]; then echo "auto_deploy off — merged to main only."; exit 0; fi
-          if [ -z "$RAILWAY_TOKEN" ] && [ -z "$RAILWAY_API_TOKEN" ]; then
-            echo "No Railway token secret — the change is merged to main; deploy with: railway up"; exit 0
+          if [ -z "$RAILWAY_TOKEN" ]; then
+            echo "No RAILWAY_TOKEN secret — the change is merged to main; deploy with: railway up"; exit 0
           fi
           npm i -g @railway/cli
-          if [ -n "$RAILWAY_API_TOKEN" ]; then
-            railway link --project 494337d8-7677-4649-9867-d96f4db13367 \
-                         --service 9b9a4d06-2d67-4e49-930f-4fd2c16824f8 \
-                         --environment production || echo "link warn"
-          fi
-          railway up --detach --ci || echo "railway up failed — deploy manually with: railway up"
+          railway up --service tentacle-trader --detach --ci || echo "railway up failed — deploy manually with: railway up"
 
       # ---- DISCARD (❌): drop the staged patch + record the denial ----
       - name: Discard staged patch
