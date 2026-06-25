@@ -1,0 +1,96 @@
+name: tentacle-approvals
+
+# All three legs of the Telegram approve/deny relay, triggered by repository_dispatch:
+#   stage-approval    (from Tentacle at propose time, shared-bot mode)  -> write pending/<id>.json
+#   apply-approved    (from Nessobot on the user's ✅ tap, or Tentacle's own poller) -> gate + merge + deploy
+#   discard-approval  (from Nessobot on the user's ❌ tap)              -> drop the staged patch + record denial
+#
+# The patch is staged on GitHub so the decision never has to reach Tentacle's running process. The 3
+# rails (risk.py / executor.py / backtest.py) are refused by selfcode.apply_external regardless.
+# Secrets: GITHUB_DISPATCH_TOKEN lives on the callers (Tentacle + Nessobot). RAILWAY_TOKEN (repo secret)
+# powers the auto-deploy after an approved apply.
+
+on:
+  repository_dispatch:
+    types: [stage-approval, apply-approved, discard-approval]
+
+permissions:
+  contents: write
+
+jobs:
+  relay:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: pip install -r requirements.txt
+
+      - name: Git identity
+        run: |
+          git config user.name  "tentacle-self-evolve"
+          git config user.email "self-evolve@tentacle.bot"
+
+      # ---- STAGE (Tentacle, propose time): persist the patch so a later ✅ can apply it ----
+      - name: Stage patch
+        if: github.event.action == 'stage-approval'
+        env:
+          ID: ${{ github.event.client_payload.id }}
+          TITLE: ${{ github.event.client_payload.title }}
+          PATCHES_JSON: ${{ github.event.client_payload.patches_json }}
+        run: |
+          mkdir -p pending
+          python -c "import json,os; cid=os.environ['ID']; json.dump({'id':cid,'title':os.environ.get('TITLE',''),'patches':json.loads(os.environ['PATCHES_JSON'])}, open('pending/'+cid+'.json','w'), indent=2)"
+          git add pending && git commit -m "stage approval ${ID}" && git push origin main || echo "nothing to stage"
+
+      # ---- APPLY (✅): inline patch if present, else staged pending/<id>.json; gate, merge, deploy ----
+      - name: Apply patch through the gate
+        if: github.event.action == 'apply-approved'
+        id: apply
+        env:
+          ID: ${{ github.event.client_payload.id }}
+          TITLE: ${{ github.event.client_payload.title }}
+          INLINE: ${{ github.event.client_payload.patches_json }}
+        run: |
+          if [ -n "$INLINE" ]; then
+            export PATCHES_JSON="$INLINE"
+          elif [ -f "pending/${ID}.json" ]; then
+            export PATCHES_JSON="$(python -c "import json;print(json.dumps(json.load(open('pending/${ID}.json'))['patches']))")"
+          else
+            echo "no patch found for ${ID}"; echo "ok=0" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          python -m earshot.apply_patch | tee /tmp/apply.out
+          rm -f "pending/${ID}.json"
+          git add -A
+          if git diff --cached --quiet -- earshot config.yaml; then
+            git commit -m "approval ${ID}: no-op or failed gate (staged patch dropped)" && git push origin main || echo "nothing to commit"
+            echo "ok=0" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          git commit -m "approved self-change ${ID}: ${TITLE:-via Telegram}"
+          git push origin main
+          echo "ok=1" >> "$GITHUB_OUTPUT"
+
+      - name: Redeploy Railway after apply
+        if: github.event.action == 'apply-approved' && steps.apply.outputs.ok == '1' && github.event.client_payload.auto_deploy != '0'
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: |
+          if [ -z "$RAILWAY_TOKEN" ]; then echo "No RAILWAY_TOKEN secret — push is live on the next deploy."; exit 0; fi
+          npm i -g @railway/cli
+          railway up --service tentacle-trader --detach --ci || echo "railway up failed — deploy manually with: railway up"
+
+      # ---- DISCARD (❌): drop the staged patch + record the denial ----
+      - name: Discard staged patch
+        if: github.event.action == 'discard-approval'
+        env:
+          ID: ${{ github.event.client_payload.id }}
+        run: |
+          rm -f "pending/${ID}.json" || true
+          echo "{\"id\": \"${ID}\", \"decision\": \"denied\"}" >> decisions.jsonl
+          git add -A && git commit -m "denied ${ID} (Telegram)" && git push origin main || echo "nothing to discard"

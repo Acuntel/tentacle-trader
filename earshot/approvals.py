@@ -89,11 +89,19 @@ class ApprovalQueue:
         self.st["seen"][h] = cid
         self.st["day_count"] += 1
         if notify.shared():
-            # Nessobot owns the inbound loop, so we can't receive taps here. Notify as TEXT only (no
-            # dead buttons); the approval relay is wired separately. Don't leave an un-tappable pending.
-            notify.send(self._render(item, interactive=False))
-            item["status"] = "notified (shared bot — interactive approval relay not wired yet)"
-            self.st["log"] = (self.st["log"] + [item])[-200:]
+            # Nessobot (the existing content bot) owns the inbound loop. STAGE the patch to GitHub now,
+            # then send the card WITH buttons via Nessobot's token — Nessobot relays the tap to the
+            # apply/discard Action (the decision never has to reach this process).
+            if patches:
+                item["staged"] = bool(self._dispatch_event(
+                    "stage-approval", {"id": cid, "title": item["title"][:120],
+                                       "patches_json": json.dumps(patches)[:60000]}))
+                mid = notify.send(self._render(item),
+                                  buttons=[("✅ Approve", f"ok:{cid}"), ("❌ Deny", f"no:{cid}")])
+            else:  # a brand-new source with no safe auto-patch -> informational text only
+                mid = notify.send(self._render(item, interactive=False))
+            item["message_id"] = mid
+            self.st["pending"][cid] = item          # tracked; resolved by the relay Actions, not here
             self.persist()
             return cid
         self.st["pending"][cid] = item
@@ -157,8 +165,11 @@ class ApprovalQueue:
         if not patches:                                  # a genuinely-new source the bot can't self-wire
             self.know.setdefault("accepted_wiring", []).append(item["title"])
             return "accepted — needs human wiring (no safe auto-patch exists for a brand-new source)"
-        if self._dispatch(item, patches):
-            return "dispatched to the apply-approved Action → gate + " + \
+        if self._dispatch_event("apply-approved",
+                                {"id": item["id"], "title": item["title"][:120],
+                                 "auto_deploy": "1" if self.auto_deploy else "0",
+                                 "patches_json": json.dumps(patches)[:60000]}):
+            return "dispatched to the apply Action → gate + " + \
                    ("merge + redeploy" if self.auto_deploy else "merge")
         # no dispatch token: save it so it can be applied manually / by the scheduled Action
         os.makedirs(os.path.dirname(QUEUE_FALLBACK) or ".", exist_ok=True)
@@ -173,17 +184,16 @@ class ApprovalQueue:
                 self.st["denied_sources"].append(s)
         return "dropped and remembered — I won't propose this again and I down-weight that direction"
 
-    def _dispatch(self, item: dict, patches) -> bool:
+    def _dispatch_event(self, event_type: str, payload: dict) -> bool:
+        """Fire a GitHub repository_dispatch to the trader's repo (used to stage/apply/discard patches
+        on isolated runners — the money container never writes code)."""
         tok = os.getenv("GITHUB_DISPATCH_TOKEN")
         repo = os.getenv("GITHUB_REPO", "Acuntel/tentacle-trader")
         if not (_HAVE and tok):
             return False
-        payload = {"title": item["title"][:120], "id": item["id"],
-                   "auto_deploy": "1" if self.auto_deploy else "0",
-                   "patches_json": json.dumps(patches)[:60000]}
         try:
             r = requests.post(f"https://api.github.com/repos/{repo}/dispatches",
-                              json={"event_type": "apply-approved", "client_payload": payload},
+                              json={"event_type": event_type, "client_payload": payload},
                               headers={"Authorization": f"Bearer {tok}",
                                        "Accept": "application/vnd.github+json",
                                        "X-GitHub-Api-Version": "2022-11-28"}, timeout=20)
