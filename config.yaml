@@ -1,4 +1,4 @@
-# TENTACLE — all thresholds in one place. Tune here, not in code.  (approve/deny pipeline verified)
+# TENTACLE — all thresholds in one place. Tune here, not in code.
 
 identity:
   name: TENTACLE
