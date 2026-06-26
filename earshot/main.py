@@ -340,7 +340,9 @@ class Earshot:
             except KeyboardInterrupt:
                 print("\nstopped."); break
             except Exception as e:
+                import traceback
                 print(f"cycle error: {e}")
+                print(traceback.format_exc())
             time.sleep(every)
 
 
