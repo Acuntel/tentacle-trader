@@ -110,3 +110,34 @@ def forward_return_pct(ticker: str, entry_ts: float, hold_days: int):
     except Exception:
         pass
     return None
+
+
+def _mkt_return(proxy: str, start_ts: float):
+    if not _HAVE_YF:
+        return None
+    try:
+        days = min(400, max(6, int((time.time() - start_ts) / 86400) + 6))
+        h = yf.Ticker(proxy).history(period=f"{days}d")
+        closes = h["Close"]
+        if len(closes) < 2:
+            return None
+        pos = None
+        for i, ts in enumerate(h.index):                 # first bar on/after entry
+            if ts.timestamp() >= start_ts:
+                pos = i
+                break
+        if pos is None or pos >= len(closes):
+            return None
+        c0 = float(closes.iloc[pos])
+        c1 = float(closes.iloc[-1])
+        return (c1 / c0 - 1) * 100 if c0 > 0 else None
+    except Exception:
+        return None
+
+
+def market_return_since(start_ts: float, proxy: str = "SPY"):
+    """Broad-market (SPY) return from ~start_ts to now. Used to ALPHA-adjust shadow outcomes — what we
+    learn from is the trade's return MINUS the market's, so the bot can't mistake a rising tide for
+    skill. Cached ~10 min by hour-bucketed start, degrades to None (then alpha falls back to raw)."""
+    return _cached(("mktret", proxy, int(start_ts // 3600)), 600,
+                   lambda: _mkt_return(proxy, start_ts))

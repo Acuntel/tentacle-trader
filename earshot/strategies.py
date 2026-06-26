@@ -17,7 +17,7 @@ import math
 import random
 import statistics
 
-from . import history
+from . import history, marketadj
 
 STYLES = ("momentum", "breakout", "pullback")        # all LONG entries — RH cash-account compatible
 COUNT_MIN, COUNT_MAX = 20, 1000
@@ -67,7 +67,9 @@ class StrategyBook:
         if want != len(self.book):
             self.book = self._generate(want)               # the bot controls how many it tests
 
-    def _trade(self, s: dict, closes: list[float], i: int):
+    def _trade(self, s: dict, closes: list[float], dates: list[str], i: int):
+        """Return the ALPHA of the trade (return minus SPY over the same dates) so the tournament
+        selects strategies with real edge, not strategies that just ride a rising market."""
         if i < 252 or i + 1 >= len(closes) or closes[i - 1] <= 0:
             return None
         sma50 = sum(closes[i - 50:i]) / 50
@@ -81,15 +83,16 @@ class StrategyBook:
         if s["style"] == "pullback" and (closes[i] / closes[i - 1] - 1) * 100 > -s["min_move"]:
             return None
         entry = closes[i]
-        ret = 0.0
+        ret, j_exit = 0.0, min(i + s["hold"], len(closes) - 1)
         for j in range(i + 1, min(i + 1 + s["hold"], len(closes))):
             chg = (closes[j] / entry - 1) * 100
             if chg <= -s["stop"]:
-                return -float(s["stop"])
+                ret, j_exit = -float(s["stop"]), j; break
             if chg >= s["target"]:
-                return float(s["target"])
-            ret = chg
-        return round(ret, 3)
+                ret, j_exit = float(s["target"]), j; break
+            ret, j_exit = chg, j
+        mkt = marketadj.market_return(dates[i], dates[min(j_exit, len(dates) - 1)])
+        return round(ret - mkt, 3) if mkt is not None else round(ret, 3)
 
     def _bump(self, b: dict, r: float):
         b["n"] += 1
@@ -108,23 +111,31 @@ class StrategyBook:
         tickers = history.cached_tickers()
         if len(tickers) < 5:
             return {"ran": 0, "note": "history loading"}
-        events = []                                        # (closes, i, fold, regime)
-        for _ in range(self.per_cycle_events * 12):
+        embargo = 12                                       # > the longest hold -> no train/test leakage
+        events = []                                        # (closes, dates, i, fold, regime)
+        for _ in range(self.per_cycle_events * 14):
             if len(events) >= self.per_cycle_events:
                 break
             bars = history.load(random.choice(tickers))
             if len(bars) < 320:
                 continue
+            dates = [d for d, _ in bars]
             closes = [c for _, c in bars]
-            i = random.randint(252, len(closes) - 11)
-            fold = min(self.folds - 1, int((i / len(closes)) * self.folds))   # which TIME period (walk-forward)
+            L = len(closes)
+            i = random.randint(252, L - 11)
+            bsize = L / self.folds
+            # PURGE + EMBARGO: drop events whose hold window could straddle a fold boundary, so a
+            # train trade never leaks into the adjacent test fold (leak-free walk-forward CV).
+            if min(abs(i - round(k * bsize)) for k in range(1, self.folds)) < embargo:
+                continue
+            fold = min(self.folds - 1, int((i / L) * self.folds))   # which TIME period (walk-forward)
             regime = "up" if closes[i] > (sum(closes[i - 50:i]) / 50) else "down"
-            events.append((closes, i, fold, regime))
+            events.append((closes, dates, i, fold, regime))
         ran = 0
         for strat in self.book:
             st = self.stats.setdefault(strat["id"], self._blank(strat))
-            for closes, i, fold, regime in events:
-                r = self._trade(strat, closes, i)
+            for closes, dates, i, fold, regime in events:
+                r = self._trade(strat, closes, dates, i)
                 if r is None:
                     continue
                 self._bump(st["folds"].setdefault(str(fold), {"n": 0, "w": 0, "u": 0.0}), r)

@@ -93,11 +93,19 @@ class Brain:
         convergence = min(1.5, 1 + fbonus * max(0, n_families - 1))
         return max(0.0, min(100.0, base * prior * earliness * convergence))
 
-    def _size(self, score: float, capital: float) -> float:
+    def _size(self, score: float, capital: float, pwin: float | None = None) -> float:
+        frac = 0.0
         for band in self.conv["size_bands"]:
             if score >= band["min"]:
-                return round(capital * band["frac"], 2)
-        return 0.0
+                frac = band["frac"]
+                break
+        # EDGE-BASED sizing: when the P(win) model is trained AND well-calibrated, lean the size on its
+        # edge above a coin-flip (Kelly-lite), blended with the score bands by how much we TRUST it.
+        if pwin is not None and self.lgate is not None and self.lgate.ready():
+            edge = max(0.0, min(1.0, (pwin - 0.5) * 4.0))   # 0 at P(win)=0.5, 1.0 at P(win)>=0.75
+            trust = self.lgate.trust()                      # 0 if poorly calibrated, 1 if sharp (Brier)
+            frac *= (1 - trust) + trust * (0.5 + edge)
+        return round(capital * frac, 2)
 
     def evaluate(self, signals: list[RawSignal], capital: float, regime_down: bool) -> list[Candidate]:
         by_ticker: dict[str, list[RawSignal]] = defaultdict(list)
@@ -201,19 +209,31 @@ class Brain:
                 verdict = self.analyst.judge(dos)
                 cand._verdict = verdict
                 cand.confidence = max(0.0, min(100.0, cand.confidence * (0.6 + 0.008 * verdict["conviction"])))
+                # ORTHOGONALITY: real confirmation is agreement across INDEPENDENT evidence TYPES (the
+                # dossier's deduped pillars), not echoed sources. Reward 3+ orthogonal pillars; discount
+                # a lone-pillar setup that only looked confirmed because two sources echoed one wire.
+                indep = dos.get("independence", 1)
+                cand.confidence = min(100.0, cand.confidence * (1.08 if indep >= 3 else 1.0 if indep == 2 else 0.92))
                 if (not verdict.get("real", True)) or verdict.get("direction") != "up":
                     cand._analyst_veto = "analyst: " + (verdict.get("bear_case") or "not a clean up-catalyst")
                 if self.lgate is not None:
                     cand._lgate_features = self.lgate.featurize(dos, verdict)
                     cand._pwin = round(self.lgate.predict(cand._lgate_features), 3)
-                cand.size_usd = self._size(cand.confidence, capital)
+                    cand._uncertainty = round(1 - abs(cand._pwin - 0.5) * 2, 3)   # 1.0 = most informative
+                cand.size_usd = self._size(cand.confidence, capital, pwin=getattr(cand, "_pwin", None))
                 cand.reasons.append(
                     f"analyst[{verdict.get('by')}]: real={verdict['real']} dir={verdict['direction']} "
                     f"conv={verdict['conviction']} P(win)={getattr(cand, '_pwin', 'n/a')} "
                     f"| independence {dos['independence']} pillars ({', '.join(dos['pillars'])}) "
                     f"| {verdict.get('rationale', '')[:80]}")
             out.append(cand)
-        out.sort(key=lambda c: c.confidence, reverse=True)
+        # ACTIVE LEARNING: in shadow, nudge high-UNCERTAINTY (most informative) setups up the queue so
+        # the learner gathers the labels that actually sharpen the model — bounded (max +6) so it never
+        # overrides a clearly-strong idea. In live it's pure exploit (rank by confidence only).
+        if self.explore:
+            out.sort(key=lambda c: c.confidence + 6.0 * getattr(c, "_uncertainty", 0.0), reverse=True)
+        else:
+            out.sort(key=lambda c: c.confidence, reverse=True)
         return out
 
     def passes_gate(self, c: Candidate) -> tuple[bool, str]:

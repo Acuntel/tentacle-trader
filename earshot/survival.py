@@ -34,22 +34,27 @@ def _wilson_lower(wins: int, n: int, z: float = 1.64) -> float:
 
 
 def compute_mastery(recent: list[dict], start: float) -> dict:
-    """Composite 0..100 over resolved outcomes {conf, pnl_pct, win}, derived ONLY from real,
-    price-based outcomes — no self-judgment. Uses a conservative win-rate lower bound and an
-    overconfidence brake so the bot cannot inflate its own score. Reused by the Gauntlet."""
+    """Composite 0..100 over resolved outcomes {conf, pnl_pct, alpha, win}, derived ONLY from real,
+    price-based outcomes — no self-judgment. SKILL is measured on ALPHA (return minus the market), so
+    a rising tide can't inflate the score; the drawdown term still uses the RAW equity (real risk).
+    A conservative win-rate lower bound + an overconfidence brake keep it honest. Reused by the Gauntlet."""
     n = len(recent)
     if n == 0:
         return {"mastery": 0.0, "win_rate": 0, "win_lb": 0, "profit_factor": 0, "max_dd": 0,
                 "calibration": 0, "overconfidence": 0, "expectancy": 0, "n": 0}
-    wins = sum(1 for r in recent if r["win"])
+
+    def alpha(r):
+        return r.get("alpha", r["pnl_pct"])                # alpha label (falls back to raw for old rows)
+
+    wins = sum(1 for r in recent if r["win"])              # win = beat the market (alpha > 0)
     raw_win = wins / n
     win_lb = _wilson_lower(wins, n)                         # conservative — can't game small samples
-    gains = sum(r["pnl_pct"] for r in recent if r["pnl_pct"] > 0)
-    losses = -sum(r["pnl_pct"] for r in recent if r["pnl_pct"] < 0)
+    gains = sum(alpha(r) for r in recent if alpha(r) > 0)
+    losses = -sum(alpha(r) for r in recent if alpha(r) < 0)
     pf = (gains / losses) if losses > 0 else (3.0 if gains > 0 else 0.0)
     pf_norm = max(0.0, min(1.0, (pf - 1) / 2))
     eq, peak, maxdd = start, start, 0.0
-    for r in recent:
+    for r in recent:                                       # real drawdown is on RAW $ moves
         eq *= (1 + r["pnl_pct"] / 100)
         peak = max(peak, eq)
         maxdd = max(maxdd, (peak - eq) / peak)
@@ -57,15 +62,15 @@ def compute_mastery(recent: list[dict], start: float) -> dict:
     calibration = 1 - sum(abs(r["conf"] / 100 - (1 if r["win"] else 0)) for r in recent) / n
     overconf = max(0.0, avg_conf - raw_win)                 # it believed more than it delivered
     sample = min(1.0, n / 30)
-    mean_ret = sum(r["pnl_pct"] for r in recent) / n
-    expectancy = max(0.0, min(1.0, mean_ret / 5))
+    mean_alpha = sum(alpha(r) for r in recent) / n         # expectancy is mean ALPHA (skill)
+    expectancy = max(0.0, min(1.0, mean_alpha / 5))
     score = (0.25 * pf_norm + 0.20 * win_lb + 0.20 * (1 - maxdd)
              + 0.15 * calibration + 0.10 * sample + 0.10 * expectancy)
     score = max(0.0, score - 0.5 * overconf) * 100          # overconfidence brake (anti-hallucination)
     return {"mastery": round(score, 1), "win_rate": round(raw_win, 3), "win_lb": round(win_lb, 3),
             "profit_factor": round(pf, 2), "max_dd": round(maxdd, 3),
             "calibration": round(calibration, 3), "overconfidence": round(overconf, 3),
-            "expectancy": round(mean_ret, 2), "n": n}
+            "expectancy": round(mean_alpha, 2), "n": n}
 
 
 class MotherInstinct:
@@ -210,12 +215,13 @@ class MotherInstinct:
         return round(monthly * 100, 1)
 
     # ---- record an outcome, then maybe live/die/promote/demote ----
-    def record(self, conf: float, pnl_pct: float, size_usd: float) -> dict:
-        delta = size_usd * pnl_pct / 100.0
+    def record(self, conf: float, pnl_pct: float, size_usd: float, alpha: float | None = None) -> dict:
+        a = pnl_pct if alpha is None else alpha            # alpha = market-adjusted return (skill)
+        delta = size_usd * pnl_pct / 100.0                 # equity moves on the REAL $ return
         self.state["paper_equity"] += delta
         self.state["peak_equity"] = max(self.state["peak_equity"], self.state["paper_equity"])
         self.state["recent"] = (self.state["recent"] + [{
-            "conf": conf, "pnl_pct": round(pnl_pct, 2), "win": pnl_pct > 0,
+            "conf": conf, "pnl_pct": round(pnl_pct, 2), "alpha": round(a, 2), "win": a > 0,
         }])[-100:]
         # timestamped equity curve -> realized monthly return vs the 10%/mo goal (the honest scorecard)
         self.state["equity_curve"] = (self.state.get("equity_curve", []) + [
@@ -281,7 +287,8 @@ class MotherInstinct:
             with open(ledger_path) as f:
                 for line in f:
                     o = json.loads(line)
-                    recs.append({"conf": o["confidence"], "pnl_pct": o["pnl_pct"], "win": o["win"]})
+                    a = o.get("alpha", o["pnl_pct"])       # recompute mastery on alpha, equity on raw $
+                    recs.append({"conf": o["confidence"], "pnl_pct": o["pnl_pct"], "alpha": a, "win": a > 0})
                     eq += o["size_usd"] * o["pnl_pct"] / 100
         except FileNotFoundError:
             return {"ok": True, "note": "no ledger yet"}

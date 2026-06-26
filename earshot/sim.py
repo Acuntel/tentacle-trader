@@ -17,7 +17,7 @@ import os
 import random
 import time
 
-from . import history
+from . import history, marketadj
 
 SIM_PATH = "state/sim.json"
 
@@ -49,6 +49,7 @@ class SimEngine:
         bars = history.load(t)
         if len(bars) < self.hold + 60:
             return None
+        dates = [d for d, _ in bars]
         closes = [c for _, c in bars]
         i = random.randint(55, len(closes) - self.hold - 1)
         if closes[i - 1] <= 0:
@@ -61,15 +62,19 @@ class SimEngine:
         mag = "huge" if r1 >= 8 else "big" if r1 >= 5 else "mid"
         sig = f"sim_mom|up|{mag}|{trend}"
         entry = closes[i]
-        ret = 0.0
+        ret, j_exit = 0.0, i + self.hold
         for j in range(i + 1, i + 1 + self.hold):               # walk the daily closes, apply discipline
             chg = (closes[j] / entry - 1) * 100
             if chg <= -self.stop:
-                ret = -self.stop; break
+                ret, j_exit = -self.stop, j; break
             if chg >= self.target:
-                ret = self.target; break
-            ret = chg
-        return {"sig": sig, "ticker": t, "ret": round(ret, 3), "win": ret > 0, "move": round(r1, 2)}
+                ret, j_exit = self.target, j; break
+            ret, j_exit = chg, j
+        # ALPHA: subtract SPY over the SAME dates -> the sims learn SKILL, not the rising tape
+        mkt = marketadj.market_return(dates[i], dates[min(j_exit, len(dates) - 1)])
+        alpha = ret - mkt if mkt is not None else ret
+        return {"sig": sig, "ticker": t, "ret": round(ret, 3), "alpha": round(alpha, 3),
+                "win": alpha > 0, "move": round(r1, 2)}
 
     def feature_episode(self, tickers: list[str]):
         """A historical episode mapped into the P(win) model's FEATURE space — used by warm-start as a
@@ -105,10 +110,10 @@ class SimEngine:
             if not ep:
                 continue
             ran += 1
-            self.learner.patterns.record(ep["sig"], ep["win"], ep["ret"])   # learn the historical pattern
+            self.learner.patterns.record(ep["sig"], ep["win"], ep["alpha"])  # learn the ALPHA pattern (skill)
             self.state["episodes"] += 1
             self.state["wins"] += 1 if ep["win"] else 0
-            self.state["sum_ret"] += ep["ret"]
+            self.state["sum_ret"] += ep["ret"]                              # raw, for the visible equity curve
             self.state["sim_equity"] *= (1 + self.risk * ep["ret"] / 100)
             self.state["peak"] = max(self.state["peak"], self.state["sim_equity"])
         if ran:

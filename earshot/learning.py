@@ -76,6 +76,11 @@ class Learner:
                 still_open.append(p)
                 continue
             ret = max(-p["stop_pct"], min(p["target_pct"], chg))   # bound to the disciplined range
+            # ALPHA: the trade's return MINUS the market over the same window. Skill is learned on alpha
+            # (so a rising tape isn't mistaken for edge); the $ P&L / equity stay on the raw return.
+            mkt = prices.market_return_since(p["entry_ts"])
+            alpha = round(ret - mkt, 3) if mkt is not None else ret
+            win_a = alpha > 0
             entry = p["entry_price"] or 0.0
             outcome = Outcome(
                 ticker=p["ticker"], catalyst=p["catalyst"], confidence=p["confidence"],
@@ -84,14 +89,14 @@ class Learner:
                 pnl_usd=round(p["size_usd"] * ret / 100, 2), win=ret > 0,
                 entry_ts=p["entry_ts"], exit_ts=time.time(), sources=p["sources"],
             )
-            _append(OUTCOMES_PATH, {**outcome.to_dict(), "exit": reason})
-            mind = instinct.record(p["confidence"], ret, p["size_usd"])
-            self._learn(p, outcome)
-            self.patterns.record(p.get("pattern", ""), outcome.win, ret)   # learn the pattern
+            _append(OUTCOMES_PATH, {**outcome.to_dict(), "exit": reason, "alpha": alpha})
+            mind = instinct.record(p["confidence"], ret, p["size_usd"], alpha=alpha)  # mastery on alpha
+            self._learn(p, outcome, alpha)
+            self.patterns.record(p.get("pattern", ""), win_a, alpha)       # learn the ALPHA pattern
             if self.lgate is not None and p.get("lgate_features"):
-                self.lgate.update(p["lgate_features"], outcome.win)         # train P(win) on real outcome
+                self.lgate.update(p["lgate_features"], win_a)              # train P(win) on beat-the-market
             if self.core is not None and p.get("features"):
-                self.core.record_features(p["features"], outcome.win)       # persist the feature history
+                self.core.record_features(p["features"], win_a)           # persist the feature history
             if not outcome.win:
                 self._dungeon(p, outcome, mind)
             resolved.append({"outcome": outcome.to_dict(), "mind": mind, "exit": reason})
@@ -101,24 +106,35 @@ class Learner:
         return resolved
 
     def _credit_sources(self, sources, win: bool, ret: float, rate: float = 0.15):
-        """Nudge each source's weight toward its proven precision. Shared by trades AND observations
-        (rate is gentler for observations so executed trades still matter most)."""
+        """Nudge each source's weight toward its proven precision (on ALPHA). Shared by trades AND
+        observations (gentler rate for observations). Includes DRIFT detection: if a source's recent
+        window of outcomes has decayed well below its lifetime precision, cut it faster than the slow
+        average would — markets are non-stationary, so a stale edge should fade quickly."""
         for src in sources:
             st = self.know["sources"].setdefault(src, {"trades": 0, "wins": 0, "sum_ret": 0.0})
             st["trades"] += 1
             st["wins"] += 1 if win else 0
             st["sum_ret"] += ret
+            rec = st.setdefault("recent", [])
+            rec.append(1 if win else 0)
+            st["recent"] = rec[-20:]
             precision = st["wins"] / st["trades"]
             base = self.weights.get(src, 0.5)
             target = base * (0.6 + precision)        # precision 0->0.6x, 0.5->1.1x, 1.0->1.6x
-            self.weights[src] = round(max(WMIN, min(WMAX, (1 - rate) * base + rate * target)), 3)
+            w = (1 - rate) * base + rate * target
+            if len(st["recent"]) >= 10:              # DRIFT: recent edge collapsed (regime shift) -> cut fast
+                recent_p = sum(st["recent"]) / len(st["recent"])
+                if recent_p < precision - 0.2:
+                    w *= 0.85
+            self.weights[src] = round(max(WMIN, min(WMAX, w)), 3)
 
-    def _learn(self, p: dict, o: Outcome):
-        self._credit_sources(p["sources"], o.win, o.pnl_pct, rate=0.15)
+    def _learn(self, p: dict, o: Outcome, alpha: float | None = None):
+        a = o.pnl_pct if alpha is None else alpha    # learn on ALPHA (market-adjusted), not raw return
+        self._credit_sources(p["sources"], a > 0, a, rate=0.15)
         ct = self.know["catalysts"].setdefault(o.catalyst, {"trades": 0, "wins": 0, "sum_ret": 0.0})
         ct["trades"] += 1
-        ct["wins"] += 1 if o.win else 0
-        ct["sum_ret"] += o.pnl_pct
+        ct["wins"] += 1 if a > 0 else 0
+        ct["sum_ret"] += a
 
     # ---- LEARN FROM ALL DATA (not just trades): label every confirmed setup we observe ----
     def observe(self, candidates, max_pending: int = 800):
@@ -178,12 +194,14 @@ class Learner:
                 if not px or not o.get("entry"):
                     break
                 ret = (px / o["entry"] - 1) * 100
-                win = ret > 0
-                self.patterns.record(o.get("sig", ""), win, ret)        # learn the pattern from data
-                self._credit_sources(o["sources"], win, ret, rate=rate)  # horizon-scaled, < a real trade
+                mkt = prices.market_return_since(o["ts"])               # ALPHA-label observations too
+                alpha = ret - mkt if mkt is not None else ret
+                win = alpha > 0
+                self.patterns.record(o.get("sig", ""), win, alpha)      # learn the ALPHA pattern from data
+                self._credit_sources(o["sources"], win, alpha, rate=rate)  # horizon-scaled, < a real trade
                 if self.lgate is not None and o.get("feat"):
                     self.lgate.update(o["feat"], win)                    # train P(win) from observations
-                self._ledger_resolved(o, h, ret, win)
+                self._ledger_resolved(o, h, alpha, win)
                 done.add(h); learned += 1
             o["done"] = sorted(done)
             if len(done) < len(self._horizons):
