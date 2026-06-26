@@ -17,6 +17,7 @@ from . import llm, evolve, persist, selfcode
 from .learning import WMIN, WMAX
 from .models import iso
 from .strategies import StrategyBook
+from .proposer import Proposer
 
 EVO_DIR = "state/evolution"
 LOG_MD = os.path.join(EVO_DIR, "EVOLUTION_LOG.md")
@@ -49,6 +50,7 @@ class Coach:
         self.scout = scout
         self.core = core
         self.approvals = approvals                         # Telegram approve/deny queue (optional)
+        self.proposer = Proposer(cfg, learner.know, approvals) if approvals is not None else None
         self.book = StrategyBook(cfg, core) if core is not None else None   # the strategy tournament
         self.last = 0.0
         self.last_backup_day = None
@@ -165,7 +167,16 @@ class Coach:
                 _append(PROPOSALS, {"ts": iso(time.time()), "status": "NEW SOURCE — consider wiring",
                                     "file": "earshot/sources/", "change": f"add/enable tentacle '{name}'",
                                     "why": "scout: current sources decaying; could sharpen the edge"})
-        self._route_to_approval(code_props, cfg_props, new_sources)   # -> Telegram approve/deny (concrete patches)
+        if self.proposer is not None:
+            self.proposer.harvest(rep)                     # load up scored config-tweak ideas (refills when low)
+            if code_props:                                 # a gate-ready code idea joins the same ranked pool
+                try:
+                    patch = selfcode._propose()
+                except Exception:
+                    patch = None
+                if patch and all(k in patch for k in ("file", "find", "replace")):
+                    self.proposer.add_code(patch)
+            self.proposer.emit_due()                       # send only the single BEST un-sent idea (paced, ≤ cap/day)
         self.learner._persist_know()
 
         if not rt["ok"]:                                  # a safety rail got weakened — scream
@@ -193,57 +204,6 @@ class Coach:
         return {"syn": syn, "rules": rules, "studies": studies, "calib": cal, "redteam": rt,
                 "benchmark": bench, "lessons": lessons, "code_proposals": code_props,
                 "new_sources": new_sources, "by": "groq+brain" if v else "brain"}
-
-    # ---- route the bot's desired self-changes to Telegram as CONCRETE, gateable patches ----
-    def _route_to_approval(self, code_props, cfg_props, new_sources):
-        ap = self.approvals
-        if ap is None:
-            return
-        # 1) CODE — the LLM's code_props are prose; turn the urge into a real find/replace patch the
-        #    gate can verify, and propose that. Bounded to one concrete patch per pass.
-        if code_props and llm.have_free_brain():
-            try:
-                patch = selfcode._propose()
-            except Exception:
-                patch = None
-            if patch and all(k in patch for k in ("file", "find", "replace")):
-                why = str(patch.get("why", "a small improvement to my own code"))
-                fname = os.path.basename(str(patch["file"]))
-                ap.propose("code", f"code change in {fname}", why,
-                           patches=[{"file": patch["file"], "find": patch["find"], "replace": patch["replace"]}],
-                           meta={"plain": f"Improve my own code — {why}",
-                                 "why": "It already passed my safety test-run, and I auto-revert it if it ever breaks anything.",
-                                 "tech": f"edits {patch['file']}"})
-        # 2) CONFIG — a proposed threshold shift -> a config.yaml find/replace (gate validates uniqueness)
-        for p in cfg_props:
-            setting, frm, to = str(p.get("setting", "")).strip(), p.get("from"), p.get("to")
-            if not setting or frm is None or to is None or str(frm) == str(to):
-                continue
-            ap.propose("config", f"config: {setting} {frm} → {to}", str(p.get("why", "")),
-                       patches=[{"file": "config.yaml", "find": f"{setting}: {frm}",
-                                 "replace": f"{setting}: {to}"}],
-                       meta={"plain": f"Change my {ap._pretty(setting)} from {frm} to {to}.",
-                             "why": str(p.get("why", "to trade a little smarter")),
-                             "tech": f"config.yaml · {setting}: {frm} → {to}"})
-        # 3) SOURCES — flip an already-coded-but-off tentacle on (a config patch); a brand-new one is
-        #    proposed as 'needs wiring' (no safe auto-patch exists for code that doesn't exist yet).
-        srcs = self.cfg.get("sources", {})
-        for name in new_sources:
-            if ap.is_denied_source(name):
-                continue
-            if name in srcs and srcs.get(name) is not True:
-                ap.propose("config", f"enable tentacle: {name}", "",
-                           patches=[{"file": "config.yaml", "find": f"{name}: false",
-                                     "replace": f"{name}: true"}],
-                           meta={"plain": f"Turn on a data source I already have built but haven't enabled: {name}.",
-                                 "why": "Some of my current sources are going stale — this one could sharpen the signal.",
-                                 "tech": f"config.yaml · {name}: true", "sources": [name]})
-            elif name not in srcs:
-                ap.propose("source", f"new tentacle: {name}", "",
-                           patches=None,
-                           meta={"plain": f"Add a brand-new data source: {name}.",
-                                 "why": "My scout found it while hunting for fresher signal. I can't safely wire it up on my own.",
-                                 "sources": [name]})
 
     def _log(self, rep, syn, rules, studies, cal, rt, bench, lessons, code_props, new_sources, by):
         os.makedirs(EVO_DIR, exist_ok=True)

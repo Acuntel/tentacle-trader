@@ -47,6 +47,7 @@ class ApprovalQueue:
         self.on = bool(a.get("enabled", True)) and bool(t.get("enabled", True))
         self.auto_deploy = bool(a.get("auto_deploy", True))
         self.max_per_day = int(t.get("max_proposals_per_day", 4))
+        self.min_interval = int(t.get("min_interval_min", 90)) * 60   # space cards out across the day
         self.digest_on = bool(t.get("daily_digest", True))
         self.know = know
         self.persist = persist or (lambda: None)
@@ -59,6 +60,7 @@ class ApprovalQueue:
         self.st.setdefault("denied_sources", [])
         self.st.setdefault("day", "")
         self.st.setdefault("day_count", 0)
+        self.st.setdefault("last_sent_ts", 0)
         self.st.setdefault("last_digest_day", "")
 
     # ---- proposing -------------------------------------------------------
@@ -69,7 +71,8 @@ class ApprovalQueue:
         day = time.strftime("%Y-%m-%d")
         if self.st["day"] != day:
             self.st["day"], self.st["day_count"] = day, 0
-        return self.st["day_count"] < self.max_per_day
+        return (self.st["day_count"] < self.max_per_day and
+                (time.time() - self.st.get("last_sent_ts", 0)) >= self.min_interval)
 
     def propose(self, kind: str, title: str, summary: str, patches=None, meta=None) -> str | None:
         """Queue a change for approval. kind in {code, config, source}. patches = [{file,find,replace}]
@@ -88,6 +91,7 @@ class ApprovalQueue:
                 "patches": patches, "meta": meta or {}, "ts": iso(time.time())}
         self.st["seen"][h] = cid
         self.st["day_count"] += 1
+        self.st["last_sent_ts"] = time.time()           # pace the next card
         if notify.shared():
             # Nessobot (the existing content bot) owns the inbound loop. STAGE the patch to GitHub now,
             # then send the card WITH buttons via Nessobot's token — Nessobot relays the tap to the

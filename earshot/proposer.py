@@ -1,0 +1,158 @@
+"""Daily proposal engine — "load up all the ideas, rank them, send only the best ~12/day."
+
+Each coach pass it HARVESTS candidate self-improvements — config-threshold tweaks scored by the LLM
+over the whole-brain snapshot, plus the occasional gate-ready code patch — and merges them into a
+persistent, de-duped POOL with an impact score (0-100). It only refills the pool when it's running low
+(saves LLM calls). Then EMIT_DUE sends the single highest-impact un-sent candidate as a ✅/❌ card,
+respecting the daily budget + pacing in ApprovalQueue. So Brady gets a steady trickle of the BEST ideas
+to approve, not spam and not silence.
+
+Only SAFE, reversible knobs are tunable here. The hard risk caps, the real-money gate, and the Gauntlet
+are NEVER in the menu, and every emitted change still goes through the test-gate before it can ship.
+"""
+from __future__ import annotations
+
+import json
+import re
+
+from . import llm, selfcode
+
+CONFIG_PATH = "config.yaml"
+
+# leaf_key : (low, high) allowed range. Only reversible trading knobs — never a risk rail.
+TUNABLE = {
+    "min_pwin": (0.40, 0.65),
+    "min_score_to_trade": (45, 70),
+    "max_runup_pct": (3.0, 8.0),
+    "regime_downtrend_premium": (5, 25),
+    "min_families": (2, 3),
+    "min_independent_sources": (2, 3),
+    "trail_pct": (3.0, 9.0),
+    "trail_arm_pct": (2.0, 6.0),
+    "max_open_positions": (4, 15),
+    "walk_forward_folds": (3, 8),
+    "min_fold_winrate": (0.40, 0.70),
+}
+
+PRETTY = {
+    "min_pwin": "minimum win-chance I need before I'll trade",
+    "min_score_to_trade": "conviction bar I need to trade",
+    "max_runup_pct": "how far a stock can already have moved before I skip it",
+    "regime_downtrend_premium": "extra caution when the market's falling",
+    "min_families": "number of different signal types I need to agree",
+    "min_independent_sources": "number of independent sources I need to agree",
+    "trail_pct": "profit I give back before I lock in a win",
+    "trail_arm_pct": "gain needed before I start protecting profit",
+    "max_open_positions": "how many positions I hold at once",
+    "walk_forward_folds": "how many time periods I test a strategy across",
+    "min_fold_winrate": "how consistent a strategy must be to trust it",
+}
+
+SYS = ("You tune an autonomous, still-PRACTICE-mode trading bot. Given its brain and a list of SAFE, "
+       "reversible threshold settings (current value + allowed range), propose the BEST handful of "
+       "changes to make it trade smarter / learn faster. You may NOT touch risk caps, the money gate, "
+       "or the ladder (they're not in the list). Reply ONLY JSON: {\"candidates\":[{\"key\":\"min_pwin\","
+       "\"proposed\":0.55,\"impact\":0-100,\"plain\":\"<plain-English what it does>\",\"why\":"
+       "\"<plain-English reason a non-coder gets>\"}]}. proposed must differ from current and stay in "
+       "range; only use keys from the list; rank by impact (how much it should help).")
+
+
+class Proposer:
+    def __init__(self, cfg, know, approvals):
+        self.cfg = cfg
+        self.know = know
+        self.ap = approvals
+        self.pool = know.setdefault("proposal_pool", [])   # [{hash,title,patch,plain,why,tech,impact,sent}]
+        self.refill_below = int(cfg.get("telegram", {}).get("pool_refill_below", 8))
+
+    # ---- helpers ----
+    def _text(self) -> str:
+        try:
+            return open(CONFIG_PATH).read()
+        except Exception:
+            return ""
+
+    @staticmethod
+    def _current_str(text: str, key: str):
+        m = re.search(rf"(?m)^\s*{re.escape(key)}:\s*([^\s#]+)", text)
+        return m.group(1) if m else None
+
+    @staticmethod
+    def _fmt(cur_str: str, val) -> str:
+        if "." in cur_str:                                  # match the current value's decimal places
+            dec = len(cur_str.split(".", 1)[1])
+            return f"{float(val):.{dec}f}"
+        return str(int(round(float(val))))
+
+    def _unsent(self):
+        denied = self.know.get("approvals", {}).get("denied", {})
+        return [p for p in self.pool if not p.get("sent") and p["hash"] not in denied]
+
+    def _add(self, item: dict):
+        if any(p["hash"] == item["hash"] for p in self.pool):
+            return
+        if item["hash"] in self.know.get("approvals", {}).get("denied", {}):
+            return
+        self.pool.append(item)
+        self.know["proposal_pool"] = self.pool[-200:]       # bounded backlog
+
+    # ---- harvest CONFIG tweak candidates (only when the pool is running low) ----
+    def harvest(self, snapshot: dict) -> int:
+        if len(self._unsent()) >= self.refill_below or not llm.have_free_brain():
+            return 0
+        text = self._text()
+        menu = {}
+        for key, (lo, hi) in TUNABLE.items():
+            cur = self._current_str(text, key)
+            if cur is not None and text.count(f"{key}: {cur}") == 1:   # must be a unique, applyable anchor
+                menu[key] = {"current": cur, "min": lo, "max": hi}
+        if not menu:
+            return 0
+        v = llm.ask_json(SYS, "Brain:\n" + json.dumps(snapshot, default=str)[:5000] +
+                         "\n\nTunable settings:\n" + json.dumps(menu), max_tokens=900)
+        added = 0
+        for c in ((v or {}).get("candidates") or [])[:8]:
+            key = str(c.get("key", ""))
+            if key not in menu:
+                continue
+            cur = menu[key]["current"]
+            try:
+                prop = self._fmt(cur, c.get("proposed"))
+                if prop == cur or not (TUNABLE[key][0] <= float(prop) <= TUNABLE[key][1]):
+                    continue
+            except Exception:
+                continue
+            find = f"{key}: {cur}"
+            h = f"{key}={prop}"
+            plain = c.get("plain") or f"Change my {PRETTY.get(key, key)} from {cur} to {prop}."
+            self._add({"hash": h, "title": f"config: {key} {cur} → {prop}",
+                       "patch": [{"file": "config.yaml", "find": find, "replace": f"{key}: {prop}"}],
+                       "plain": plain, "why": str(c.get("why", "to trade a little smarter")),
+                       "tech": f"config.yaml · {key}: {cur} → {prop}",
+                       "impact": int(max(0, min(100, c.get("impact", 50)))), "sent": False})
+            added += 1
+        return added
+
+    # ---- a gate-ready code patch is an idea too (unbounded novelty) ----
+    def add_code(self, patch: dict, impact: int = 55):
+        import os
+        fname = os.path.basename(str(patch.get("file", "")))
+        why = str(patch.get("why", "a small improvement to my own code"))
+        h = "code:" + str(abs(hash((patch.get("file"), patch.get("find"), patch.get("replace")))))[:10]
+        self._add({"hash": h, "title": f"code change in {fname}",
+                   "patch": [{"file": patch["file"], "find": patch["find"], "replace": patch["replace"]}],
+                   "plain": f"Improve my own code — {why}",
+                   "why": "It already passed my safety test-run, and I auto-revert it if it ever breaks anything.",
+                   "tech": f"edits {patch['file']}", "impact": int(impact), "sent": False})
+
+    # ---- emit the single best un-sent idea, if the budget + pacing allow ----
+    def emit_due(self):
+        if self.ap is None or not self.ap._budget_ok():
+            return None
+        for p in sorted(self._unsent(), key=lambda x: -x.get("impact", 0)):
+            cid = self.ap.propose("config", p["title"], p["why"], patches=p["patch"],
+                                  meta={"plain": p["plain"], "why": p["why"], "tech": p["tech"]})
+            p["sent"] = True                               # don't re-offer (dup/denied handled by ApprovalQueue)
+            self.know["proposal_pool"] = self.pool
+            return cid
+        return None

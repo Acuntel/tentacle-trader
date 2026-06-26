@@ -261,7 +261,9 @@ telegram:
                                #        getUpdates loop; two pollers 409-conflict). Sets TELEGRAM_SHARED_BOT.
                                #        FALSE = Tentacle owns a dedicated bot and polls for ✅/❌ taps itself.
   daily_digest: true           # once/day summary of the AUTO-applied tuning (weights/lessons) — no approval
-  max_proposals_per_day: 4     # cap approval pings/day (anti-spam; dedupes repeats + remembers denials)
+  max_proposals_per_day: 12    # send up to the 12 BEST ideas/day as ✅/❌ cards (dedupes + remembers denials)
+  min_interval_min: 90         # space the cards out (~1 every 1.5h) instead of dumping them all at once
+  pool_refill_below: 8         # only ask the LLM for fresh candidate ideas when fewer than this are queued
 
 # ---- Approve/deny: an approved change is gate-tested + merged + redeployed by the apply-approved Action ----
 # Needs Railway var GITHUB_DISPATCH_TOKEN (fine-grained PAT, contents+actions write) and repo secret
