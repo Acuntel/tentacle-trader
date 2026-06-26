@@ -1,12 +1,21 @@
-"""The reasoning brain — free first, paid optional. Two near-identically-named providers, both
-OpenAI-compatible:
+"""The reasoning layer — a POOL of free LLMs working in unison, each routed to what it's best at.
 
-  • GROQ  (gsk_… key)  — FREE tier, fast Llama. This is the $0 default. Set GROQ_API_KEY.
-  • xAI / GROK (xai-… key) — Elon's Grok. PAID per token (this is what charges you). Set XAI_API_KEY.
+Every provider here is OpenAI-chat-compatible, so one `_call` drives them all. For each task we try a
+PREFERRED chain of providers (best-for-the-job first); if one is missing a key, rate-limited (429), or
+over its daily budget, we fail over to the next. So losing any single provider (e.g. Groq hits its
+100k-tokens/day free limit) doesn't stop the bot — the others cover. Per-provider daily token budgets
+are tracked + persisted, and a PRIORITY reserve keeps the loop-critical callers (coach/proposer) from
+being starved by the high-volume analyst.
 
-Whichever key is present is used (Groq wins if both are set, because it's free). The rest of the bot
-COMBINES this with the rule heuristic — it's never a sole dependency, and the heuristic keeps it alive
-if no key is set or a call blips. Never raises into the loop.
+All FREE (activate by setting the env key); paid ones (deepseek-direct, xai) stay off unless set:
+  GROQ_API_KEY        Groq — fast Llama, free 100k tok/day
+  GEMINI_API_KEY      Google Gemini Flash — smart, big free budget
+  CEREBRAS_API_KEY    Cerebras — fastest inference, free
+  GLM_API_KEY         Zhipu GLM-4-Flash — free Chinese model
+  OPENROUTER_API_KEY  OpenRouter — free routes to DeepSeek/Qwen/Llama (one key, many models)
+  DASHSCOPE_API_KEY   Alibaba Qwen — free quota
+  DEEPSEEK_API_KEY    DeepSeek direct (paid, cheap) — off unless set
+  XAI_API_KEY         xAI Grok (paid) — off unless set
 """
 from __future__ import annotations
 
@@ -20,94 +29,153 @@ try:
 except Exception:  # pragma: no cover
     _HAVE = False
 
-GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
-XAI_URL = "https://api.x.ai/v1/chat/completions"
-DEFAULT_GROQ_MODEL = "llama-3.3-70b-versatile"
-DEFAULT_XAI_MODEL = "grok-2-latest"
+# name -> endpoint config. `daily` = soft daily TOKEN budget (the 429-cooldown is the real guard).
+PROVIDERS = {
+    "groq":       {"url": "https://api.groq.com/openai/v1/chat/completions",
+                   "key": "GROQ_API_KEY", "model_env": "GROQ_MODEL",
+                   "model": "llama-3.3-70b-versatile", "free": True, "daily": 95_000},
+    "gemini":     {"url": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+                   "key": "GEMINI_API_KEY", "model_env": "GEMINI_MODEL",
+                   "model": "gemini-2.0-flash", "free": True, "daily": 3_000_000},
+    "cerebras":   {"url": "https://api.cerebras.ai/v1/chat/completions",
+                   "key": "CEREBRAS_API_KEY", "model_env": "CEREBRAS_MODEL",
+                   "model": "llama-3.3-70b", "free": True, "daily": 1_000_000},
+    "glm":        {"url": "https://open.bigmodel.cn/api/paas/v4/chat/completions",
+                   "key": "GLM_API_KEY", "model_env": "GLM_MODEL",
+                   "model": "glm-4-flash", "free": True, "daily": 2_000_000},
+    "openrouter": {"url": "https://openrouter.ai/api/v1/chat/completions",
+                   "key": "OPENROUTER_API_KEY", "model_env": "OPENROUTER_MODEL",
+                   "model": "meta-llama/llama-3.3-70b-instruct:free", "free": True, "daily": 2_000_000},
+    "qwen":       {"url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions",
+                   "key": "DASHSCOPE_API_KEY", "model_env": "QWEN_MODEL",
+                   "model": "qwen-plus", "free": True, "daily": 1_000_000},
+    "deepseek":   {"url": "https://api.deepseek.com/chat/completions",
+                   "key": "DEEPSEEK_API_KEY", "model_env": "DEEPSEEK_MODEL",
+                   "model": "deepseek-chat", "free": False, "daily": 10 ** 9},
+    "xai":        {"url": "https://api.x.ai/v1/chat/completions",
+                   "key": "XAI_API_KEY", "model_env": "XAI_MODEL",
+                   "model": "grok-2-latest", "free": False, "daily": 10 ** 9},
+}
 
-# ---- Daily FREE-tier token budget (Groq is ~100k tokens/day). Without this, the high-volume per-cycle
-# analyst burns the whole day's budget early, and the coach + proposer (the loop-critical + user-facing
-# callers) get 429'd for the rest of the day. We track usage, persist it across redeploys, and gate each
-# call by PRIORITY so low-priority callers back off early and leave headroom for the important ones. ----
-_BUDGET_PATH = "state/groq_budget.json"
-DAILY_TOKENS = int(os.getenv("GROQ_DAILY_TOKENS", "95000"))   # soft cap under the 100k hard limit
-RESERVE = {"low": 0.50, "normal": 0.80, "high": 0.95}         # fraction of the day a priority may use
+# task -> preferred provider order (best-for-the-job first). Free DeepSeek/Qwen reach code/reason via
+# OpenRouter even without their own keys. Missing-key / rate-limited / over-budget providers are skipped.
+ROUTING = {
+    "judge":   ["groq", "cerebras", "gemini", "glm", "qwen", "openrouter"],      # fast, high-volume
+    "reason":  ["gemini", "deepseek", "groq", "qwen", "glm", "cerebras", "openrouter"],  # deep reasoning
+    "code":    ["deepseek", "glm", "qwen", "openrouter", "gemini", "groq"],      # code-strong first
+    "propose": ["gemini", "groq", "deepseek", "qwen", "glm", "openrouter"],      # quality + evidence
+    "default": ["groq", "gemini", "cerebras", "glm", "qwen", "openrouter"],
+}
+RESERVE = {"low": 0.50, "normal": 0.80, "high": 0.95}     # per-provider daily fraction a priority may use
+_BUDGET_PATH = "state/llm_budget.json"
+_COOLDOWN: dict[str, float] = {}                          # name -> epoch until which to skip (after a 429)
 
 
-def _budget_today() -> dict:
-    from .persist import load_json
-    b = load_json(_BUDGET_PATH, {"day": "", "used": 0})
-    day = time.strftime("%Y-%m-%d")
-    if b.get("day") != day:
-        b = {"day": day, "used": 0}
-    return b
-
-
-def tokens_used_today() -> int:
-    return int(_budget_today().get("used", 0))
-
-
-def budget_ok(priority: str = "normal", est: int = 1200) -> bool:
-    cap = DAILY_TOKENS * RESERVE.get(priority, 0.80)
-    return tokens_used_today() + est <= cap
-
-
-def _spend(tokens: int):
-    from .persist import save_json
-    b = _budget_today()
-    b["used"] = int(b.get("used", 0)) + max(0, int(tokens))
-    save_json(_BUDGET_PATH, b)
-
-
-def _provider():
-    """(name, url, key, model, is_free) for the active provider, or Nones. Groq (free) wins."""
-    if os.getenv("GROQ_API_KEY"):
-        return ("groq", GROQ_URL, os.getenv("GROQ_API_KEY"),
-                os.getenv("GROQ_MODEL", DEFAULT_GROQ_MODEL), True)
-    if os.getenv("XAI_API_KEY"):
-        return ("xai", XAI_URL, os.getenv("XAI_API_KEY"),
-                os.getenv("XAI_MODEL", DEFAULT_XAI_MODEL), False)
-    return (None, None, None, None, False)
+def _has_key(name: str) -> bool:
+    return bool(os.getenv(PROVIDERS[name]["key"]))
 
 
 def have_brain() -> bool:
-    """An LLM (free Groq or paid xAI) is reachable."""
-    return _HAVE and _provider()[0] is not None
+    return _HAVE and any(_has_key(n) for n in PROVIDERS)
 
 
 def have_free_brain() -> bool:
-    """Specifically a FREE brain (Groq) is reachable."""
-    return _HAVE and _provider()[4]
+    return _HAVE and any(_has_key(n) for n, p in PROVIDERS.items() if p["free"])
+
+
+def active() -> list[str]:
+    return [n for n in PROVIDERS if _has_key(n)]
 
 
 def provider() -> str:
-    name, _, _, model, free = _provider()
-    return f"{name}:{model} ({'free' if free else 'PAID'})" if name else "heuristic"
+    a = active()
+    return ("pool: " + ", ".join(a)) if a else "heuristic"
+
+
+# ---- per-provider daily token budget (persisted; resets daily) ----
+def _budget_today() -> dict:
+    from .persist import load_json
+    b = load_json(_BUDGET_PATH, {"day": "", "used": {}})
+    if b.get("day") != time.strftime("%Y-%m-%d"):
+        b = {"day": time.strftime("%Y-%m-%d"), "used": {}}
+    return b
+
+
+def _budget_ok(name: str, priority: str, est: int) -> bool:
+    b = _budget_today()
+    cap = PROVIDERS[name]["daily"] * RESERVE.get(priority, 0.80)
+    return b["used"].get(name, 0) + est <= cap
+
+
+def _spend(name: str, tokens: int):
+    from .persist import save_json
+    b = _budget_today()
+    b["used"][name] = int(b["used"].get(name, 0)) + max(0, int(tokens))
+    save_json(_BUDGET_PATH, b)
+
+
+def _chain(task: str) -> list[str]:
+    return ROUTING.get(task, ROUTING["default"])
+
+
+def _call(name: str, system: str, user: str, want_json: bool, max_tokens: int,
+          temperature: float, timeout: float):
+    """One provider call. Returns (content, tokens_used, rate_limited)."""
+    p = PROVIDERS[name]
+    key = os.getenv(p["key"])
+    model = os.getenv(p["model_env"], p["model"])
+    body = {"model": model, "max_tokens": max_tokens, "temperature": temperature,
+            "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]}
+    if want_json:
+        body["response_format"] = {"type": "json_object"}
+    headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+    if name == "openrouter":
+        headers["HTTP-Referer"] = "https://tentacle.bot"
+        headers["X-Title"] = "TENTACLE"
+    for _ in (1, 2):                                       # retry once without json-mode if rejected
+        try:
+            r = requests.post(p["url"], json=body, timeout=timeout, headers=headers)
+        except Exception:
+            return None, 0, False
+        if r.status_code == 429:
+            return None, 0, True
+        if r.status_code == 400 and "response_format" in body:
+            body.pop("response_format")
+            continue
+        if r.status_code != 200:
+            return None, 0, False
+        try:
+            data = r.json()
+            content = data["choices"][0]["message"]["content"]
+            used = (data.get("usage") or {}).get("total_tokens", max_tokens)
+            return content, used, False
+        except Exception:
+            return None, 0, False
+    return None, 0, False
 
 
 def ask(system: str, user: str, want_json: bool = False, max_tokens: int = 1024,
-        temperature: float = 0.3, timeout: float = 30.0, priority: str = "normal") -> str | None:
-    name, url, key, model, is_free = _provider()
-    if not (_HAVE and key):
+        temperature: float = 0.3, timeout: float = 30.0, priority: str = "normal",
+        task: str = "reason") -> str | None:
+    """Route to the best available provider for `task`, failing over on missing key / 429 / over-budget."""
+    if not _HAVE:
         return None
-    # on the free tier, leave the daily budget for higher-priority callers (proposer > coach > analyst)
-    if is_free and not budget_ok(priority, est=max_tokens + len(user) // 4):
-        return None
-    body = {"model": model,
-            "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
-            "max_tokens": max_tokens, "temperature": temperature}
-    if want_json:
-        body["response_format"] = {"type": "json_object"}
-    try:
-        r = requests.post(url, json=body, timeout=timeout, headers={"Authorization": f"Bearer {key}"})
-        if r.status_code != 200:
-            return None
-        data = r.json()
-        if is_free:
-            _spend((data.get("usage") or {}).get("total_tokens", max_tokens))
-        return data["choices"][0]["message"]["content"]
-    except Exception:
-        return None
+    est = max_tokens + len(user) // 4
+    now = time.time()
+    for name in _chain(task):
+        if not _has_key(name) or _COOLDOWN.get(name, 0) > now:
+            continue
+        if PROVIDERS[name]["free"] and not _budget_ok(name, priority, est):
+            continue
+        content, used, limited = _call(name, system, user, want_json, max_tokens, temperature, timeout)
+        if limited:
+            _COOLDOWN[name] = now + 300                    # rest a rate-limited provider for 5 min
+            continue
+        if content is not None:
+            if PROVIDERS[name]["free"]:
+                _spend(name, used or est)
+            return content
+    return None
 
 
 def ask_json(system: str, user: str, **kw) -> dict | None:

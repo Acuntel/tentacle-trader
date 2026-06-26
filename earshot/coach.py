@@ -132,7 +132,8 @@ class Coach:
                          'reweight (object src->"up"|"down"), lessons (array of short strings), '
                          "watchlist (array of tickers), code_proposals (array of {file, change, why}), "
                          "config_changes (array of {setting, from, to, why} — a config.yaml threshold to shift). "
-                         "Evidence:\n" + json.dumps(rep, default=str)[:4000], max_tokens=800, priority="normal")
+                         "Evidence:\n" + json.dumps(rep, default=str)[:4000],
+                         max_tokens=800, priority="normal", task="reason")
         if v:
             for s, dirn in (v.get("reweight") or {}).items():
                 if s in self.learner.weights:

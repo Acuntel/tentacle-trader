@@ -113,7 +113,8 @@ class Proposer:
         if not menu:
             return 0
         v = llm.ask_json(SYS, "Brain:\n" + json.dumps(snapshot, default=str)[:4000] +
-                         "\n\nTunable settings:\n" + json.dumps(menu), max_tokens=900, priority="high")
+                         "\n\nTunable settings:\n" + json.dumps(menu),
+                         max_tokens=900, priority="high", task="propose")
         added = 0
         for c in ((v or {}).get("candidates") or [])[:8]:
             key = str(c.get("key", ""))

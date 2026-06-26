@@ -73,7 +73,8 @@ def _propose() -> dict | None:
     idx = int(time.time() // 3600) % len(mods)
     mod = mods[idx]
     src = open(os.path.join(PKG, mod)).read()
-    v = llm.ask_json(SYSTEM, f"Improve earshot/{mod}. Source:\n" + src[:11000], max_tokens=1200, priority="low")
+    v = llm.ask_json(SYSTEM, f"Improve earshot/{mod}. Source:\n" + src[:11000],
+                     max_tokens=1200, priority="low", task="code")
     if not v or not all(k in v for k in ("file", "find", "replace")):
         return None
     return v

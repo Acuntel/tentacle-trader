@@ -95,7 +95,7 @@ class Auditor:
                          f"Review earshot/{mod}. Reply as JSON with keys: bugs (array of "
                          "{issue, severity}), improvements (array of strings), proposed_fix (string, "
                          "one concrete change or empty). Source:\n" + src[:11000],
-                         max_tokens=1100)
+                         max_tokens=1100, priority="low", task="code")
         if v:
             for b in (v.get("bugs") or [])[:6]:
                 if isinstance(b, dict):

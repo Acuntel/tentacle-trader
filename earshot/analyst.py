@@ -135,7 +135,7 @@ class Analyst:
                 'real (bool), direction ("up"/"down"/"unclear"), conviction (int 0-100), '
                 "fresh (bool), bear_case (string), rationale (string, one terse sentence).\n\n"
                 + json.dumps(d, default=str))
-        v = llm.ask_json(SYSTEM, user, max_tokens=512, priority="low")   # backs off early to spare the budget
+        v = llm.ask_json(SYSTEM, user, max_tokens=512, priority="low", task="judge")  # fast model, spares budget
         if not v or "real" not in v or "direction" not in v:
             return None
         v["by"] = "groq"
