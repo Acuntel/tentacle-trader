@@ -28,6 +28,7 @@ from .enrich import EnrichmentEngine
 from .selfreview import SelfReview
 from .analyst import Analyst
 from .learnedgate import LearnedGate
+from .histtrain import HistoricalTrainer
 from .sim import SimEngine
 from .coach import Coach
 from .audit import Auditor
@@ -74,6 +75,8 @@ class Earshot:
         self.lgate = LearnedGate(self.learner.know)            # learned P(win) over the dossier
         self.brain.analyst = self.analyst
         self.brain.lgate = self.lgate
+        self.histtrain = HistoricalTrainer(cfg, self.learner.know)   # #1 decade->live transfer-gap prior
+        self.brain.hist_gate = self.histtrain.gate
         self.learner.lgate = self.lgate                       # so resolved outcomes train the model
         self.core = BrainCore(self.learner.know, self.weights, cfg)  # THE shared brain — wired to everything
         self.brain.core = self.core                           # learned trading rules + calibration in decisions
@@ -179,6 +182,10 @@ class Earshot:
             sr = self.sim.report()
             print(f"  sims: +{simr['ran']} replays (total {sr['episodes']}, win {sr['win_rate']}, "
                   f"avg {sr['avg_ret']}%) — sim-son ${sr['sim_equity']} ({sr['grown_pct']:+.1f}%)")
+        ht = self.histtrain.step()                      # #1 train the decade->live P(win) transfer prior
+        if ht.get("trained"):
+            print(f"  histtrain: +{ht['trained']} decade alpha-events -> P(win) prior "
+                  f"(n={ht['total']}, brier {ht.get('brier', '?')})")
 
         # 2) MANAGE open positions against the live price FIRST (exit engine decides sells)
         for r in self.learner.resolve_due(self.instinct, self.exits):

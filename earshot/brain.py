@@ -68,6 +68,7 @@ class Brain:
         self.patterns = None        # PatternMemory, attached by main
         self.analyst = None         # Analyst (reasoning judge), attached by main
         self.lgate = None           # LearnedGate (P(win) model), attached by main
+        self.hist_gate = None       # decade-trained historical alpha prior (transfer-gap), attached by main
         self.core = None            # shared BrainCore (learned rules + calibration), attached by main
         self.macro = ""             # current macro regime tag, set by main each cycle
         # In SHADOW we EXPLORE: take every setup that clears hard safety so the learner gets real,
@@ -218,7 +219,12 @@ class Brain:
                     cand._analyst_veto = "analyst: " + (verdict.get("bear_case") or "not a clean up-catalyst")
                 if self.lgate is not None:
                     cand._lgate_features = self.lgate.featurize(dos, verdict)
-                    cand._pwin = round(self.lgate.predict(cand._lgate_features), 3)
+                    p_live = self.lgate.predict(cand._lgate_features)
+                    # TRANSFER GAP: blend in the decade-trained historical ALPHA prior at a low weight,
+                    # so the whole decade informs the call while the live model still owns it.
+                    if self.hist_gate is not None and self.hist_gate.ready(50):
+                        p_live = 0.8 * p_live + 0.2 * self.hist_gate.predict(cand._lgate_features)
+                    cand._pwin = round(p_live, 3)
                     cand._uncertainty = round(1 - abs(cand._pwin - 0.5) * 2, 3)   # 1.0 = most informative
                 cand.size_usd = self._size(cand.confidence, capital, pwin=getattr(cand, "_pwin", None))
                 cand.reasons.append(

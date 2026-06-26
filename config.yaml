@@ -228,6 +228,14 @@ warmstart:
   ledger_cap: 5000             # replay up to this many resolved observations (real feature vectors)
   sim_episodes: 300            # weak momentum/trend prior from historical episodes (low learning rate)
 
+# ---- #1 Transfer-gap: train a decade-of-history P(win) prior in the LIVE feature space (alpha-labeled),
+# blended into the live P(win) at a low weight so the whole decade informs live calls without owning them.
+histtrain:
+  enabled: true
+  events_per_pass: 120         # historical catalyst-like events trained per loop tick
+  event_move_pct: 3.0          # a 1-day up-move >= this counts as a catalyst-like event
+  learn_rate: 0.02             # low -> a PRIOR; real live outcomes still dominate the blended P(win)
+
 # ---- Night coach: self-improvement (PROPOSE-ONLY for code; auto-tunes weights/lessons live) ----
 coach:
   enabled: true
@@ -261,9 +269,10 @@ telegram:
                                #        getUpdates loop; two pollers 409-conflict). Sets TELEGRAM_SHARED_BOT.
                                #        FALSE = Tentacle owns a dedicated bot and polls for ✅/❌ taps itself.
   daily_digest: true           # once/day summary of the AUTO-applied tuning (weights/lessons) — no approval
-  max_proposals_per_day: 12    # send up to the 12 BEST ideas/day as ✅/❌ cards (dedupes + remembers denials)
-  min_interval_min: 90         # space the cards out (~1 every 1.5h) instead of dumping them all at once
-  pool_refill_below: 8         # only ask the LLM for fresh candidate ideas when fewer than this are queued
+  max_proposals_per_day: 5     # send only a FEW of the best ideas/day as ✅/❌ cards (quality over quantity)
+  min_interval_min: 180        # space them out (~1 every 3h); never dump a batch
+  min_impact: 60               # QUALITY BAR: only send a change scored >= this (evidence-backed; no bs)
+  pool_refill_below: 12        # keep CONSTANTLY thinking — maintain a deep backlog of scored candidates
 
 # ---- Approve/deny: an approved change is gate-tested + merged + redeployed by the apply-approved Action ----
 # Needs Railway var GITHUB_DISPATCH_TOKEN (fine-grained PAT, contents+actions write) and repo secret

@@ -48,13 +48,16 @@ PRETTY = {
     "min_fold_winrate": "how consistent a strategy must be to trust it",
 }
 
-SYS = ("You tune an autonomous, still-PRACTICE-mode trading bot. Given its brain and a list of SAFE, "
-       "reversible threshold settings (current value + allowed range), propose the BEST handful of "
-       "changes to make it trade smarter / learn faster. You may NOT touch risk caps, the money gate, "
-       "or the ladder (they're not in the list). Reply ONLY JSON: {\"candidates\":[{\"key\":\"min_pwin\","
-       "\"proposed\":0.55,\"impact\":0-100,\"plain\":\"<plain-English what it does>\",\"why\":"
-       "\"<plain-English reason a non-coder gets>\"}]}. proposed must differ from current and stay in "
-       "range; only use keys from the list; rank by impact (how much it should help).")
+SYS = ("You tune an autonomous, still-PRACTICE-mode trading bot. Given its brain (real measured state) "
+       "and a list of SAFE, reversible threshold settings (current value + allowed range), propose ONLY "
+       "changes you can directly justify from the SPECIFIC evidence shown — what the data says is "
+       "actually wrong right now. QUALITY OVER QUANTITY: if nothing is clearly worth changing, return an "
+       "EMPTY candidates list. Never propose a cosmetic, speculative, or 'might help' tweak. You may NOT "
+       "touch risk caps, the money gate, or the ladder (not in the list). Reply ONLY JSON: "
+       "{\"candidates\":[{\"key\":\"min_pwin\",\"proposed\":0.55,\"impact\":0-100,\"plain\":\"<plain "
+       "English what it does>\",\"why\":\"<the SPECIFIC evidence that justifies it — cite the numbers>\"}]}. "
+       "impact = how strongly the evidence supports it; proposed must differ from current and stay in "
+       "range; only use keys from the list.")
 
 
 class Proposer:
@@ -64,6 +67,7 @@ class Proposer:
         self.ap = approvals
         self.pool = know.setdefault("proposal_pool", [])   # [{hash,title,patch,plain,why,tech,impact,sent}]
         self.refill_below = int(cfg.get("telegram", {}).get("pool_refill_below", 8))
+        self.min_impact = int(cfg.get("telegram", {}).get("min_impact", 60))   # quality bar — no bs cards
 
     # ---- helpers ----
     def _text(self) -> str:
@@ -122,14 +126,17 @@ class Proposer:
                     continue
             except Exception:
                 continue
+            imp = int(max(0, min(100, c.get("impact", 50))))
+            why = str(c.get("why", "")).strip()
+            if imp < self.min_impact or len(why) < 15:     # QUALITY GATE: weak/unjustified -> not a card
+                continue
             find = f"{key}: {cur}"
             h = f"{key}={prop}"
             plain = c.get("plain") or f"Change my {PRETTY.get(key, key)} from {cur} to {prop}."
             self._add({"hash": h, "title": f"config: {key} {cur} → {prop}",
                        "patch": [{"file": "config.yaml", "find": find, "replace": f"{key}: {prop}"}],
-                       "plain": plain, "why": str(c.get("why", "to trade a little smarter")),
-                       "tech": f"config.yaml · {key}: {cur} → {prop}",
-                       "impact": int(max(0, min(100, c.get("impact", 50)))), "sent": False})
+                       "plain": plain, "why": why, "tech": f"config.yaml · {key}: {cur} → {prop}",
+                       "impact": imp, "sent": False})
             added += 1
         return added
 
@@ -150,6 +157,8 @@ class Proposer:
         if self.ap is None or not self.ap._budget_ok():
             return None
         for p in sorted(self._unsent(), key=lambda x: -x.get("impact", 0)):
+            if p.get("impact", 0) < self.min_impact:       # sorted desc -> nothing else clears the bar
+                break
             cid = self.ap.propose("config", p["title"], p["why"], patches=p["patch"],
                                   meta={"plain": p["plain"], "why": p["why"], "tech": p["tech"]})
             p["sent"] = True                               # don't re-offer (dup/denied handled by ApprovalQueue)

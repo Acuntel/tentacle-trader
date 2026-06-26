@@ -152,6 +152,16 @@ class StrategyBook:
         us = self._fold_us(st)
         return statistics.mean(us) if us else -99.0
 
+    def _luck_threshold(self) -> float:
+        """Deflated-Sharpe-style multiple-testing floor. With N strategies tried, the BEST one's
+        expectancy under NO real edge is ~ sigma * sqrt(2*ln N). A 'survivor' must beat THAT, so we
+        never crown a strategy that only looks good because we tried hundreds of variants."""
+        scores = [self._score(s) for s in self._ranked()]
+        if len(scores) < 5:
+            return 0.0
+        sigma = statistics.pstdev(scores)
+        return sigma * math.sqrt(2 * math.log(max(2, len(scores))))
+
     def _ranked(self):
         elig = [s for s in self.stats.values()
                 if s.get("n", 0) >= self.min_rank and len(self._fold_us(s)) >= max(2, self.folds // 2)]
@@ -161,10 +171,13 @@ class StrategyBook:
         """Strategies positive across a MAJORITY of walk-forward folds AND every regime with enough
         data, and RH-executable — the only ones we trust live. This is the anti-false-confidence gate."""
         need = math.ceil(self.folds * self.min_fold_winrate)
+        floor = self._luck_threshold()                      # multiple-testing-adjusted edge bar
         out = []
         for s in self._ranked():
             us = self._fold_us(s)
             if sum(1 for u in us if u > 0) < need:
+                continue
+            if self._score(s) <= floor:                     # not beyond best-of-N luck -> reject
                 continue
             if self.regime_stratify:
                 reg = s.get("reg", {})
@@ -214,15 +227,19 @@ class StrategyBook:
         us = self._fold_us(ranked[0])
         folds_pos = sum(1 for u in us if u > 0)
         spread = round(max(us) - min(us), 3) if us else 0.0
+        floor = round(self._luck_threshold(), 3)            # multiple-testing bar
+        top = round(self._score(ranked[0]), 3)
         n_surv = len(self.survivors())
         if n_surv == 0:
-            status = "OVERFIT — the best strategy fails the walk-forward folds. No trustworthy edge. Confidence = false."
+            status = (f"OVERFIT — best strategy's edge {top} ≤ the multiple-testing luck floor {floor} "
+                      f"(tried {len(ranked)}). No trustworthy edge. Confidence = false.")
         elif spread > 1.5:
             status = f"PARTIAL — edge swings across folds (spread {spread}); treat with suspicion."
         else:
-            status = f"HOLDS — {n_surv} strategies positive across {folds_pos}/{len(us)} folds (spread {spread}). Tentative, still shadow."
+            status = f"HOLDS — {n_surv} strategies beat the luck floor {floor} across {folds_pos}/{len(us)} folds. Tentative, still shadow."
         return {"status": status, "survivors": n_surv, "fold_spread": spread, "folds_positive": folds_pos,
-                "folds": len(us), "ranked": len(ranked), "of_strategies": len(self.book)}
+                "luck_floor": floor, "top_edge": top, "folds": len(us), "ranked": len(ranked),
+                "of_strategies": len(self.book)}
 
     def _mutate(self, s: dict) -> dict:
         def jit(v, opts):

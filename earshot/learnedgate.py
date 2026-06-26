@@ -19,9 +19,10 @@ FEATURES = ["independence", "news_events", "opt_bias", "tech_bias", "squeeze", "
 
 
 class LearnedGate:
-    def __init__(self, know: dict, lr: float = 0.05):
+    def __init__(self, know: dict, lr: float = 0.05, key: str = "model"):
         self.know = know
-        m = know.get("model", {})
+        self.key = key                                 # persist under this knowledge.json key
+        m = know.get(key, {})
         self.w = {f: float(m.get("w", {}).get(f, 0.0)) for f in FEATURES}
         self.b = float(m.get("b", 0.0))
         self.n = int(m.get("n", 0))
@@ -67,8 +68,8 @@ class LearnedGate:
         self.b += self.lr * err
         self.n += 1
         self.brier = 0.99 * self.brier + 0.01 * (pred - (1.0 if win else 0.0)) ** 2   # EMA Brier
-        self.know["model"] = {"w": self.w, "b": round(self.b, 4), "n": self.n,
-                              "brier": round(self.brier, 4)}
+        self.know[self.key] = {"w": self.w, "b": round(self.b, 4), "n": self.n,
+                               "brier": round(self.brier, 4)}
 
     def ready(self, min_n: int = 30) -> bool:
         return self.n >= min_n
