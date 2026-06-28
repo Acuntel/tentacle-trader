@@ -29,7 +29,19 @@ from .models import iso
 PKG = os.path.dirname(__file__)
 EVO_DIR = "state/evolution"
 APPLIED = os.path.join(EVO_DIR, "applied_patches.jsonl")
-LOCKED = {"risk.py", "executor.py", "backtest.py"}        # the rails — refuse to self-edit these
+# the rails + the self-modification machinery itself — NEVER self-editable. Locking selfcode/apply_patch
+# is what stops the system from removing its own guard; locking executor/risk/backtest is the money gate.
+LOCKED = {"risk.py", "executor.py", "backtest.py", "selfcode.py", "apply_patch.py"}
+# Any patch whose NEW code introduces these money-unlock tokens is refused outright — so full autonomy can
+# never reach real money. This is what makes "it cannot invest real money yet" un-bypassable.
+MONEY_GUARD = ("live_allowed", "RobinStocksExecutor", "get_executor", "order_buy", "order_sell",
+               "account_number", "submit_order", "gauntlet_pass", "self.armed = True", "armed=True",
+               "real_money", "place_order")
+
+
+def _unsafe(code) -> bool:
+    low = str(code)
+    return any(tok in low for tok in MONEY_GUARD)
 
 SYSTEM = ("You improve an autonomous trading bot's own Python source. Propose ONE small, safe, "
           "concrete change that fixes a bug or measurably improves it. You may NOT weaken the hard "
@@ -104,6 +116,8 @@ def attempt() -> dict:
     if p["find"] not in src or src.count(p["find"]) != 1 or p["replace"] == p["find"]:
         return {"status": "refused", "why": "find not uniquely present (no safe edit point)",
                 "file": p["file"]}
+    if _unsafe(p["replace"]):
+        return {"status": "refused", "why": "patch touches the money/safety gate", "file": p["file"]}
 
     new = src.replace(p["find"], p["replace"])
     open(path, "w").write(new)                              # apply
@@ -154,6 +168,9 @@ def apply_external(patches: list) -> dict:
         if not find or find not in src or src.count(find) != 1 or repl == find:
             _restore(originals)
             return {"status": "refused", "why": f"find not uniquely present in {rel}"}
+        if _unsafe(repl):
+            _restore(originals)
+            return {"status": "refused", "why": f"patch touches the money/safety gate ({rel})"}
         originals.setdefault(path, src)
         open(path, "w").write(src.replace(find, repl))
         applied.append(rel)

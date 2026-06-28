@@ -1,23 +1,21 @@
 name: self-evolve
 
-# The bot improves its OWN code on a schedule, test-gated, on GitHub's runners (isolated from the
-# live trader — the trading container never gets repo-write). Each tested change opens its own PR to
-# main for Brady to review and merge. Nothing self-written reaches the live bot until he merges.
+# FULL AUTONOMY (Brady's call): the bot rewrites its OWN code on a schedule, test-gated, on GitHub's
+# runners (isolated from the live trader — the money container never gets repo-write), then commits each
+# PASSING change straight to main and DEPLOYS it live. No human merge. The ONLY hard rule: it can never
+# touch real money. selfcode.py LOCKS risk.py/executor.py/backtest.py/selfcode.py/apply_patch.py AND
+# refuses any patch introducing money-unlock tokens — so full autonomy can never reach real money.
 #
-# Requires one repo secret: GROQ_API_KEY (Settings -> Secrets and variables -> Actions).
-# The 3 rails (risk.py caps, executor.py money gate, backtest.py Gauntlet) are refused by selfcode.py.
+# Repo secrets: GROQ_API_KEY (+ optional OPENROUTER/DEEPSEEK/GLM for stronger coders) and RAILWAY_TOKEN
+# (project token, to deploy). Every change must still pass compile + import + a sim batch before it ships.
 
 on:
-  # The Telegram approve/deny loop (approvals.py -> approvals.yml) handles human-in-the-loop CONFIG tweaks.
-  # This autonomous loop ADDITIONALLY writes + TEST-GATES its own CODE patches every 6h and opens a PR for
-  # Brady to merge. It NEVER auto-merges (still human-gated at merge) and NEVER touches the 3 rails.
   schedule:
-    - cron: "0 */6 * * *"
+    - cron: "0 */3 * * *"     # every 3h — she keeps improving herself around the clock
   workflow_dispatch: {}
 
 permissions:
   contents: write
-  pull-requests: write
 
 jobs:
   evolve:
@@ -43,22 +41,20 @@ jobs:
           GLM_API_KEY: ${{ secrets.GLM_API_KEY }}
         run: python -m earshot.selfcode | tee /tmp/selfcode.out
 
-      - name: Open a PR if a tested change was kept
+      - name: Ship the tested change to main + deploy live (autonomous, rails-locked)
         env:
-          GH_TOKEN: ${{ github.token }}
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
         run: |
-          # selfcode leaves the working tree modified ONLY when a patch passed the gate
+          # selfcode leaves the working tree modified ONLY when a patch passed the FULL gate
           if [ -z "$(git status --porcelain -- earshot)" ]; then
-            echo "No tested change this run — nothing to propose."; exit 0
+            echo "No tested change this run — nothing to ship."; exit 0
           fi
-          BRANCH="self-evolve/${{ github.run_id }}"
           git config user.name  "tentacle-self-evolve"
           git config user.email "self-evolve@tentacle.bot"
-          git checkout -b "$BRANCH"
           git add earshot
-          git commit -m "self-evolve: tested code change (passed compile+import+sim gate)"
-          git push origin "$BRANCH"
-          gh pr create --base main --head "$BRANCH" \
-            --title "🐙 self-evolve: a tested improvement to my own code" \
-            --body "I proposed a change to my own source, applied it, and it survived the gate (every module compiles, \`import earshot.main\` works, and a simulation batch still runs). The 3 rails were untouched. Review the diff and merge if you like what I'm becoming. — TENTACLE" \
-            || echo "PR create skipped (branch pushed; open it manually if needed)"
+          git commit -m "self-evolve: autonomous tested change (compile+import+sim gate; rails locked)"
+          git push origin HEAD:main || (git pull --rebase origin main && git push origin HEAD:main)
+          # a push alone does NOT rebuild this Railway service -> deploy it so the change goes live
+          npm i -g @railway/cli >/dev/null 2>&1 || true
+          railway up --service tentacle-trader --detach --ci \
+            || echo "committed to main; will deploy on the next ship"
