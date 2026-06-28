@@ -46,7 +46,7 @@ class LearnedGate:
         is_filing = 1.0 if "filing" in p else 0.0
         is_options = 1.0 if "options" in p else 0.0
         is_price = 1.0 if "price" in p else 0.0
-        return {
+        feat = {
             "independence": indep, "news_events": news, "opt_bias": opt_b, "tech_bias": tech_b,
             "squeeze": sqz, "quality": qual, "analyst_conv": conv,
             "is_filing": is_filing, "is_options": is_options, "is_price": is_price,
@@ -55,6 +55,22 @@ class LearnedGate:
             "rates_down": 1.0 if "rates_down" in macro else 0.0,
             "downtrend": 1.0 if "downtrend" in macro else 0.0,
         }
+        # WIDEN — log EVERYTHING the bot already measures so the model + the Forge can use it all, not a
+        # subset. Every pillar type, source breadth, and every numeric tech/options/fundamentals signal.
+        # Auto-included values are tanh-squashed to (-1,1) so raw magnitudes (prices, floats) can't
+        # destabilize the online learner. New keys cost nothing: weights start at 0 (backward-compatible).
+        for pil in ("regulatory", "crowd", "demand", "onchain", "flow", "altdata"):
+            feat["is_" + pil] = 1.0 if pil in p else 0.0
+        feat["n_src"] = min(float(dossier.get("n_sources", 0) or 0), 10) / 10.0
+        for prefix, d in (("t_", t), ("o_", o), ("f_", f)):
+            for k, v in (d.items() if isinstance(d, dict) else ()):
+                try:
+                    fv = float(v)
+                except (TypeError, ValueError):
+                    continue
+                if fv == fv:                                    # finite (NaN-safe)
+                    feat.setdefault(prefix + str(k), round(math.tanh(fv), 4))
+        return feat
 
     def predict(self, feats: dict) -> float:
         z = self.b + sum(self.w.get(k, 0.0) * v for k, v in feats.items())
