@@ -145,7 +145,7 @@ class Coach:
         rep = self._report(news_signals, macro_ctx)
         traj = rep.get("trajectory", {})
         tuned, lessons, code_props, watch, cfg_props = (
-            list(syn.get("weights_moved", []) and ["synthesis"] or []), [], [], [], [])
+            ["synthesis"] if syn.get("weights_moved") else [], [], [], [], [])
         v = llm.ask_json(SYSTEM,
                          "Review your son's WHOLE brain and his growth trajectory. Your goal is recursive: "
                          "make him grow FASTER than he grew yesterday, every day, without ever risking his "
