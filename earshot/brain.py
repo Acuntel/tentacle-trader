@@ -206,6 +206,10 @@ class Brain:
             # ANALYST BRAIN — reason over a real dossier (independence + judge + learned P(win)),
             # not source-counting. Runs only on already-qualifying names (cheap, LLM-gated).
             if qualifies and self.analyst is not None:
+                if self.lgate is not None and getattr(self, "distill", None) is None:
+                    from .distill import DistilledJudge      # learn to mimic the LLM; share with the analyst
+                    self.distill = DistilledJudge(self.lgate.know)
+                    self.analyst.distill = self.distill
                 dos = dossier.build(cand, self.macro)
                 verdict = self.analyst.judge(dos)
                 cand._verdict = verdict

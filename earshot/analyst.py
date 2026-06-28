@@ -57,6 +57,7 @@ class Analyst:
         self.min_pillars = int(a.get("min_independent_pillars", 2))
         self._client = None
         self._used = 0
+        self.distill = None         # DistilledJudge (learned mimic of the LLM), attached by the brain
         if self.provider == "anthropic" and _HAVE and os.getenv("ANTHROPIC_API_KEY"):
             try:
                 self._client = anthropic.Anthropic()
@@ -89,10 +90,28 @@ class Analyst:
                 v = self._llm_groq(dossier)
             elif self._client:
                 v = self._llm(dossier)
+        d = getattr(self, "distill", None)                  # the learned mimic of the LLM (attached by brain)
         if not v:
+            # the LLM didn't run this call — if the student has learned the teacher, use IT, not just rules
+            if d is not None and d.ready():
+                try:
+                    from .learnedgate import LearnedGate
+                    conv = d.predict(LearnedGate.featurize(dossier, h))
+                    blend = int(round(0.5 * h["conviction"] + 0.5 * conv))
+                    return {**h, "conviction": blend, "by": "distilled+heuristic",
+                            "rationale": h["rationale"] + f" || distilled-LLM conv~{int(conv)}"}
+                except Exception:
+                    return h
             return h                                          # rules carry it (brain offline this call)
         self._used += 1
-        return self._combine(h, v)
+        out = self._combine(h, v)
+        if d is not None:                                     # learn to MIMIC the teacher
+            try:
+                from .learnedgate import LearnedGate
+                d.record(LearnedGate.featurize(dossier, out), out)
+            except Exception:
+                pass
+        return out
 
     def _combine(self, h: dict, l: dict) -> dict:
         """Fuse the rule verdict and the LLM verdict — consensus to fire, blended conviction."""
