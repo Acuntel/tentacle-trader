@@ -267,6 +267,13 @@ forge:
   plateau_ticks: 6            # ticks with no improvement before asking the LLM (rare oracle) for a direction
   min_alpha_gain: 0.3         # >=0.3% return-lift over accept-all before flagging a finding to the LLM
 
+# ---- Semantic memory: recall outcomes of SIMILAR past setups (k-NN over bge-m3); bounded advisory nudge ----
+memory:
+  k: 25                # average over the k nearest past setups
+  min_corpus: 60       # need this many labeled setups before it activates
+  corpus_cap: 1200     # most-recent setups to index
+  refresh_min: 60      # rebuild the index hourly (picks up new setups)
+
 # ---- Off-volume daily backup of the learned brain to a PRIVATE GitHub repo (never lose context) ----
 backup:
   enabled: true

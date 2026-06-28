@@ -230,6 +230,19 @@ class Brain:
                         p_live = 0.8 * p_live + 0.2 * self.hist_gate.predict(cand._lgate_features)
                     cand._pwin = round(p_live, 3)
                     cand._uncertainty = round(1 - abs(cand._pwin - 0.5) * 2, 3)   # 1.0 = most informative
+                # SEMANTIC MEMORY: what happened in setups SIMILAR to this one (k-NN over bge-m3)? Bounded,
+                # advisory nudge so a rare signature borrows experience from its neighbors. Fails open.
+                try:
+                    if getattr(self, "memory", None) is None:
+                        from .memory import SemanticMemory
+                        self.memory = SemanticMemory()
+                    mem = self.memory.recall(getattr(cand, "_signature", ""))
+                    if mem and mem["n"] >= 8:
+                        cand._memory = mem
+                        edge = max(-1.0, min(1.0, (mem["win_rate"] - 0.5) * 2))
+                        cand.confidence = max(0.0, min(100.0, cand.confidence * (1.0 + 0.12 * edge)))
+                except Exception:
+                    pass
                 cand.size_usd = self._size(cand.confidence, capital, pwin=getattr(cand, "_pwin", None))
                 cand.reasons.append(
                     f"analyst[{verdict.get('by')}]: real={verdict['real']} dir={verdict['direction']} "
