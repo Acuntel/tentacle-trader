@@ -57,6 +57,20 @@ def _load_obs(limit: int = 4000):
     return rows[-limit:]
 
 
+def champion_pwin(know, feats, min_edge: float = 0.3):
+    """Score a setup by the Forge's CHAMPION policy → a 0-1 signal the live gate can blend in, but ONLY
+    once the free search has PROVEN an out-of-sample edge (champion.edge >= min_edge). Else None (no
+    influence). This is how free deterministic search shapes live decisions — guarded + bounded."""
+    ch = (know.get("forge") or {}).get("champion")
+    if not ch or float(ch.get("edge", 0) or 0) < min_edge:
+        return None
+    w, fn = ch.get("w") or [], ch.get("feats") or []
+    if len(w) != len(fn) or not fn:
+        return None
+    z = sum(w[i] * float(feats.get(fn[i], 0) or 0) for i in range(len(fn)))
+    return 1.0 / (1.0 + math.exp(-max(-30.0, min(30.0, z))))
+
+
 def _percentile(sorted_vals, q):
     if not sorted_vals:
         return 0.0
@@ -171,6 +185,7 @@ class Forge:
             self.fg["hist"] = (self.fg["hist"] + [round(best_s, 4)])[-50:]
             baseline = sum(rets) / len(rets)                    # accept-everything = the "do nothing" bar
             edge = best_s - baseline
+            self.fg["champion"]["edge"] = round(edge, 4)        # how much the live gate may trust this policy
             escalated = False
             if (edge >= self.min_gain and improved) or self.fg["flat"] >= self.plateau_ticks:
                 escalated = self._escalate(self.fg["champion"], edge)

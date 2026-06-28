@@ -228,6 +228,12 @@ class Brain:
                     # so the whole decade informs the call while the live model still owns it.
                     if self.hist_gate is not None and self.hist_gate.ready(50):
                         p_live = 0.8 * p_live + 0.2 * self.hist_gate.predict(cand._lgate_features)
+                    # FORGE -> GATE: blend the free search's PROVEN policy at a low, guarded weight (only
+                    # once the Forge has a real out-of-sample edge). The live model still owns the call.
+                    from .forge import champion_pwin
+                    fp = champion_pwin(self.lgate.know, cand._lgate_features)
+                    if fp is not None:
+                        p_live = 0.85 * p_live + 0.15 * fp
                     cand._pwin = round(p_live, 3)
                     cand._uncertainty = round(1 - abs(cand._pwin - 0.5) * 2, 3)   # 1.0 = most informative
                 # SEMANTIC MEMORY: what happened in setups SIMILAR to this one (k-NN over bge-m3)? Bounded,
