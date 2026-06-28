@@ -16,16 +16,19 @@ space; the Forge only proposes — a human + the test-gate decide what ships.
 from __future__ import annotations
 
 import json
+import math
 import random
 import time
 
 from .models import iso
 
 RESOLVED = "state/resolved_obs.jsonl"
+RET_CLIP = 25.0   # clip extreme returns so a few outliers can't dominate the objective
 
 
 def _load_obs(limit: int = 4000):
-    """Real labeled setups as (feature-dict, market-adjusted-return), chronological order."""
+    """Real labeled setups as (sanitized feature-dict, finite clipped return), chronological order.
+    Skips rows with non-finite returns (delisted/no-price) and zeroes any non-finite feature."""
     rows = []
     try:
         with open(RESOLVED) as f:
@@ -33,8 +36,20 @@ def _load_obs(limit: int = 4000):
                 try:
                     o = json.loads(line)
                     feat, ret = o.get("feat") or {}, o.get("ret")
-                    if feat and ret is not None:
-                        rows.append((feat, float(ret)))
+                    if not feat or ret is None:
+                        continue
+                    ret = float(ret)
+                    if not math.isfinite(ret):
+                        continue
+                    ret = max(-RET_CLIP, min(RET_CLIP, ret))
+                    clean = {}
+                    for k, v in feat.items():
+                        try:
+                            fv = float(v)
+                            clean[k] = fv if math.isfinite(fv) else 0.0
+                        except Exception:
+                            clean[k] = 0.0
+                    rows.append((clean, ret))
                 except Exception:
                     continue
     except FileNotFoundError:
