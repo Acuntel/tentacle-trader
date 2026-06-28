@@ -74,6 +74,12 @@ class Coach:
                 seen.add(h); heads.append(h)
             if len(heads) >= 12:
                 break
+        try:                                               # collapse echoed copies of the same event (BGE-M3)
+            from . import embed
+            if embed.available() and len(heads) > 3:
+                heads = [heads[i] for i in embed.dedupe(heads, threshold=0.86)]
+        except Exception:
+            pass
         losses = []
         try:
             with open("state/dungeon/post_mortems.jsonl") as f:
@@ -122,6 +128,13 @@ class Coach:
             "growth": self.instinct.growth_progress()})
         if day != self.last_backup_day:
             persist.backup("state/knowledge.json", day)
+            try:                                           # off-volume backup to GitHub — never lose the brain
+                from . import backup as _bk
+                bcfg = self.cfg.get("backup", {})
+                if bcfg.get("enabled", True) and bcfg.get("github_repo"):
+                    _bk.push_state(bcfg.get("github_repo"))
+            except Exception:
+                pass
             self.last_backup_day = day
 
         # (3) the LLM reasons across the ENTIRE brain snapshot + the mother's creed + her feelings

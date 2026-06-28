@@ -255,6 +255,11 @@ hive:
   max_queue: 40                # backlog cap (persisted in knowledge.json — survives restarts)
   code_impact: 62              # impact score for a cross-reviewed code card
 
+# ---- Off-volume daily backup of the learned brain to a PRIVATE GitHub repo (never lose context) ----
+backup:
+  enabled: true
+  github_repo: Acuntel/tentacle-state   # uses GITHUB_DISPATCH_TOKEN (already set for the approval loop)
+
 # ---- 24/7 self-code audit: read + critique its OWN source on loop, journal fixes (propose-only) ----
 audit:
   enabled: true
