@@ -73,7 +73,10 @@ PROVIDERS = {
                    "model": "glm-4-flash", "free": True, "daily": 2_000_000},
     "openrouter": {"url": "https://openrouter.ai/api/v1/chat/completions",
                    "key": "OPENROUTER_API_KEY", "model_env": "OPENROUTER_MODEL",
-                   "model": "meta-llama/llama-3.3-70b-instruct:free", "free": True, "daily": 2_000_000},
+                   # PAID via the $10: DeepSeek is cheap (~pennies/1M) + a top coder. The :free routes are
+                   # rate-limited, and we already have free Llama elsewhere — so spend it on strength.
+                   # daily token cap keeps $10 lasting months; positioned for quality lanes, not volume.
+                   "model": "deepseek/deepseek-chat", "free": False, "daily": 200_000},
     "qwen":       {"url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions",
                    "key": "DASHSCOPE_API_KEY", "model_env": "QWEN_MODEL",
                    "model": "qwen-plus", "free": True, "daily": 1_000_000},
@@ -89,14 +92,17 @@ PROVIDERS = {
 # OpenRouter even without their own keys. Missing-key / rate-limited / over-budget providers are skipped.
 # task -> preferred provider order. FAST models lead the loop-inline lanes (judge/reason/propose) so a slow
 # reasoner is only reached on failover and never stalls the trading loop. Every model serves multiple tasks.
+# FAST/FREE models lead high-volume lanes; OpenRouter→DeepSeek (paid, capped) sits in QUALITY lanes
+# (code/reason/quant) not volume lanes (judge). Gemini is demoted to last everywhere (AQ key is quota-dead;
+# stays as a no-op until a real key is set). Every model still serves multiple tasks.
 ROUTING = {
-    "judge":   ["cerebras", "groq", "sambanova", "nv_bytedance", "nvidia", "gemini", "openrouter"],            # fast, high-volume
-    "reason":  ["gemini", "cerebras", "nv_mistral", "nvidia", "groq", "nv_nemotron", "nv_stepfun", "deepseek", "openrouter"],  # deep reasoning
-    "code":    ["nv_kimi", "cerebras_glm", "deepseek", "nv_stepfun", "nv_nemotron", "glm", "qwen", "nvidia", "openrouter", "gemini"],  # code-strong first
-    "propose": ["gemini", "cerebras", "groq", "nv_mistral", "sambanova", "deepseek", "openrouter"],            # quality + evidence
-    "quant":   ["nv_sarvam", "nv_nemotron", "nv_kimi", "deepseek", "cerebras_glm", "gemini", "nv_mistral"],    # math / strategy synthesis
-    "agentic": ["nv_mistral", "nv_kimi", "gemini", "cerebras", "deepseek", "nvidia"],                          # tool-use / multi-step
-    "default": ["cerebras", "groq", "sambanova", "gemini", "nvidia", "nv_mistral", "openrouter"],
+    "judge":   ["cerebras", "groq", "sambanova", "nv_bytedance", "nvidia", "gemini"],                          # fast, high-volume — NO paid
+    "reason":  ["cerebras", "openrouter", "nv_mistral", "nvidia", "groq", "nv_nemotron", "nv_stepfun", "gemini"],  # deep reasoning
+    "code":    ["nv_kimi", "openrouter", "cerebras_glm", "nv_stepfun", "nv_nemotron", "glm", "qwen", "nvidia", "gemini"],  # code-strong (Kimi/DeepSeek/GLM)
+    "propose": ["cerebras", "openrouter", "groq", "nv_mistral", "sambanova", "gemini"],                        # quality + evidence
+    "quant":   ["nv_sarvam", "openrouter", "nv_nemotron", "nv_kimi", "cerebras_glm", "nv_mistral", "gemini"],  # math / strategy synthesis
+    "agentic": ["nv_mistral", "nv_kimi", "openrouter", "cerebras", "nvidia", "gemini"],                        # tool-use / multi-step
+    "default": ["cerebras", "groq", "sambanova", "nvidia", "nv_mistral", "openrouter", "gemini"],
 }
 RESERVE = {"low": 0.50, "normal": 0.80, "high": 0.95}     # per-provider daily fraction a priority may use
 _BUDGET_PATH = "state/llm_budget.json"
@@ -200,15 +206,14 @@ def _ask(system, user, want_json, max_tokens, temperature, timeout, priority, ta
             continue
         if not _has_key(name) or _COOLDOWN.get(name, 0) > now:
             continue
-        if PROVIDERS[name]["free"] and not _budget_ok(name, priority, est):
+        if not _budget_ok(name, priority, est):           # daily token cap applies to ALL — caps paid spend too
             continue
         content, used, limited = _call(name, system, user, want_json, max_tokens, temperature, timeout)
         if limited:
             _COOLDOWN[name] = now + 300                    # rest a rate-limited provider for 5 min
             continue
         if content is not None:
-            if PROVIDERS[name]["free"]:
-                _spend(name, used or est)
+            _spend(name, used or est)                      # track spend for every provider (free + paid)
             return content, name
     return None, None
 

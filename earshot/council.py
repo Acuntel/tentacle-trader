@@ -37,12 +37,14 @@ LOCKED = {"risk.py", "executor.py", "backtest.py"}        # the rails — never 
 
 COORD_SYS = (
     "You are the COORDINATOR of an autonomous (still PRACTICE-mode) trading bot's self-improvement hive. "
-    "Given the bot's brain and its recent work, choose the few HIGHEST-VALUE next tasks that move it toward "
-    "consistent risk-adjusted returns. Reply ONLY JSON: {\"tasks\":[{\"kind\":\"improve_code|find_source|"
-    "request_tool|design_strategy\",\"spec\":\"<for improve_code: ONE earshot/*.py filename to harden; "
-    "otherwise a short concrete description>\",\"why\":\"<evidence-based reason, cite the data>\","
-    "\"priority\":0-100}]}. Be concrete, safe, non-duplicative. You may NOT touch risk caps, the money "
-    "gate, or the Gauntlet.")
+    "Given the bot's brain, its recent work, a BACKLOG of past ideas worth reviving, past LESSONS/mistakes, "
+    "and code that FAILED the gate, choose the few HIGHEST-VALUE next tasks toward consistent risk-adjusted "
+    "returns. REVIVE valuable past ideas from the backlog (don't let old work rot), RETRY worthwhile failed "
+    "code properly, and DO NOT repeat past mistakes. Reply ONLY JSON: {\"tasks\":[{\"kind\":\"improve_code|"
+    "find_source|request_tool|design_strategy\",\"spec\":\"<for improve_code: ONE earshot/*.py filename to "
+    "harden; otherwise a short concrete description>\",\"why\":\"<evidence-based reason, cite the data>\","
+    "\"priority\":0-100}]}. Be concrete, safe, non-duplicative. You may NOT touch risk caps, the money gate, "
+    "or the Gauntlet.")
 CODER_SYS = (
     "You improve an autonomous trading bot's own Python source. Propose ONE small, safe, concrete change "
     "to the given file that fixes a bug or measurably improves it. You may NOT weaken the hard risk caps, "
@@ -171,10 +173,16 @@ class Hive:
 
     # ---- COORDINATOR: agents spinning up agents ----
     def _coordinate(self, snapshot) -> int:
-        v = llm.ask_json(COORD_SYS,
-                         "Brain snapshot:\n" + json.dumps(snapshot, default=str)[:3500] +
-                         "\n\nRecent work (avoid repeating):\n" + json.dumps(self.hv["done"][-8:], default=str)[:1200],
-                         max_tokens=700, priority="normal", task="reason")
+        from . import recall
+        ctx = ("Brain snapshot:\n" + json.dumps(snapshot, default=str)[:3000] +
+               "\n\nBACKLOG — past ideas to REVIVE (give old work utility):\n"
+               + json.dumps(recall.backlog(self.know, 6), default=str)[:1200] +
+               "\n\nLESSONS / past mistakes (do NOT repeat):\n"
+               + json.dumps(recall.lessons(self.know, 5), default=str)[:600] +
+               "\n\nCode that FAILED the gate (retry properly if worthwhile):\n"
+               + json.dumps(recall.reverted(2), default=str)[:500] +
+               "\n\nRecent work (avoid duplicating):\n" + json.dumps(self.hv["done"][-6:], default=str)[:700])
+        v = llm.ask_json(COORD_SYS, ctx, max_tokens=750, priority="normal", task="reason")
         added = 0
         for t in ((v or {}).get("tasks") or [])[:self.max_seed]:
             kind = str(t.get("kind", "")).strip()
