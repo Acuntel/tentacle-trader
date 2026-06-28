@@ -260,9 +260,12 @@ hive:
 forge:
   enabled: true
   every_minutes: 20
-  population: 64               # free experiments per tick (raise it = more parallel search, still $0)
-  plateau_ticks: 6             # ticks with no improvement before asking the LLM for a new direction
-  min_alpha_gain: 0.15         # require >=0.15% walk-forward alpha improvement before proposing a change
+  population: 300              # HUNDREDS of free experiments per generation (raise freely — still $0/CPU)
+  generations_per_tick: 6     # each generation breeds the next => 300 x 6 = 1,800 free experiments/tick
+  elite_frac: 0.2             # top 20% survive + breed the next hundreds
+  explore_frac: 0.1           # 10% fresh random explorers each generation (escape local optima)
+  plateau_ticks: 6            # ticks with no improvement before asking the LLM (rare oracle) for a direction
+  min_alpha_gain: 0.3         # >=0.3% return-lift over accept-all before flagging a finding to the LLM
 
 # ---- Off-volume daily backup of the learned brain to a PRIVATE GitHub repo (never lose context) ----
 backup:
