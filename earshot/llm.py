@@ -33,6 +33,7 @@ except Exception:  # pragma: no cover
     _HAVE = False
 
 # name -> endpoint config. `daily` = soft daily TOKEN budget (the 429-cooldown is the real guard).
+_NV = "https://integrate.api.nvidia.com/v1/chat/completions"   # NVIDIA NIM hosts MANY models on one URL
 PROVIDERS = {
     "groq":       {"url": "https://api.groq.com/openai/v1/chat/completions",
                    "key": "GROQ_API_KEY", "model_env": "GROQ_MODEL",
@@ -42,13 +43,28 @@ PROVIDERS = {
                    "model": "gemini-2.0-flash", "free": True, "daily": 3_000_000},
     "cerebras":   {"url": "https://api.cerebras.ai/v1/chat/completions",
                    "key": "CEREBRAS_API_KEY", "model_env": "CEREBRAS_MODEL",
-                   "model": "llama-3.3-70b", "free": True, "daily": 1_000_000},
+                   "model": "gpt-oss-120b", "free": True, "daily": 1_000_000},        # ultra-fast, verified
+    "cerebras_glm": {"url": "https://api.cerebras.ai/v1/chat/completions",
+                   "key": "CEREBRAS_API_KEY", "model_env": "CEREBRAS_GLM_MODEL",
+                   "model": "zai-glm-4.7", "free": True, "daily": 1_000_000},          # fast Chinese coder
     "sambanova":  {"url": "https://api.sambanova.ai/v1/chat/completions",
                    "key": "SAMBANOVA_API_KEY", "model_env": "SAMBANOVA_MODEL",
                    "model": "Meta-Llama-3.3-70B-Instruct", "free": True, "daily": 1_000_000},
-    "nvidia":     {"url": "https://integrate.api.nvidia.com/v1/chat/completions",
-                   "key": "NVIDIA_API_KEY", "model_env": "NVIDIA_MODEL",
+    "nvidia":     {"url": _NV, "key": "NVIDIA_API_KEY", "model_env": "NVIDIA_MODEL",
                    "model": "meta/llama-3.3-70b-instruct", "free": True, "daily": 1_000_000},
+    # NVIDIA-hosted models (all verified live) — distinct keys spread the free-tier quota across them
+    "nv_kimi":     {"url": _NV, "key": "NV_KIMI_KEY", "model_env": "NV_KIMI_MODEL",
+                    "model": "moonshotai/kimi-k2.6", "free": True, "daily": 500_000},         # strong coder
+    "nv_nemotron": {"url": _NV, "key": "NVIDIA_API_KEY", "model_env": "NV_NEMOTRON_MODEL",
+                    "model": "nvidia/nemotron-3-ultra-550b-a55b", "free": True, "daily": 200_000},  # big reasoner (slow)
+    "nv_mistral":  {"url": _NV, "key": "NV_MISTRAL_KEY", "model_env": "NV_MISTRAL_MODEL",
+                    "model": "mistralai/mistral-nemotron", "free": True, "daily": 500_000},   # agentic
+    "nv_sarvam":   {"url": _NV, "key": "NV_SARVAM_KEY", "model_env": "NV_SARVAM_MODEL",
+                    "model": "sarvamai/sarvam-m", "free": True, "daily": 500_000},            # math/quant
+    "nv_stepfun":  {"url": _NV, "key": "NV_STEPFUN_KEY", "model_env": "NV_STEPFUN_MODEL",
+                    "model": "stepfun-ai/step-3.7-flash", "free": True, "daily": 500_000},    # reasoning
+    "nv_bytedance":{"url": _NV, "key": "NV_BYTEDANCE_KEY", "model_env": "NV_BYTEDANCE_MODEL",
+                    "model": "bytedance/seed-oss-36b-instruct", "free": True, "daily": 500_000},  # fast
     "moonshot":   {"url": "https://api.moonshot.ai/v1/chat/completions",
                    "key": "MOONSHOT_API_KEY", "model_env": "MOONSHOT_MODEL",
                    "model": "kimi-k2-0711-preview", "free": False, "daily": 10 ** 9},
@@ -71,12 +87,16 @@ PROVIDERS = {
 
 # task -> preferred provider order (best-for-the-job first). Free DeepSeek/Qwen reach code/reason via
 # OpenRouter even without their own keys. Missing-key / rate-limited / over-budget providers are skipped.
+# task -> preferred provider order. FAST models lead the loop-inline lanes (judge/reason/propose) so a slow
+# reasoner is only reached on failover and never stalls the trading loop. Every model serves multiple tasks.
 ROUTING = {
-    "judge":   ["groq", "cerebras", "sambanova", "gemini", "nvidia", "glm", "qwen", "openrouter"],   # fast, high-volume
-    "reason":  ["gemini", "deepseek", "nvidia", "groq", "qwen", "glm", "cerebras", "sambanova", "openrouter"],  # deep reasoning
-    "code":    ["deepseek", "moonshot", "glm", "qwen", "nvidia", "openrouter", "gemini", "groq"],     # code-strong first (DeepSeek/Kimi/GLM/Qwen)
-    "propose": ["gemini", "groq", "deepseek", "nvidia", "qwen", "glm", "sambanova", "openrouter"],    # quality + evidence
-    "default": ["groq", "gemini", "cerebras", "sambanova", "glm", "qwen", "nvidia", "openrouter"],
+    "judge":   ["cerebras", "groq", "sambanova", "nv_bytedance", "nvidia", "gemini", "openrouter"],            # fast, high-volume
+    "reason":  ["gemini", "cerebras", "nv_mistral", "nvidia", "groq", "nv_nemotron", "nv_stepfun", "deepseek", "openrouter"],  # deep reasoning
+    "code":    ["nv_kimi", "cerebras_glm", "deepseek", "nv_stepfun", "nv_nemotron", "glm", "qwen", "nvidia", "openrouter", "gemini"],  # code-strong first
+    "propose": ["gemini", "cerebras", "groq", "nv_mistral", "sambanova", "deepseek", "openrouter"],            # quality + evidence
+    "quant":   ["nv_sarvam", "nv_nemotron", "nv_kimi", "deepseek", "cerebras_glm", "gemini", "nv_mistral"],    # math / strategy synthesis
+    "agentic": ["nv_mistral", "nv_kimi", "gemini", "cerebras", "deepseek", "nvidia"],                          # tool-use / multi-step
+    "default": ["cerebras", "groq", "sambanova", "gemini", "nvidia", "nv_mistral", "openrouter"],
 }
 RESERVE = {"low": 0.50, "normal": 0.80, "high": 0.95}     # per-provider daily fraction a priority may use
 _BUDGET_PATH = "state/llm_budget.json"
@@ -158,7 +178,8 @@ def _call(name: str, system: str, user: str, want_json: bool, max_tokens: int,
             return None, 0, False
         try:
             data = r.json()
-            content = data["choices"][0]["message"]["content"]
+            msg = data["choices"][0]["message"]
+            content = msg.get("content") or msg.get("reasoning_content")   # reasoning models reply in the latter
             used = (data.get("usage") or {}).get("total_tokens", max_tokens)
             return content, used, False
         except Exception:

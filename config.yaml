@@ -10,7 +10,8 @@ survival:
   loss_aversion_lambda: 2.5     # a loss hurts 2.5x more than an equal gain feels good
   ruin_floor_pct: 0.40          # lose 40% of a stage's capital -> the son "dies" (halts + demotes)
   growth_target: 10.0           # the mother trains her SON to grow this many x the stake (ambition, not a cap)
-  goal_monthly_return_pct: 10   # Brady's target: +10%/month. Shown on the dashboard scorecard vs realized.
+  goal_monthly_return_pct: 20   # Brady's target the engine HUNTS for. ~9x/yr — aspirational; the real-money
+                                # gate only unlocks on a PROVEN out-of-sample edge, which may never reach this.
   # The graduation ladder: capital is EARNED rung by rung. Full $500 is the top, not the default.
   # NOTE: mastery 85+ is mathematically unreachable at a ~0.50 win rate (the old bars guaranteed a
   # permanent stall). These bars are realistic-but-demanding for a genuine edge AND require large
