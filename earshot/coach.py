@@ -197,11 +197,25 @@ class Coach:
             f"of {len(self.book.book) if self.book else 0} strategies ({evo['evolved']} evolved); "
             f"HONESTY: {honesty.get('status', 'n/a')[:70]}; "
             f"trajectory {'↑ growing faster' if traj.get('improving') else 'flat (day ' + str(traj.get('days', 0)) + ')'}")
-        if self.approvals is not None:                       # once/day, in plain English
+        if self.approvals is not None:                       # once/day heartbeat, in plain English
+            try:
+                stt = self.instinct.status()
+            except Exception:
+                stt = {}
+            pool = self.know.get("proposal_pool", [])
+            unsent = [p for p in pool if not p.get("sent")]
+            bar = self.proposer.min_impact if self.proposer else 60
+            passed = [p for p in unsent if p.get("impact", 0) >= bar]
+            eq = stt.get("paper_equity"); mret = stt.get("monthly_return")
             self.approvals.daily_digest(
-                f"Still in practice mode — no real money. Today I kept training myself: I adjusted "
-                f"{syn['weights_moved']} of my source trust-levels and wrote down {len(lessons)} new lesson(s). "
-                f"Honest check on whether I actually have an edge yet: {honesty.get('status', 'still gathering data')[:130]}")
+                "Still in practice mode — no real money. Daily heartbeat:\n"
+                f"• Son's shadow equity: ${eq} (started $500)" + (f", ~{mret:+.1f}%/mo\n" if isinstance(mret, (int, float)) else "\n") +
+                f"• Mastery: {stt.get('mastery', rep['mastery'])}/{stt.get('needs_mastery', '?')} to unlock the next rung "
+                f"({stt.get('samples', '?')} resolved trades)\n"
+                f"• Today I retuned {syn['weights_moved']} source trust-levels and wrote {len(lessons)} new lesson(s).\n"
+                f"• Self-improvement ideas: considered {len(pool)}, {len(passed)} clear my confidence bar, "
+                f"{len(unsent)} waiting for your ✅/❌.\n"
+                f"• Honest edge check: {honesty.get('status', 'still gathering data')[:130]}")
         return {"syn": syn, "rules": rules, "studies": studies, "calib": cal, "redteam": rt,
                 "benchmark": bench, "lessons": lessons, "code_proposals": code_props,
                 "new_sources": new_sources, "by": "groq+brain" if v else "brain"}

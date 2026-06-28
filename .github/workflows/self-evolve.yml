@@ -8,9 +8,11 @@ name: self-evolve
 # The 3 rails (risk.py caps, executor.py money gate, backtest.py Gauntlet) are refused by selfcode.py.
 
 on:
-  # SUPERSEDED by the Telegram approve/deny loop (approvals.py -> apply-approved.yml): self-changes now
-  # go to Brady's Telegram for a tap, not an unattended PR. The autonomous 6h schedule is OFF so nothing
-  # self-merges behind his back. Left as a MANUAL fallback only (run it from the Actions tab).
+  # The Telegram approve/deny loop (approvals.py -> approvals.yml) handles human-in-the-loop CONFIG tweaks.
+  # This autonomous loop ADDITIONALLY writes + TEST-GATES its own CODE patches every 6h and opens a PR for
+  # Brady to merge. It NEVER auto-merges (still human-gated at merge) and NEVER touches the 3 rails.
+  schedule:
+    - cron: "0 */6 * * *"
   workflow_dispatch: {}
 
 permissions:
@@ -32,7 +34,13 @@ jobs:
 
       - name: Propose + test-gate one self-improvement
         env:
+          # GROQ is the baseline; the others are OPTIONAL repo secrets — when set, selfcode's "code" task
+          # routes to the stronger coders (DeepSeek/Kimi/GLM/Qwen) first. Missing ones resolve to "" and skip.
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          GLM_API_KEY: ${{ secrets.GLM_API_KEY }}
         run: python -m earshot.selfcode | tee /tmp/selfcode.out
 
       - name: Open a PR if a tested change was kept

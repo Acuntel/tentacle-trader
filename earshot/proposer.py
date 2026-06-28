@@ -67,7 +67,10 @@ class Proposer:
         self.ap = approvals
         self.pool = know.setdefault("proposal_pool", [])   # [{hash,title,patch,plain,why,tech,impact,sent}]
         self.refill_below = int(cfg.get("telegram", {}).get("pool_refill_below", 8))
-        self.min_impact = int(cfg.get("telegram", {}).get("min_impact", 60))   # quality bar — no bs cards
+        self.min_impact = int(cfg.get("telegram", {}).get("min_impact", 60))   # HIGH-confidence bar
+        self.floor = int(cfg.get("telegram", {}).get("min_impact_floor", 25))  # absolute floor to ever send
+        # loosened gate: when nothing clears min_impact, still send the single best idea, flagged low-conf
+        self.always_send_best = bool(cfg.get("telegram", {}).get("always_send_best", True))
 
     # ---- helpers ----
     def _text(self) -> str:
@@ -129,7 +132,7 @@ class Proposer:
                 continue
             imp = int(max(0, min(100, c.get("impact", 50))))
             why = str(c.get("why", "")).strip()
-            if imp < self.min_impact or len(why) < 15:     # QUALITY GATE: weak/unjustified -> not a card
+            if imp < self.floor or len(why) < 15:          # keep low-conf ideas (labeled when sent), drop only junk
                 continue
             find = f"{key}: {cur}"
             h = f"{key}={prop}"
@@ -158,10 +161,18 @@ class Proposer:
         if self.ap is None or not self.ap._budget_ok():
             return None
         for p in sorted(self._unsent(), key=lambda x: -x.get("impact", 0)):
-            if p.get("impact", 0) < self.min_impact:       # sorted desc -> nothing else clears the bar
+            imp = p.get("impact", 0)
+            if imp < self.floor:                           # sorted desc -> nothing else clears even the floor
                 break
-            cid = self.ap.propose("config", p["title"], p["why"], patches=p["patch"],
-                                  meta={"plain": p["plain"], "why": p["why"], "tech": p["tech"]})
+            low_conf = imp < self.min_impact
+            if low_conf and not self.always_send_best:     # gate kept strict -> stay silent on below-bar ideas
+                break
+            title = ("⚠️ low-confidence — " + p["title"]) if low_conf else p["title"]
+            plain = (("⚠️ Low confidence (this didn't clear my usual bar, but you asked to see my best idea "
+                      "anyway): " + p["plain"]) if low_conf else p["plain"])
+            cid = self.ap.propose("config", title, p["why"], patches=p["patch"],
+                                  meta={"plain": plain, "why": p["why"], "tech": p["tech"],
+                                        "impact": imp, "low_conf": low_conf})
             p["sent"] = True                               # don't re-offer (dup/denied handled by ApprovalQueue)
             self.know["proposal_pool"] = self.pool
             return cid

@@ -7,15 +7,18 @@ over its daily budget, we fail over to the next. So losing any single provider (
 are tracked + persisted, and a PRIORITY reserve keeps the loop-critical callers (coach/proposer) from
 being starved by the high-volume analyst.
 
-All FREE (activate by setting the env key); paid ones (deepseek-direct, xai) stay off unless set:
-  GROQ_API_KEY        Groq — fast Llama, free 100k tok/day
-  GEMINI_API_KEY      Google Gemini Flash — smart, big free budget
-  CEREBRAS_API_KEY    Cerebras — fastest inference, free
-  GLM_API_KEY         Zhipu GLM-4-Flash — free Chinese model
-  OPENROUTER_API_KEY  OpenRouter — free routes to DeepSeek/Qwen/Llama (one key, many models)
-  DASHSCOPE_API_KEY   Alibaba Qwen — free quota
-  DEEPSEEK_API_KEY    DeepSeek direct (paid, cheap) — off unless set
-  XAI_API_KEY         xAI Grok (paid) — off unless set
+All FREE (activate by setting the env key); paid ones (deepseek-direct, moonshot, xai) stay off unless set:
+  GROQ_API_KEY        Groq — fast Llama, free 100k tok/day                  (US)
+  GEMINI_API_KEY      Google Gemini Flash — smart, big free budget          (US)
+  CEREBRAS_API_KEY    Cerebras — fastest inference, free                    (US)
+  SAMBANOVA_API_KEY   SambaNova — fast Llama-3.3-70B, free tier             (US)
+  NVIDIA_API_KEY      Nvidia NIM — many models incl DeepSeek-R1, free tier  (US)
+  OPENROUTER_API_KEY  OpenRouter — ONE key, free routes to DeepSeek/Qwen/GLM/Kimi/Llama (the easy "all the Chinese models" unlock)
+  GLM_API_KEY         Zhipu GLM-4-Flash — free Chinese model                (CN)
+  DASHSCOPE_API_KEY   Alibaba Qwen — free quota                             (CN)
+  MOONSHOT_API_KEY    Moonshot / Kimi K2 — Chinese, trial credits then paid (CN)
+  DEEPSEEK_API_KEY    DeepSeek direct (paid, cheap) — off unless set        (CN)
+  XAI_API_KEY         xAI Grok (paid) — off unless set                      (US)
 """
 from __future__ import annotations
 
@@ -40,6 +43,15 @@ PROVIDERS = {
     "cerebras":   {"url": "https://api.cerebras.ai/v1/chat/completions",
                    "key": "CEREBRAS_API_KEY", "model_env": "CEREBRAS_MODEL",
                    "model": "llama-3.3-70b", "free": True, "daily": 1_000_000},
+    "sambanova":  {"url": "https://api.sambanova.ai/v1/chat/completions",
+                   "key": "SAMBANOVA_API_KEY", "model_env": "SAMBANOVA_MODEL",
+                   "model": "Meta-Llama-3.3-70B-Instruct", "free": True, "daily": 1_000_000},
+    "nvidia":     {"url": "https://integrate.api.nvidia.com/v1/chat/completions",
+                   "key": "NVIDIA_API_KEY", "model_env": "NVIDIA_MODEL",
+                   "model": "meta/llama-3.3-70b-instruct", "free": True, "daily": 1_000_000},
+    "moonshot":   {"url": "https://api.moonshot.ai/v1/chat/completions",
+                   "key": "MOONSHOT_API_KEY", "model_env": "MOONSHOT_MODEL",
+                   "model": "kimi-k2-0711-preview", "free": False, "daily": 10 ** 9},
     "glm":        {"url": "https://open.bigmodel.cn/api/paas/v4/chat/completions",
                    "key": "GLM_API_KEY", "model_env": "GLM_MODEL",
                    "model": "glm-4-flash", "free": True, "daily": 2_000_000},
@@ -60,11 +72,11 @@ PROVIDERS = {
 # task -> preferred provider order (best-for-the-job first). Free DeepSeek/Qwen reach code/reason via
 # OpenRouter even without their own keys. Missing-key / rate-limited / over-budget providers are skipped.
 ROUTING = {
-    "judge":   ["groq", "cerebras", "gemini", "glm", "qwen", "openrouter"],      # fast, high-volume
-    "reason":  ["gemini", "deepseek", "groq", "qwen", "glm", "cerebras", "openrouter"],  # deep reasoning
-    "code":    ["deepseek", "glm", "qwen", "openrouter", "gemini", "groq"],      # code-strong first
-    "propose": ["gemini", "groq", "deepseek", "qwen", "glm", "openrouter"],      # quality + evidence
-    "default": ["groq", "gemini", "cerebras", "glm", "qwen", "openrouter"],
+    "judge":   ["groq", "cerebras", "sambanova", "gemini", "nvidia", "glm", "qwen", "openrouter"],   # fast, high-volume
+    "reason":  ["gemini", "deepseek", "nvidia", "groq", "qwen", "glm", "cerebras", "sambanova", "openrouter"],  # deep reasoning
+    "code":    ["deepseek", "moonshot", "glm", "qwen", "nvidia", "openrouter", "gemini", "groq"],     # code-strong first (DeepSeek/Kimi/GLM/Qwen)
+    "propose": ["gemini", "groq", "deepseek", "nvidia", "qwen", "glm", "sambanova", "openrouter"],    # quality + evidence
+    "default": ["groq", "gemini", "cerebras", "sambanova", "glm", "qwen", "nvidia", "openrouter"],
 }
 RESERVE = {"low": 0.50, "normal": 0.80, "high": 0.95}     # per-provider daily fraction a priority may use
 _BUDGET_PATH = "state/llm_budget.json"
