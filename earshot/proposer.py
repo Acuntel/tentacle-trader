@@ -144,6 +144,18 @@ class Proposer:
             added += 1
         return added
 
+    # ---- a config-threshold change discovered by the Forge (deterministic search) ----
+    def add_config(self, key: str, value, plain: str, why: str, impact: int = 60) -> bool:
+        text = self._text()
+        cur = self._current_str(text, key)
+        if cur is None or str(value) == str(cur) or text.count(f"{key}: {cur}") != 1:
+            return False                                    # need a unique, applyable anchor
+        self._add({"hash": f"{key}={value}", "title": f"config: {key} {cur} → {value}",
+                   "patch": [{"file": "config.yaml", "find": f"{key}: {cur}", "replace": f"{key}: {value}"}],
+                   "plain": plain, "why": why, "tech": f"config.yaml · {key}: {cur} → {value}",
+                   "impact": int(impact), "sent": False})
+        return True
+
     # ---- a gate-ready code patch is an idea too (unbounded novelty) ----
     def add_code(self, patch: dict, impact: int = 55):
         import os

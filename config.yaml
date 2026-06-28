@@ -255,6 +255,15 @@ hive:
   max_queue: 40                # backlog cap (persisted in knowledge.json — survives restarts)
   code_impact: 62              # impact score for a cross-reviewed code card
 
+# ---- The Forge: FREE deterministic recursive search engine (the keystone). Many experiments/tick on the
+# REAL outcome ledger, NO LLM per step; the LLM is called only as a RARE oracle when the search plateaus ----
+forge:
+  enabled: true
+  every_minutes: 20
+  population: 64               # free experiments per tick (raise it = more parallel search, still $0)
+  plateau_ticks: 6             # ticks with no improvement before asking the LLM for a new direction
+  min_alpha_gain: 0.15         # require >=0.15% walk-forward alpha improvement before proposing a change
+
 # ---- Off-volume daily backup of the learned brain to a PRIVATE GitHub repo (never lose context) ----
 backup:
   enabled: true
