@@ -234,6 +234,29 @@ class ApprovalQueue:
         notify.send("🐙 <b>TENTACLE daily self-report</b>\n\n" + notify.esc(text))
         self.persist()
 
+    def tool_request(self, title: str, why: str) -> bool:
+        """The Hive asks Brady (plain English) for a NEW model / data-source / tool it wants. Informational
+        — Brady provides the key/wiring. Deduped + capped per day so it can never spam."""
+        if not (self.on and notify.enabled()):
+            return False
+        h = _hash("tool", title, None)
+        seen = self.st.setdefault("tool_seen", {})
+        if h in seen:
+            return False
+        day = time.strftime("%Y-%m-%d")
+        if self.st.get("tool_day") != day:
+            self.st["tool_day"], self.st["tool_count"] = day, 0
+        cap = int(self.cfg.get("telegram", {}).get("max_tool_requests_per_day", 3))
+        if self.st.get("tool_count", 0) >= cap:
+            return False
+        seen[h] = 1
+        self.st["tool_count"] = self.st.get("tool_count", 0) + 1
+        notify.send(f"🧰 <b>I'd like a new tool</b>\n\n{notify.esc(title)}\n\n"
+                    f"<b>Why:</b> {notify.esc(why or 'it should help me improve')}\n\n"
+                    f"If you agree, add it and I'll wire it in — no money involved.")
+        self.persist()
+        return True
+
     def startup_ping(self, text: str):
         if notify.enabled():
             notify.send("🟢 <b>TENTACLE online</b>\n\n" + notify.esc(text))

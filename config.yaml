@@ -243,6 +243,18 @@ coach:
   every_minutes: 30            # cadence (10->30: the LLM pass is budget-gated; this keeps daily Groq use sane)
   min_source_samples: 8        # don't retune a source's weight until it has this many resolved outcomes
 
+# ---- The Hive: 24/7 recursive multi-model agent council (agents work tasks AND spin up more tasks) ----
+# Models in roles (coordinator/coder/reviewer/judge/strategist) check each other's work; vetted code
+# becomes a ✅/❌ Telegram card -> CI test-gate on approval. Queue persists on the volume (never lost).
+hive:
+  enabled: true
+  every_minutes: 45            # bounded cadence (free-tier safe; "every second" would just rate-limit)
+  max_tasks_per_tick: 1        # at most N queued tasks per tick (each = a few cross-model LLM calls)
+  seed_when_below: 3           # COORDINATOR refills the queue when it drops below this (the recursion engine)
+  max_seed: 5                  # how many new tasks the coordinator may enqueue at once
+  max_queue: 40                # backlog cap (persisted in knowledge.json — survives restarts)
+  code_impact: 62              # impact score for a cross-reviewed code card
+
 # ---- 24/7 self-code audit: read + critique its OWN source on loop, journal fixes (propose-only) ----
 audit:
   enabled: true
@@ -274,6 +286,9 @@ telegram:
   min_interval_min: 180        # space them out (~1 every 3h); never dump a batch
   min_impact: 60               # QUALITY BAR: only send a change scored >= this (evidence-backed; no bs)
   pool_refill_below: 12        # keep CONSTANTLY thinking — maintain a deep backlog of scored candidates
+  min_impact_floor: 25         # absolute floor — ideas below this are never sent (junk)
+  always_send_best: true       # if nothing clears min_impact, still send the BEST idea flagged ⚠️ low-confidence
+  max_tool_requests_per_day: 3 # cap on the Hive's "I'd like a new tool" Telegram asks
 
 # ---- Approve/deny: an approved change is gate-tested + merged + redeployed by the apply-approved Action ----
 # Needs Railway var GITHUB_DISPATCH_TOKEN (fine-grained PAT, contents+actions write) and repo secret

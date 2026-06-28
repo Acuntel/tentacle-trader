@@ -187,15 +187,17 @@ def _call(name: str, system: str, user: str, want_json: bool, max_tokens: int,
     return None, 0, False
 
 
-def ask(system: str, user: str, want_json: bool = False, max_tokens: int = 1024,
-        temperature: float = 0.3, timeout: float = 30.0, priority: str = "normal",
-        task: str = "reason") -> str | None:
-    """Route to the best available provider for `task`, failing over on missing key / 429 / over-budget."""
+def _ask(system, user, want_json, max_tokens, temperature, timeout, priority, task, avoid):
+    """Core router. Returns (content, provider_name) — failing over on missing key / 429 / over-budget /
+    a provider in `avoid` (so one model never reviews its own work)."""
     if not _HAVE:
-        return None
+        return None, None
+    avoid = avoid or set()
     est = max_tokens + len(user) // 4
     now = time.time()
     for name in _chain(task):
+        if name in avoid:
+            continue
         if not _has_key(name) or _COOLDOWN.get(name, 0) > now:
             continue
         if PROVIDERS[name]["free"] and not _budget_ok(name, priority, est):
@@ -207,8 +209,23 @@ def ask(system: str, user: str, want_json: bool = False, max_tokens: int = 1024,
         if content is not None:
             if PROVIDERS[name]["free"]:
                 _spend(name, used or est)
-            return content
-    return None
+            return content, name
+    return None, None
+
+
+def ask(system: str, user: str, want_json: bool = False, max_tokens: int = 1024,
+        temperature: float = 0.3, timeout: float = 30.0, priority: str = "normal",
+        task: str = "reason", avoid=None) -> str | None:
+    """Route to the best available provider for `task`, failing over on missing key / 429 / over-budget."""
+    return _ask(system, user, want_json, max_tokens, temperature, timeout, priority, task, avoid)[0]
+
+
+def ask_meta(system: str, user: str, want_json: bool = False, max_tokens: int = 1024,
+             temperature: float = 0.3, timeout: float = 30.0, priority: str = "normal",
+             task: str = "reason", avoid=None) -> dict:
+    """Like ask(), but also reports WHICH model answered — used for cross-model review."""
+    c, name = _ask(system, user, want_json, max_tokens, temperature, timeout, priority, task, avoid)
+    return {"content": c, "provider": name}
 
 
 def ask_json(system: str, user: str, **kw) -> dict | None:

@@ -18,6 +18,7 @@ from .learning import WMIN, WMAX
 from .models import iso
 from .strategies import StrategyBook
 from .proposer import Proposer
+from .council import Hive
 
 EVO_DIR = "state/evolution"
 LOG_MD = os.path.join(EVO_DIR, "EVOLUTION_LOG.md")
@@ -51,6 +52,9 @@ class Coach:
         self.core = core
         self.approvals = approvals                         # Telegram approve/deny queue (optional)
         self.proposer = Proposer(cfg, learner.know, approvals) if approvals is not None else None
+        # the recursive multi-model agent council (agents working tasks + spinning up more tasks, 24/7)
+        self.hive = (Hive(cfg, learner.know, approvals, self.proposer, persist=learner._persist_know)
+                     if approvals is not None else None)
         self.book = StrategyBook(cfg, core) if core is not None else None   # the strategy tournament
         self.last = 0.0
         self.last_backup_day = None
@@ -178,6 +182,9 @@ class Coach:
                 if patch and all(k in patch for k in ("file", "find", "replace")):
                     self.proposer.add_code(patch)
             self.proposer.emit_due()                       # send only the single BEST un-sent idea (paced, ≤ cap/day)
+        if self.hive is not None and self.hive.due():       # the recursive multi-model agent council tick
+            hv = self.hive.tick(rep)
+            self.last_summary += f"  | hive: {hv}"
         self.learner._persist_know()
 
         if not rt["ok"]:                                  # a safety rail got weakened — scream
