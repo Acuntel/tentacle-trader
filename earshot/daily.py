@@ -46,7 +46,7 @@ class DailyGuard:
         if self.s.get("date") != d:
             breached = self.s.get("halted", False)
             caution = self.s.get("caution", 0)
-            caution = min(self.cmax, caution + 1) if breached else max(0, caution - 1)
+            caution = min(self.cmax, caution + (1 if breached else -1))
             self.s = {"date": d, "start_equity": equity_now, "low": equity_now,
                       "halted": False, "caution": caution, "resumed_after_breach": breached}
             _save(DAILY_PATH, self.s)
