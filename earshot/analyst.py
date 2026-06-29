@@ -55,8 +55,14 @@ class Analyst:
         self.model = a.get("model", "claude-opus-4-8")     # only used if provider == anthropic
         self.max_llm = int(a.get("max_llm_per_cycle", 3))
         self.min_pillars = int(a.get("min_independent_pillars", 2))
+        # WS5: keep the LLM from stalling the hot loop — a tight per-call timeout AND a per-cycle
+        # wall-clock budget. When either trips, the judge degrades to the distilled+heuristic verdict
+        # (free, instant) so the 10s loop stays deterministic-CPU-fast regardless of provider latency.
+        self.hot_timeout = float(a.get("hot_timeout", 6.0))
+        self.hot_budget = float(a.get("hot_budget_sec", 8.0))
         self._client = None
         self._used = 0
+        self._llm_secs = 0.0
         self.distill = None         # DistilledJudge (learned mimic of the LLM), attached by the brain
         if self.provider == "anthropic" and _HAVE and os.getenv("ANTHROPIC_API_KEY"):
             try:
@@ -78,6 +84,7 @@ class Analyst:
 
     def reset_cycle(self):
         self._used = 0
+        self._llm_secs = 0.0                                # WS5: reset the per-cycle LLM time budget
 
     def judge(self, dossier: dict) -> dict:
         if not self.on:
@@ -85,11 +92,14 @@ class Analyst:
                     "bear_case": "analyst disabled", "rationale": "analyst off"}
         h = self._heuristic(dossier)                        # the rules ALWAYS vote
         v = None
-        if self._used < self.max_llm:
+        if self._used < self.max_llm and self._llm_secs < self.hot_budget:  # WS5: bounded LLM in the hot loop
+            import time as _t
+            t0 = _t.time()
             if self._groq:
                 v = self._llm_groq(dossier)
             elif self._client:
                 v = self._llm(dossier)
+            self._llm_secs += _t.time() - t0
         d = getattr(self, "distill", None)                  # the learned mimic of the LLM (attached by brain)
         if not v:
             # the LLM didn't run this call — if the student has learned the teacher, use IT, not just rules
@@ -154,7 +164,8 @@ class Analyst:
                 'real (bool), direction ("up"/"down"/"unclear"), conviction (int 0-100), '
                 "fresh (bool), bear_case (string), rationale (string, one terse sentence).\n\n"
                 + json.dumps(d, default=str))
-        v = llm.ask_json(SYSTEM, user, max_tokens=512, priority="low", task="judge")  # fast model, spares budget
+        v = llm.ask_json(SYSTEM, user, max_tokens=512, priority="low", task="judge",
+                         timeout=self.hot_timeout)          # WS5: tight timeout so a slow model can't stall the loop
         if not v or "real" not in v or "direction" not in v:
             return None
         v["by"] = "groq"

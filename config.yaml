@@ -212,6 +212,8 @@ analyst:
   model: claude-opus-4-8        # only used if provider == anthropic
   max_llm_per_cycle: 2          # cap LLM calls per cycle (top candidates only); also budget-gated in llm.py
   min_independent_pillars: 2    # need >=2 ORTHOGONAL evidence TYPES (filing+price+options...), not 2 echoes
+  hot_timeout: 6.0              # WS5: per-call LLM timeout in the hot loop (a slow model can't stall the 10s tick)
+  hot_budget_sec: 8.0           # WS5: total LLM seconds/cycle before the judge degrades to distilled+heuristic
 
 # ---- 24/7 simulation engine: replay the cached decade as paper episodes, always learning ----
 sim:
