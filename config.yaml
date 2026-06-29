@@ -28,7 +28,7 @@ survival:
 
 # ---- The firing gate ----
 conviction:
-  min_score_to_trade: 55        # below this -> shadow-log only, no trade
+  min_score_to_trade: 60        # below this -> shadow-log only, no trade
   min_independent_sources: 2    # >= 2 independent sources must confirm the SAME catalyst
   min_families: 2               # >= 2 DIFFERENT signal families (filing+surprise+flow...), not 2 of the same
   min_pwin: 0.45                # once the learned model has >=30 samples, require P(win) above this to fire
