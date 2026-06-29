@@ -62,7 +62,8 @@ class Auditor:
         self.every = int(c.get("every_minutes", 60)) * 60
         self.last = 0.0
         try:
-            self.idx = json.load(open(AUDIT_STATE)).get("idx", 0)
+            with open(AUDIT_STATE) as f:
+                self.idx = json.load(f).get("idx", 0)
         except Exception:
             self.idx = 0
 
