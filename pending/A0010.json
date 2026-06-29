@@ -1,0 +1,11 @@
+{
+  "id": "A0010",
+  "title": "config: min_pwin 0.45 \u2192 0.43",
+  "patches": [
+    {
+      "file": "config.yaml",
+      "find": "min_pwin: 0.45",
+      "replace": "min_pwin: 0.43"
+    }
+  ]
+}
