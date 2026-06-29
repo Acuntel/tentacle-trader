@@ -119,9 +119,9 @@ def patterns(d) -> tuple[list[str], list[str]]:
         (bull if c1 > o1 else bear).append("marubozu")
 
     # two-candle
-    if c2 < o2 and c1 > o1 and c1 >= o2 and o1 <= c2:
+    if c2 < o2 and c1 > o1 and c1 >= o2 and o1 <= c2 and b1 > b2:
         bull.append("bullish_engulfing")
-    if c2 > o2 and c1 < o1 and o1 >= c2 and c1 <= o2:
+    if c2 > o2 and c1 < o1 and o1 >= c2 and c1 <= o2 and b1 > b2:
         bear.append("bearish_engulfing")
     if c2 < o2 and c1 > o1 and o1 < c2 and c1 > (o2 + c2) / 2 and c1 < o2:
         bull.append("piercing")
