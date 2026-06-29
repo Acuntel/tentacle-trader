@@ -49,6 +49,8 @@ class ApprovalQueue:
         self.max_per_day = int(t.get("max_proposals_per_day", 4))
         self.min_interval = int(t.get("min_interval_min", 90)) * 60   # space cards out across the day
         self.digest_on = bool(t.get("daily_digest", True))
+        self.autonomous = bool(a.get("autonomous", False))            # apply + NOTIFY (no ✅/❌ questions)
+        self.knob_cooldown = int(a.get("knob_cooldown_min", 360)) * 60  # don't re-tune the same knob this often
         self.know = know
         self.persist = persist or (lambda: None)
         self.st = know.setdefault("approvals", {})
@@ -60,6 +62,7 @@ class ApprovalQueue:
         self.st.setdefault("denied_sources", [])
         self.st.setdefault("day", "")
         self.st.setdefault("day_count", 0)
+        self.st.setdefault("tuned", {})         # config-knob -> last-tuned ts (anti-oscillation)
         self.st.setdefault("last_sent_ts", 0)
         self.st.setdefault("last_digest_day", "")
 
@@ -74,6 +77,16 @@ class ApprovalQueue:
         return (self.st["day_count"] < self.max_per_day and
                 (time.time() - self.st.get("last_sent_ts", 0)) >= self.min_interval)
 
+    @staticmethod
+    def _knob(patches):
+        """The config key a patch tunes (for the anti-oscillation cooldown); None for code/source patches."""
+        for p in (patches or []):
+            if str(p.get("file", "")).endswith("config.yaml"):
+                fnd = str(p.get("find", ""))
+                if ":" in fnd:
+                    return fnd.split(":", 1)[0].strip()
+        return None
+
     def propose(self, kind: str, title: str, summary: str, patches=None, meta=None) -> str | None:
         """Queue a change for approval. kind in {code, config, source}. patches = [{file,find,replace}]
         for code/config; None for a new-source-needs-wiring note. Returns the id, or None if disabled,
@@ -83,6 +96,9 @@ class ApprovalQueue:
         h = _hash(kind, title, patches)
         if h in self.st["seen"] or h in self.st["denied"]:
             return None
+        knob = self._knob(patches)
+        if knob and (time.time() - self.st.get("tuned", {}).get(knob, 0)) < self.knob_cooldown:
+            return None                                  # just tuned this knob — don't thrash / re-ask it
         if not self._budget_ok():
             return None
         cid = f"A{self.st['next']:04d}"
@@ -91,7 +107,21 @@ class ApprovalQueue:
                 "patches": patches, "meta": meta or {}, "ts": iso(time.time())}
         self.st["seen"][h] = cid
         self.st["day_count"] += 1
-        self.st["last_sent_ts"] = time.time()           # pace the next card
+        self.st["last_sent_ts"] = time.time()
+        if knob:
+            self.st.setdefault("tuned", {})[knob] = time.time()
+        # AUTONOMOUS: just DO it and TEXT Brady — no ✅/❌ question. The money gate is still enforced by the
+        # apply Action (gate + locked rails + money-token guard); this only removes the human-approval step.
+        if self.autonomous and patches:
+            res = self._apply(item)
+            item["decision"] = "AUTO-APPLIED"
+            item["decided_ts"] = iso(time.time())
+            self.st["log"] = (self.st["log"] + [item])[-200:]
+            m = item.get("meta") or {}
+            notify.send(f"🔧 <b>I changed myself</b>\n\n{notify.esc(m.get('plain') or title)}\n\n"
+                        f"<b>Why:</b> {notify.esc(m.get('why') or summary)}\n<i>{notify.esc(str(res))}</i>")
+            self.persist()
+            return cid
         if notify.shared():
             # Nessobot (the existing content bot) owns the inbound loop. STAGE the patch to GitHub now,
             # then send the card WITH buttons via Nessobot's token — Nessobot relays the tap to the
