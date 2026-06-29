@@ -210,6 +210,7 @@ class StrategyBook:
                  "target": round(statistics.median([d["target"] for d in defs])),
                  "hold": max(1, round(statistics.median([d["hold"] for d in defs])))}
         if not rh_ok({"style": "momentum", "hold": blend["hold"]}):
+            self.core.know["champion_strategy"] = {"status": "blend rejected — not RH-executable"}
             return None
         for cat in cfg["catalysts"]:
             self.core.know["catalyst_rules"][cat] = {"stop_pct": blend["stop"], "target_pct": blend["target"],
