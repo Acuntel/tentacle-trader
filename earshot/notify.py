@@ -24,7 +24,7 @@ OFFSET_PATH = "state/evolution/tg_offset.json"
 
 
 def _token() -> str | None:
-    return os.getenv("TELEGRAM_BOT_TOKEN")
+    return os.getenv('TELEGRAM_BOT_TOKEN', '')
 
 
 def _chat() -> str | None:
