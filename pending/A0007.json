@@ -1,0 +1,11 @@
+{
+  "id": "A0007",
+  "title": "config: walk_forward_folds 4 \u2192 5",
+  "patches": [
+    {
+      "file": "config.yaml",
+      "find": "walk_forward_folds: 4",
+      "replace": "walk_forward_folds: 5"
+    }
+  ]
+}
