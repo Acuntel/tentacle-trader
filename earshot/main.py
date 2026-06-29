@@ -65,6 +65,7 @@ class Earshot:
         self.scout = SourceScout(self.learner.know, self.weights)
         self.daily = DailyGuard(cfg)
         self.exits = ExitEngine(cfg)
+        self.explore_cfg = cfg.get("exploration", {})          # WS1: off-book learning-trade flood
         self.base_min = cfg["conviction"]["min_score_to_trade"]
         self.buffer: list = []                                  # rolling signal memory
         self.window = int(cfg["sources"].get("signal_window_sec", 1800))
@@ -197,6 +198,15 @@ class Earshot:
         learned = self.learner.resolve_observations()
         if learned:
             print(f"  learned from {learned} matured observations (data, not just trades)")
+        # WS1: resolve OFF-BOOK learning trades (stop/target/time) — floods patterns/P(win)/weights,
+        # never touches mastery or the $500. Resolves every cycle (market open or closed, like exits).
+        if self.explore_cfg.get("enabled", True) and self.brain.explore:
+            exr = self.learner.resolve_learning(int(self.explore_cfg.get("max_open", 300)),
+                                                float(self.explore_cfg.get("credit_rate", 0.10)))
+            if exr["resolved"]:
+                hit = round(100 * exr["dir_hits"] / exr["resolved"])
+                print(f"  [explore] resolved {exr['resolved']} off-book learning trades "
+                      f"(dir-hit {hit}%, {exr['open']} still open)")
 
         # 3) DAILY CIRCUIT BREAKER — realized + unrealized mark-to-market
         capital = self.instinct.sizing_capital()
@@ -281,6 +291,26 @@ class Earshot:
                 print(f"\n  >> NO TRADE — {why}")
                 for tk, rsn in blocks[:5]:    # why the BEST candidates didn't fire (real per-name reasons)
                     print(f"       · {tk}: {rsn}")
+
+            # WS1 FLOOD: every QUALIFYING name (not just the one conviction pick) becomes an off-book
+            # long/short paper learning trade — ignoring the bar/families/regime/capital. Feeds the
+            # learners hundreds of forward labels/day; never touches mastery or the real $500.
+            if self.explore_cfg.get("enabled", True) and self.brain.explore:
+                picks = self.brain.learning_picks(
+                    cands, int(self.explore_cfg.get("top_k", 20)),
+                    float(self.explore_cfg.get("short_pwin", 0.45)),
+                    bool(self.explore_cfg.get("allow_short", True)))
+                notional = float(self.explore_cfg.get("notional_usd", 100))
+                opened = longs = shorts = 0
+                for c, d in picks:
+                    px = prices.last_price(c.ticker)          # entry price only — no executor side effects
+                    if px and self.learner.open_learning(c, px, d, notional):
+                        opened += 1
+                        longs += 1 if d > 0 else 0
+                        shorts += 1 if d < 0 else 0
+                if opened:
+                    print(f"  [explore] +{opened} off-book learning trades ({longs}L/{shorts}S) "
+                          f"-> feeds patterns/P(win)/weights, never touches mastery or $")
 
         # 6) scout + INTEGRITY AUDIT (recompute the score from the immutable ledger)
         rep = self.scout.report()

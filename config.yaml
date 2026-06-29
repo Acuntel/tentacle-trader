@@ -43,6 +43,21 @@ conviction:
     - {min: 70, frac: 0.45}
     - {min: 55, frac: 0.20}
 
+# ---- WS1 Shadow exploration: FLOOD the learners with forward samples (off-book) ----
+# In SHADOW only, every QUALIFYING name (not just the one conviction pick) becomes a paper "learning
+# trade" — long OR short by the model's own view — that resolves on stop/target/time and feeds
+# patterns / P(win) / source-weights. These NEVER touch real equity, the mastery ladder, or the money
+# gate. This is the #1 lever to take the learner from ~1 sample/day to hundreds: in shadow information
+# is free, so buy a lot of it. The mastery ladder still earns ONLY on conviction-grade trades.
+exploration:
+  enabled: true
+  top_k: 20              # learning trades opened per cycle (the most-UNCERTAIN qualifying names first)
+  notional_usd: 100      # paper size per learning trade — OFF the real $500 book (bookkeeping only)
+  allow_short: true      # take the SHORT side when the model's view is bearish — learn the down-tape too
+  short_pwin: 0.45       # P(win) below this (or analyst direction != up) -> short instead of long
+  credit_rate: 0.10      # source-weight learning rate for a learning trade (> obs 0.05, < real trade 0.15)
+  max_open: 300          # concurrent learning-position cap (uncapped vs the money book's 10)
+
 # Per-source trust (the learning loop tunes these within [0.1, 1.2])
 source_weights:
   edgar_8k: 1.00

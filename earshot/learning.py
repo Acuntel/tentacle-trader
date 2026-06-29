@@ -16,6 +16,8 @@ OUTCOMES_PATH = "state/outcomes.jsonl"
 KNOW_PATH = "state/knowledge.json"
 DUNGEON_PATH = "state/dungeon/post_mortems.jsonl"  # under state/ so one volume persists everything
 RESOLVED_OBS_PATH = "state/resolved_obs.jsonl"     # ledger of labeled setups -> warm-starts the P(win) model
+LEARN_OPEN_PATH = "state/learning_positions.json"  # WS1: off-book exploration trades (never touch mastery/$)
+LEARN_OUT_PATH = "state/learning_outcomes.jsonl"   # WS1: ledger of resolved learning trades
 WMIN, WMAX = 0.1, 1.2
 
 
@@ -32,6 +34,7 @@ class Learner:
     def __init__(self, weights: dict):
         self.weights = weights  # SHARED dict — updates here propagate to live tentacles
         self.open = _load(OPEN_PATH, [])
+        self.learn_open = _load(LEARN_OPEN_PATH, [])  # WS1: off-book learning trades (no mastery/equity)
         self.obs = _load(OBS_PATH, [])      # pending observations (learn-from-all-data)
         self.know = _load(KNOW_PATH, {"sources": {}, "catalysts": {}, "weights": {}})
         # restore LEARNED weights from the persistent ledger so progress survives redeploys
@@ -104,6 +107,72 @@ class Learner:
         _save(OPEN_PATH, self.open)
         self._persist_know()
         return resolved
+
+    # ---- WS1: OFF-BOOK learning trades — flood the learners with forward samples for free ----
+    def open_learning(self, c: Candidate, fill_price: float, direction: int, notional: float) -> bool:
+        """Open an off-book paper 'learning trade' (long or short) purely to harvest a labeled forward
+        outcome. Feeds patterns / P(win) / source-weights but NEVER touches real equity, the mastery
+        ladder, or the money gate. One per ticker at a time. In shadow, information is free."""
+        if any(p["ticker"] == c.ticker for p in self.learn_open):
+            return False
+        self.learn_open.append({
+            "ticker": c.ticker, "catalyst": c.catalyst.value, "dir": int(direction),
+            "entry_price": fill_price, "entry_ts": time.time(), "notional": notional,
+            "hold_days": c.hold_days, "target_pct": c.target_pct, "stop_pct": c.stop_pct,
+            "sources": sorted({s.source for s in c.signals}),
+            "pattern": getattr(c, "_signature", ""),
+            "lgate_features": getattr(c, "_lgate_features", None),
+            "pwin": getattr(c, "_pwin", None),
+        })
+        return True
+
+    def resolve_learning(self, max_open: int = 300, credit_rate: float = 0.10) -> dict:
+        """Resolve off-book learning trades on stop / target / time, directionally. The LEARNERS are
+        trained on the LONG-perspective label (would a long have beaten the market — independent of the
+        side we took), so the long-oriented P(win) model stays consistent; separately we track whether
+        the model's DIRECTIONAL call beat the market. instinct.record() is NEVER called (no mastery)."""
+        still = []
+        n_res = dir_hits = 0
+        for p in self.learn_open:
+            px = prices.last_price(p["ticker"])
+            if not px or not p.get("entry_price"):
+                still.append(p); continue
+            ret_raw = (px / p["entry_price"] - 1) * 100
+            d = int(p.get("dir", 1))
+            dir_ret = d * ret_raw                               # the chosen side's P&L return
+            age_days = (time.time() - p["entry_ts"]) / 86400
+            if dir_ret <= -p.get("stop_pct", 8):
+                reason = "stop"
+            elif dir_ret >= p.get("target_pct", 12):
+                reason = "target"
+            elif age_days >= p.get("hold_days", 5):
+                reason = "time"
+            else:
+                still.append(p); continue
+            mkt = prices.market_return_since(p["entry_ts"])
+            stock_alpha = round(ret_raw - mkt, 3) if mkt is not None else round(ret_raw, 3)
+            long_win = stock_alpha > 0                          # LONG-perspective label (trains the model)
+            dir_alpha = round(d * stock_alpha, 3)                # did OUR side beat the market?
+            self.patterns.record(p.get("pattern", ""), long_win, stock_alpha)
+            self._credit_sources(p["sources"], long_win, stock_alpha, rate=credit_rate)
+            if self.lgate is not None and p.get("lgate_features"):
+                self.lgate.update(p["lgate_features"], long_win)
+            ex = self.know.setdefault("explore", {"trades": 0, "dir_hits": 0, "sum_alpha": 0.0})
+            ex["trades"] += 1
+            ex["dir_hits"] += 1 if dir_alpha > 0 else 0
+            ex["sum_alpha"] = round(ex["sum_alpha"] + dir_alpha, 3)
+            _append(LEARN_OUT_PATH, {"ts": iso(time.time()), "ticker": p["ticker"], "dir": d,
+                                     "exit": reason, "ret": round(dir_ret, 3), "alpha": dir_alpha,
+                                     "long_win": long_win, "sig": p.get("pattern", "")})
+            n_res += 1
+            dir_hits += 1 if dir_alpha > 0 else 0
+        if len(still) > max_open:                               # enforce concurrency cap, keep the newest
+            still = still[-max_open:]
+        self.learn_open = still
+        _save(LEARN_OPEN_PATH, self.learn_open)
+        if n_res:
+            self._persist_know()
+        return {"resolved": n_res, "dir_hits": dir_hits, "open": len(self.learn_open)}
 
     def _credit_sources(self, sources, win: bool, ret: float, rate: float = 0.15):
         """Nudge each source's weight toward its proven precision (on ALPHA). Shared by trades AND

@@ -202,6 +202,7 @@ class Brain:
             cand._tech_veto = tech_veto
             cand._options_confirm = opt_confirm
             cand._features = feats                          # fundamentals features for the learned model
+            cand._qualified = qualifies                     # WS1: cleared sources+families -> has a price + features
 
             # ANALYST BRAIN — reason over a real dossier (independence + judge + learned P(win)),
             # not source-counting. Runs only on already-qualifying names (cheap, LLM-gated).
@@ -264,6 +265,33 @@ class Brain:
         else:
             out.sort(key=lambda c: c.confidence, reverse=True)
         return out
+
+    def learning_picks(self, cands: list[Candidate], k: int, short_pwin: float,
+                       allow_short: bool) -> list[tuple[Candidate, int]]:
+        """WS1 (shadow only): pick the most-UNCERTAIN qualifying names to open as off-book learning
+        trades — ignoring the conviction bar, min-families, regime, and capital. Each is the maximally
+        informative label to gather. Still respects the HARD data-backed vetoes (don't pour samples into
+        known-broken setups). Direction follows the model's own view. Returns [(candidate, direction)]."""
+        if not self.explore:
+            return []
+        elig = []
+        for c in cands:
+            if not getattr(c, "_qualified", False) or getattr(c, "_lgate_features", None) is None:
+                continue
+            sig = getattr(c, "_signature", "")
+            if self.patterns is not None and (self.patterns.is_loser(sig) or self.patterns.is_decayed(sig)):
+                continue
+            elig.append(c)
+        # most informative first: uncertainty closest to a coin-flip teaches the most
+        elig.sort(key=lambda c: getattr(c, "_uncertainty", 0.5), reverse=True)
+        picks = []
+        for c in elig[:max(0, k)]:
+            pw = getattr(c, "_pwin", None)
+            verdict = getattr(c, "_verdict", None)
+            bearish = (pw is not None and pw < short_pwin) or (
+                verdict is not None and verdict.get("direction") != "up")
+            picks.append((c, -1 if (allow_short and bearish) else 1))
+        return picks
 
     def passes_gate(self, c: Candidate) -> tuple[bool, str]:
         # ---- HARD safety: enforced ALWAYS, even in shadow exploration ----
