@@ -13,6 +13,7 @@ stays gated on forward, real-time shadow results.
 from __future__ import annotations
 
 import json
+import math
 import os
 import random
 import time
@@ -36,12 +37,26 @@ class SimEngine:
         self.target = float(s.get("target_pct", 12.0))
         self.risk = float(s.get("sim_risk_frac", 0.10))         # notional risked per episode (for the curve)
         self.workers = max(1, int(s.get("parallel_workers", 1)))  # concurrent bar-cache pre-warm
+        # WS4: the sim curve must stay HONEST — window it so it reflects RECENT replay performance, never a
+        # fantasy lifetime compound; and once frozen-history replay is saturated, throttle it (marginal info
+        # ~ 0) and let the FORWARD learning trades (WS1) be the real signal.
+        self.reset_eps = int(s.get("equity_reset_episodes", 5000))  # snapshot + reset the curve every N episodes
+        self.cap_x = float(s.get("equity_cap_x", 1000.0))           # hard cap = start * this (overfit backstop)
+        self.sat_eps = int(s.get("saturation_episodes", 200000))    # beyond this, replaying the decade adds ~nothing
+        self.sat_per_cycle = int(s.get("saturated_per_cycle", 10))  # so throttle replays + reclaim the compute
         self.learner = learner
         start = float(cfg["survival"]["starting_capital"])
         self.state = _load(SIM_PATH, {
             "episodes": 0, "wins": 0, "sum_ret": 0.0,
             "sim_equity": start, "peak": start, "start": start, "last_ts": 0,
+            "windows": [], "eps_since_reset": 0,
         })
+        # heal a runaway sim-equity from before the cap existed (the $1e60 artifact = overfit symptom, not progress)
+        se = self.state.get("sim_equity", start)
+        if not (isinstance(se, (int, float)) and math.isfinite(se)) or se > start * self.cap_x or se <= 0:
+            self.state["sim_equity"] = start
+            self.state["peak"] = start
+            self.state["eps_since_reset"] = 0
 
     # ---- one historical episode: find an up-catalyst, hold it, score the drift ----
     def _episode(self, tickers: list[str]) -> dict | None:
@@ -102,9 +117,14 @@ class SimEngine:
             sample = [_r.choice(tickers) for _ in range(min(self.workers * 4, len(tickers)))]
             with ThreadPoolExecutor(max_workers=self.workers) as ex:
                 list(ex.map(history.load, sample))
+        start = self.state["start"]
+        # WS4: once the decade is saturated, only trickle replays — frozen history can't teach more, and
+        # the freed compute is better spent on WS1's forward learning trades.
+        saturated = self.state["episodes"] >= self.sat_eps
+        target_ran = self.sat_per_cycle if saturated else self.per_cycle
         ran = 0
-        for _ in range(self.per_cycle * 3):                     # extra tries since most days aren't events
-            if ran >= self.per_cycle:
+        for _ in range(target_ran * 3):                         # extra tries since most days aren't events
+            if ran >= target_ran:
                 break
             ep = self._episode(tickers)
             if not ep:
@@ -115,6 +135,17 @@ class SimEngine:
             self.state["wins"] += 1 if ep["win"] else 0
             self.state["sum_ret"] += ep["ret"]                              # raw, for the visible equity curve
             self.state["sim_equity"] *= (1 + self.risk * ep["ret"] / 100)
+            self.state["eps_since_reset"] = self.state.get("eps_since_reset", 0) + 1
+            # window the curve: snapshot the window's growth, then reset to start so it can't fantasy-compound
+            if (self.state["eps_since_reset"] >= self.reset_eps
+                    or self.state["sim_equity"] > start * self.cap_x
+                    or self.state["sim_equity"] <= start * 0.01):
+                self.state.setdefault("windows", []).append(
+                    round((self.state["sim_equity"] / start - 1) * 100, 1))
+                self.state["windows"] = self.state["windows"][-50:]
+                self.state["sim_equity"] = start
+                self.state["peak"] = start
+                self.state["eps_since_reset"] = 0
             self.state["peak"] = max(self.state["peak"], self.state["sim_equity"])
         if ran:
             self.state["last_ts"] = time.time()
@@ -126,9 +157,12 @@ class SimEngine:
         n = self.state["episodes"]
         wr = round(self.state["wins"] / n, 3) if n else 0.0
         avg = round(self.state["sum_ret"] / n, 3) if n else 0.0
+        wins_list = self.state.get("windows", [])
         return {"episodes": n, "win_rate": wr, "avg_ret": avg,
                 "sim_equity": round(self.state["sim_equity"], 2),
-                "grown_pct": round((self.state["sim_equity"] / self.state["start"] - 1) * 100, 1)}
+                "grown_pct": round((self.state["sim_equity"] / self.state["start"] - 1) * 100, 1),
+                "window_avg_pct": round(sum(wins_list) / len(wins_list), 1) if wins_list else 0.0,
+                "windows": len(wins_list)}
 
     def findings(self, top: int = 6) -> dict:
         """Best/worst historical momentum setups the sims have learned — fed to the night coach so

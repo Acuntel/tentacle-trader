@@ -225,6 +225,12 @@ sim:
   target_pct: 12.0
   sim_risk_frac: 0.10          # notional risked per episode (drives the visible sim-equity curve)
   parallel_workers: 4          # concurrent bar-cache pre-warm per sim batch (faster replays; 1 = serial)
+  # WS4: keep the sim curve HONEST — window it so it can't fantasy-compound to $1e60 (an unbounded
+  # compounder is an overfit symptom, not progress), and throttle replays once the decade is saturated.
+  equity_reset_episodes: 5000  # snapshot the window's growth + reset the sim curve to start every N episodes
+  equity_cap_x: 1000.0         # hard backstop: cap the sim curve at start x this (also reset on hit)
+  saturation_episodes: 200000  # beyond this, replaying the frozen decade adds ~no info -> throttle replays
+  saturated_per_cycle: 10      # ...down to this trickle, freeing compute for WS1's FORWARD learning trades
 
 # ---- Progressive learning: label every setup at MULTIPLE horizons so learning accrues in HOURS ----
 learning:
@@ -287,6 +293,8 @@ forge:
   explore_frac: 0.1           # 10% fresh random explorers each generation (escape local optima)
   plateau_ticks: 6            # ticks with no improvement before asking the LLM (rare oracle) for a direction
   min_alpha_gain: 0.2         # loosened (was 0.3): pursue more meaningful changes from the free search
+  forward_frac: 0.2           # WS4: hold out the most-recent 20% of setups as a truly out-of-time FORWARD
+                              #       test; the champion only earns LIVE influence if it beats it too
 
 # ---- Semantic memory: recall outcomes of SIMILAR past setups (k-NN over bge-m3); bounded advisory nudge ----
 memory:

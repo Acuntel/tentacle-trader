@@ -57,12 +57,17 @@ def _load_obs(limit: int = 4000):
     return rows[-limit:]
 
 
-def champion_pwin(know, feats, min_edge: float = 0.3):
+def champion_pwin(know, feats, min_edge: float = 0.3, min_fwd: float = 0.0):
     """Score a setup by the Forge's CHAMPION policy → a 0-1 signal the live gate can blend in, but ONLY
-    once the free search has PROVEN an out-of-sample edge (champion.edge >= min_edge). Else None (no
-    influence). This is how free deterministic search shapes live decisions — guarded + bounded."""
+    once the free search has PROVEN an edge that survives BOTH the walk-forward folds (champion.edge >=
+    min_edge) AND a truly out-of-time FORWARD holdout (champion.forward_edge >= min_fwd). Until the
+    forward holdout exists and is positive it returns None — historical search PROPOSES, forward data
+    DISPOSES. This is how free deterministic search shapes live decisions — guarded + bounded."""
     ch = (know.get("forge") or {}).get("champion")
     if not ch or float(ch.get("edge", 0) or 0) < min_edge:
+        return None
+    fe = ch.get("forward_edge")
+    if fe is None or float(fe) < min_fwd:              # must also survive the most-recent forward slice
         return None
     w, fn = ch.get("w") or [], ch.get("feats") or []
     if len(w) != len(fn) or not fn:
@@ -146,6 +151,16 @@ class Forge:
             vecs = [[float(feat.get(k, 0) or 0) for k in feats] for feat, _ in rows]
             rets = [r for _, r in rows]
             nf = len(feats)
+            # WS4 FORWARD HOLDOUT: fit + select on the OLDER portion; hold out the most-recent slice as a
+            # truly out-of-time test. The champion only earns LIVE influence (champion_pwin) if it ALSO
+            # beats accept-all on this forward holdout — historical search proposes, forward data disposes.
+            n = len(rows)
+            fwd_frac = float(self.cfg.get("forge", {}).get("forward_frac", 0.2))
+            cut = max(40, int(n * (1.0 - fwd_frac)))
+            if n - cut < 15:                                    # not enough forward data yet -> no holdout
+                cut = n
+            train_vecs, train_rets = vecs[:cut], rets[:cut]
+            hold_vecs, hold_rets = vecs[cut:], rets[cut:]
             # seed: the saved champion (continuity) + fresh randoms (the free swarm)
             pop = []
             champ = self.fg.get("champion")
@@ -158,7 +173,7 @@ class Forge:
                 scored = []
                 for g in pop:
                     experiments += 1
-                    s = _score_policy(g["w"], g["keep"], vecs, rets)
+                    s = _score_policy(g["w"], g["keep"], train_vecs, train_rets)
                     if s is not None:
                         scored.append((s, g))
                 if not scored:
@@ -183,9 +198,18 @@ class Forge:
                                    "alpha": round(best_s, 4), "feats": feats,
                                    "top": [f"{k}:{v:+.2f}" for k, v in top], "ts": iso(time.time())}
             self.fg["hist"] = (self.fg["hist"] + [round(best_s, 4)])[-50:]
-            baseline = sum(rets) / len(rets)                    # accept-everything = the "do nothing" bar
+            baseline = sum(train_rets) / len(train_rets)        # accept-everything = the "do nothing" bar
             edge = best_s - baseline
-            self.fg["champion"]["edge"] = round(edge, 4)        # how much the live gate may trust this policy
+            self.fg["champion"]["edge"] = round(edge, 4)        # walk-forward edge over accept-all (train)
+            # FORWARD HOLDOUT edge: apply the champion to the held-out most-recent setups (out-of-time)
+            fwd_edge = None
+            if hold_rets:
+                hscores = [sum(w * v for w, v in zip(best_g["w"], vec)) for vec in hold_vecs]
+                hcut = _percentile(sorted(hscores), 1.0 - best_g["keep"])
+                acc = [hold_rets[k] for k in range(len(hold_rets)) if hscores[k] >= hcut]
+                if len(acc) >= 5:
+                    fwd_edge = round(sum(acc) / len(acc) - sum(hold_rets) / len(hold_rets), 4)
+            self.fg["champion"]["forward_edge"] = fwd_edge      # None until enough forward data; gates live use
             escalated = False
             if (edge >= self.min_gain and improved) or self.fg["flat"] >= self.plateau_ticks:
                 escalated = self._escalate(self.fg["champion"], edge)
@@ -193,7 +217,7 @@ class Forge:
             self.persist()
             return {"generation": self.fg["generation"], "experiments": experiments, "viable": len(scored),
                     "setups": len(rows), "champion_alpha": round(best_s, 3), "vs_baseline": round(edge, 3),
-                    "top_features": self.fg["champion"]["top"], "escalated": escalated}
+                    "forward_edge": fwd_edge, "top_features": self.fg["champion"]["top"], "escalated": escalated}
         except Exception as e:
             return {"error": str(e)[:140]}
 
