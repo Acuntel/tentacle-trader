@@ -76,8 +76,8 @@ def atr(d, n=14):
 
 def _ema(xs, n):
     k = 2 / (n + 1)
-    e = xs[0]
-    for x in xs[1:]:
+    e = sum(xs[:n]) / n
+    for x in xs[n:]:
         e = x * k + e * (1 - k)
     return e
 
