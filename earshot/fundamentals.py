@@ -96,7 +96,7 @@ def entry_read(ticker: str, cfg: dict) -> tuple[float, list[str]]:
     if not r:
         return 1.0, []
     notes = []
-    if r["short_pct_float"]:
+    if r["short_pct_float"] is not None:
         notes.append(f"short {r['short_pct_float']*100:.0f}% float / {r['days_to_cover']}d cover")
     if r["float_shares"]:
         notes.append(f"float {r['float_shares']/1e6:.0f}M")
