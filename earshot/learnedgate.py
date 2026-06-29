@@ -99,6 +99,8 @@ class LearnedGate:
         # Only apply adjustments when model is trusted; otherwise return unadjusted base
         if not self.ready() or self.trust() < 0.3:
             return base
+        # Clamp adjustment to prevent pathological suppression of valid signals
+        adj = max(0.5, min(1.5, adj))
         return max(0.0, min(1.0, base * adj))
 
     def update(self, feats: dict, win: bool):
