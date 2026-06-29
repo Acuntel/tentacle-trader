@@ -31,7 +31,7 @@ conviction:
   min_score_to_trade: 60        # below this -> shadow-log only, no trade
   min_independent_sources: 2    # >= 2 independent sources must confirm the SAME catalyst
   min_families: 2               # >= 2 DIFFERENT signal families (filing+surprise+flow...), not 2 of the same
-  min_pwin: 0.45                # once the learned model has >=30 samples, require P(win) above this to fire
+  min_pwin: 0.40                # once the learned model has >=30 samples, require P(win) above this to fire
   shadow_explore: true          # in shadow, take every setup that clears HARD safety (bypass soft/heuristic
                                 # vetoes) so the learner gets real out-of-sample data. Set false to mirror live.
   regime_downtrend_premium: 15  # in LIVE, a downtrend tape doesn't bench longs — it raises the score bar by this
