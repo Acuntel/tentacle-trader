@@ -19,7 +19,8 @@ FEATURES = ["independence", "news_events", "opt_bias", "tech_bias", "squeeze", "
 
 
 class LearnedGate:
-    def __init__(self, know: dict, lr: float = 0.05, key: str = "model"):
+    def __init__(self, know: dict, lr: float = 0.05, key: str = "model",
+                 warm: int = 300, lr_floor_ratio: float = 0.4):
         self.know = know
         self.key = key                                 # persist under this knowledge.json key
         m = know.get(key, {})
@@ -28,6 +29,14 @@ class LearnedGate:
         self.n = int(m.get("n", 0))
         self.brier = float(m.get("brier", 0.25))      # running calibration quality (lower = better)
         self.lr = lr
+        # WS3 adaptive learning rate: large while the model is IGNORANT (few samples), annealing to a
+        # FLOOR as n grows so a flood of WS1 samples can't thrash it — but never to zero, so it keeps
+        # tracking a non-stationary market. lr_eff = lr * max(floor_ratio, warm/(warm+n)).
+        self.warm = max(1, int(warm))
+        self.lr_floor_ratio = float(lr_floor_ratio)
+
+    def _lr_eff(self) -> float:
+        return self.lr * max(self.lr_floor_ratio, self.warm / (self.warm + self.n))
 
     @staticmethod
     def featurize(dossier: dict, verdict: dict) -> dict:
@@ -95,9 +104,10 @@ class LearnedGate:
     def update(self, feats: dict, win: bool):
         pred = self.predict(feats)
         err = (1.0 if win else 0.0) - pred
+        lr = self._lr_eff()                            # WS3: fast when ignorant, settles under the flood
         for k, v in feats.items():
-            self.w[k] = self.w.get(k, 0.0) + self.lr * err * v
-        self.b += self.lr * err
+            self.w[k] = self.w.get(k, 0.0) + lr * err * v
+        self.b += lr * err
         self.n += 1
         self.brier = 0.99 * self.brier + 0.01 * (pred - (1.0 if win else 0.0)) ** 2   # EMA Brier
         self.know[self.key] = {"w": self.w, "b": round(self.b, 4), "n": self.n,

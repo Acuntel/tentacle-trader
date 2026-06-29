@@ -190,7 +190,10 @@ class Learner:
             precision = st["wins"] / st["trades"]
             base = self.weights.get(src, 0.5)
             target = base * (0.6 + precision)        # precision 0->0.6x, 0.5->1.1x, 1.0->1.6x
-            w = (1 - rate) * base + rate * target
+            # WS3 adaptive rate: a source with FEW resolved outcomes earns/loses trust faster (we're
+            # ignorant of it), settling to the base rate once it has a real track record (>=40).
+            eff_rate = rate if st["trades"] >= 40 else min(0.4, rate * (1.0 + (40 - st["trades"]) / 40.0))
+            w = (1 - eff_rate) * base + eff_rate * target
             if len(st["recent"]) >= 10:              # DRIFT: recent edge collapsed (regime shift) -> cut fast
                 recent_p = sum(st["recent"]) / len(st["recent"])
                 if recent_p < precision - 0.2:

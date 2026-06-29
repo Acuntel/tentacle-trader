@@ -284,13 +284,22 @@ class Brain:
             elig.append(c)
         # most informative first: uncertainty closest to a coin-flip teaches the most
         elig.sort(key=lambda c: getattr(c, "_uncertainty", 0.5), reverse=True)
-        picks = []
-        for c in elig[:max(0, k)]:
+        # WS2 DIVERSITY: cap picks per catalyst so the budget spreads across setup types — every pattern
+        # reaches statistical significance, instead of 20 samples of the loudest catalyst.
+        max_per_cat = int(self.cfg.get("exploration", {}).get("max_per_catalyst", 4))
+        picks, per_cat = [], {}
+        for c in elig:
+            if len(picks) >= max(0, k):
+                break
+            cat = c.catalyst.value
+            if per_cat.get(cat, 0) >= max_per_cat:
+                continue
             pw = getattr(c, "_pwin", None)
             verdict = getattr(c, "_verdict", None)
             bearish = (pw is not None and pw < short_pwin) or (
                 verdict is not None and verdict.get("direction") != "up")
             picks.append((c, -1 if (allow_short and bearish) else 1))
+            per_cat[cat] = per_cat.get(cat, 0) + 1
         return picks
 
     def passes_gate(self, c: Candidate) -> tuple[bool, str]:

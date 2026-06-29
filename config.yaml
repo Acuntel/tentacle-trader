@@ -57,6 +57,7 @@ exploration:
   short_pwin: 0.45       # P(win) below this (or analyst direction != up) -> short instead of long
   credit_rate: 0.10      # source-weight learning rate for a learning trade (> obs 0.05, < real trade 0.15)
   max_open: 300          # concurrent learning-position cap (uncapped vs the money book's 10)
+  max_per_catalyst: 4    # WS2 diversity: cap learning trades per catalyst so the budget spreads across types
 
 # Per-source trust (the learning loop tunes these within [0.1, 1.2])
 source_weights:
