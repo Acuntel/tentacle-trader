@@ -125,10 +125,12 @@ class Coach:
         # and back the brain up daily so an update can never lose progress.
         day = time.strftime("%Y-%m-%d")
         sr = self.sim.report()
+        lg = getattr(self.learner, "lgate", None)                       # WS6: track learning velocity over days
         self.core.record_day(day, {
             "mastery": self.instinct.mastery(), "sim_son": sr["sim_equity"], "sim_win": sr["win_rate"],
             "n_patterns": len(self.know["patterns"]), "edge": bench.get("edge_per_trade_pct", 0),
             "calib": cal.get("factor", 1.0), "n_outcomes": cal.get("n", 0),
+            "samples": int(getattr(lg, "n", 0)), "brier": round(float(getattr(lg, "brier", 0.25)), 4),
             "growth": self.instinct.growth_progress()})
         if day != self.last_backup_day:
             persist.backup("state/knowledge.json", day)
@@ -233,15 +235,27 @@ class Coach:
             bar = self.proposer.min_impact if self.proposer else 60
             passed = [p for p in unsent if p.get("impact", 0) >= bar]
             eq = stt.get("paper_equity"); mret = stt.get("monthly_return")
+            vel = self.core.velocity(self.learner.lgate) if getattr(self.learner, "lgate", None) else {}
+            spd = vel.get("samples_per_day")
+            b7 = vel.get("brier_7d")
+            btrend = ("improving" if vel.get("learning") else
+                      "FLAT — no edge yet" if vel.get("no_edge") else "settling")
             self.approvals.daily_digest(
                 "Still in practice mode — no real money. Daily heartbeat:\n"
                 f"• Son's shadow equity: ${eq} (started $500)" + (f", ~{mret:+.1f}%/mo\n" if isinstance(mret, (int, float)) else "\n") +
                 f"• Mastery: {stt.get('mastery', rep['mastery'])}/{stt.get('needs_mastery', '?')} to unlock the next rung "
                 f"({stt.get('samples', '?')} resolved trades)\n"
+                f"• Learning velocity: {vel.get('n', '?')} P(win) samples"
+                f"{f' (+{spd}/day)' if spd is not None else ''}, calibration Brier {vel.get('brier', '?')} "
+                f"({btrend}{f', 7d {b7:+.3f}' if b7 is not None else ''}); "
+                f"{vel.get('explore_trades', 0)} practice trades, dir-hit "
+                f"{round(100*vel['dir_hit']) if vel.get('dir_hit') is not None else '?'}%.\n"
                 f"• Today I retuned {syn['weights_moved']} source trust-levels and wrote {len(lessons)} new lesson(s).\n"
                 f"• Self-improvement ideas: considered {len(pool)}, {len(passed)} clear my confidence bar, "
                 f"{len(unsent)} waiting for your ✅/❌.\n"
-                f"• Honest edge check: {honesty.get('status', 'still gathering data')[:130]}")
+                + ("• ⚠️ HONEST: thousands of samples in and calibration still isn't improving — I have found "
+                   "NO real edge in this configuration yet.\n" if vel.get("no_edge") else "")
+                + f"• Honest edge check: {honesty.get('status', 'still gathering data')[:130]}")
         return {"syn": syn, "rules": rules, "studies": studies, "calib": cal, "redteam": rt,
                 "benchmark": bench, "lessons": lessons, "code_proposals": code_props,
                 "new_sources": new_sources, "by": "groq+brain" if v else "brain"}

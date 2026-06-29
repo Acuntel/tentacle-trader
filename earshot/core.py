@@ -123,6 +123,38 @@ class BrainCore:
                 "edge_dod": dd("edge"), "patterns_7d": d7("n_patterns"),
                 "improving": (d7("mastery") + d7("edge") + d7("sim_son")) > 0}
 
+    # ---- WS6: LEARNING VELOCITY — measure the RATE of real learning, not just activity ----
+    def velocity(self, lgate) -> dict:
+        """Is it actually learning, and how fast? Tracks the things that move only on REAL signal:
+        samples/day, the Brier-score trend (calibration improving = genuine learning; flat after
+        thousands of samples = no edge), and the off-book learning trades' directional hit-rate + alpha.
+        If lots of data has accrued and Brier still hasn't improved, it says NO EDGE DETECTED — honestly."""
+        vcfg = self.cfg.get("velocity", {})
+        ex = self.know.get("explore", {})
+        n = int(getattr(lgate, "n", 0))
+        brier = round(float(getattr(lgate, "brier", 0.25)), 4)
+        trust = round(float(lgate.trust()), 3) if hasattr(lgate, "trust") else 0.0
+        trades = int(ex.get("trades", 0))
+        dir_hit = round(ex.get("dir_hits", 0) / trades, 3) if trades else None
+        avg_alpha = round(ex.get("sum_alpha", 0.0) / trades, 3) if trades else None
+        hist = self.know["growth"].get("history", [])
+        smp = [h for h in hist if "samples" in h]
+        bri = [h for h in hist if "brier" in h]
+        samples_per_day = max(0, int(smp[-1]["samples"] - smp[-2]["samples"])) if len(smp) >= 2 else None
+        brier_7d = None
+        if len(bri) >= 2:
+            ref = bri[-8] if len(bri) >= 8 else bri[0]
+            brier_7d = round(bri[-1]["brier"] - ref["brier"], 4)        # negative = calibration improving
+        eps = float(vcfg.get("improving_eps", 0.002))
+        learning = brier_7d is not None and brier_7d <= -eps
+        no_edge = (n >= int(vcfg.get("no_edge_min_samples", 1500))
+                   and brier >= float(vcfg.get("no_edge_brier", 0.245))
+                   and (brier_7d is None or brier_7d > -eps))
+        return {"n": n, "brier": brier, "trust": trust, "brier_7d": brier_7d,
+                "samples_per_day": samples_per_day, "explore_trades": trades,
+                "dir_hit": dir_hit, "avg_explore_alpha": avg_alpha,
+                "learning": learning, "no_edge": no_edge}
+
     # ---- newly-wired data streams: signal flow, regime over time, feature history ----
     def record_stream(self, day: str, active_sources: list, n_signals: int, top_tickers: list):
         """The live signal stream stored over time -> source co-occurrence + novelty (which tickers

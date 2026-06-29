@@ -149,6 +149,21 @@ class Earshot:
         print(f"brain: {self.analyst.brain_name()}"
               f"  |  learned P(win) model: {self.lgate.n} samples"
               f"{' (gating)' if self.lgate.ready() else ' (advisory until 30)'}")
+        # WS6 LEARNING VELOCITY — the headline metric: is it actually learning, and how fast?
+        vel = self.core.velocity(self.lgate)
+        b7 = vel["brier_7d"]
+        btrend = (f"7d {b7:+.3f} improving" if vel["learning"] else
+                  f"7d {b7:+.3f} FLAT" if (b7 is not None and vel["no_edge"]) else
+                  f"7d {b7:+.3f}" if b7 is not None else "building trend")
+        ex = (f"explore {vel['explore_trades']} trades, dir-hit "
+              f"{round(100*vel['dir_hit'])}%, alpha {vel['avg_explore_alpha']:+.2f}%"
+              if vel["dir_hit"] is not None else "explore: warming up")
+        spd = f"+{vel['samples_per_day']}/day" if vel["samples_per_day"] is not None else "samples/day building"
+        print(f"learning velocity: P(win) n={vel['n']} brier {vel['brier']} [{btrend}] trust {vel['trust']}  |  "
+              f"{ex}  |  {spd}")
+        if vel["no_edge"]:
+            print("  ⚠ HONEST: thousands of samples in, calibration still flat — NO EDGE DETECTED "
+                  "in this configuration (faster learning has bought a fast, confident 'no').")
         print("-" * 74)
 
         # 0) HUMAN-IN-THE-LOOP — handle any Telegram approve/deny taps (approved patches -> apply Action)

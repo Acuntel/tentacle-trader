@@ -231,6 +231,12 @@ learning:
   horizons_hours: [1, 24, 120]      # resolve each observation at 1h / 1d / 5d (short = fast, long = real)
   horizon_credit: [0.03, 0.05, 0.08]  # credit rate per horizon (short = noisier = lighter); < a real trade's 0.15
 
+# ---- WS6 Learning velocity: make "is it actually learning?" the headline metric, measured honestly ----
+velocity:
+  improving_eps: 0.002        # a 7-day Brier drop >= this counts as genuine calibration improvement
+  no_edge_min_samples: 1500   # only call "no edge" once this many P(win) samples have accrued
+  no_edge_brier: 0.245        # ...AND Brier is still at/above the ~no-skill baseline (0.25) and not improving
+
 # ---- Walk-forward validation: the overfit killer (replaces a single train/test split) ----
 validation:
   walk_forward_folds: 5        # bucket events into K time-ordered folds; a survivor must hold across them
