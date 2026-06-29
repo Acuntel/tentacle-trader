@@ -68,7 +68,7 @@ def optimize_rules(core, cfg, sample: int = 300) -> dict:
                             "n": len(rets)}
     # apply the decade-optimized rule as the learned baseline across catalysts (free data can't label
     # catalysts historically, so this is the honest best: rules proven on a decade of real up-moves).
-    for cat in cfg["catalysts"]:
+    for cat in cfg.get("catalysts", {}):
         core.know["catalyst_rules"][cat] = {"stop_pct": best["stop_pct"],
                                             "target_pct": best["target_pct"], "hold_days": best["hold_days"]}
     return best
