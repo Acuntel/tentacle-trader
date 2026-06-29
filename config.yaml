@@ -218,7 +218,7 @@ learning:
 
 # ---- Walk-forward validation: the overfit killer (replaces a single train/test split) ----
 validation:
-  walk_forward_folds: 4        # bucket events into K time-ordered folds; a survivor must hold across them
+  walk_forward_folds: 5        # bucket events into K time-ordered folds; a survivor must hold across them
   min_fold_winrate: 0.5        # must be positive-expectancy in a MAJORITY of folds, not one lucky stretch
   regime_stratify: true        # AND positive across uptrend + downtrend regimes (no bull-only edge)
 
