@@ -113,7 +113,7 @@ catalysts:
 
 # ---- Hard risk law (enforced OUTSIDE the model — the bot cannot reason past these) ----
 risk:
-  max_open_positions: 10        # 4->10: more concurrent shadow positions -> more resolved outcomes/week -> mastery climbs faster
+  max_open_positions: 6        # 4->10: more concurrent shadow positions -> more resolved outcomes/week -> mastery climbs faster
   daily_loss_pct: 0.10          # >>> lose 10% of capital in a day -> HARD STOP for the whole day + deep reflection
   caution_step: 5               # after a -10% day, the conviction bar rises this much per breach
   caution_max: 6                # max caution ratchet (so bar can climb to +30)
