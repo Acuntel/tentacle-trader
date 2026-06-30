@@ -92,15 +92,18 @@ class LearnedGate:
         # Forge-found edge (v3): f_profit_margin (negative), quality (negative), is_price (negative),
         # is_flow (negative). Apply conservative multiplicative adjustments per Free Forge search.
         adj = 1.0
+        # Forge-found edge (v3): f_profit_margin (negative), quality (negative), is_price (negative),
+        # is_flow (negative). Apply conservative multiplicative adjustments per Free Forge search.
+        # Only apply adjustments when model is trusted; otherwise return unadjusted base.
+        if not self.ready() or self.trust() < 0.3:
+            return base
+        adj = 1.0
         adj *= 1.0 - 0.02 * max(0, feats.get("f_profit_margin", 0))       # penalize high profit margin
         adj *= 1.0 - 0.02 * max(0, feats.get("quality", 0))               # penalize high quality signal
         adj *= 1.0 - 0.02 * (1.0 if feats.get("is_price", 0) > 0.5 else 0.0)  # penalize price-only
         adj *= 1.0 - 0.02 * (1.0 if feats.get("is_flow", 0) > 0.5 else 0.0)   # penalize flow-only
-        # Only apply adjustments when model is trusted; otherwise return unadjusted base
-        if not self.ready() or self.trust() < 0.3:
-            return base
         # Clamp adjustment to prevent pathological suppression of valid signals
-        adj = max(0.5, min(1.5, adj))
+        adj = max(0.85, min(1.0, adj))
         return max(0.0, min(1.0, base * adj))
 
     def update(self, feats: dict, win: bool):
