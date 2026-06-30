@@ -28,7 +28,9 @@ survival:
 
 # ---- The firing gate ----
 conviction:
-  min_score_to_trade: 60        # below this -> shadow-log only, no trade
+  min_score_to_trade: 25        # LOWERED 2026-06-30 so it ACTUALLY trades the top qualifying setups each
+                                # session (top candidates score ~25-45; old bar 60 fired ~never). Shadow only;
+                                # real money still hard-gated. Raise back toward 55-60 to be selective again.
   min_independent_sources: 2    # >= 2 independent sources must confirm the SAME catalyst
   min_families: 2               # >= 2 DIFFERENT signal families (filing+surprise+flow...), not 2 of the same
   min_pwin: 0.40                # once the learned model has >=30 samples, require P(win) above this to fire
@@ -338,8 +340,8 @@ telegram:
                                #        getUpdates loop; two pollers 409-conflict). Sets TELEGRAM_SHARED_BOT.
                                #        FALSE = Tentacle owns a dedicated bot and polls for ✅/❌ taps itself.
   daily_digest: true           # once/day summary of the AUTO-applied tuning (weights/lessons) — no approval
-  max_proposals_per_day: 0     # ⏸ FROZEN 2026-06-29 for the 2-week clean-read test: NO self-config/code changes
-                               #    (learning + daily heartbeat stay ON). Restore to 20 to resume self-modification.
+  max_proposals_per_day: 20    # AUTONOMOUS self-changes back ON 2026-06-30 (Brady: keep the strat, run the
+                               #    whole machine hot — self-code + agents + Telegram updates flowing again).
   min_interval_min: 20         # less pacing friction so meaningful changes actually land
   min_impact: 40               # loosened quality bar (was 60) so it can make real changes, not just tiny ones
   pool_refill_below: 12        # keep CONSTANTLY thinking — maintain a deep backlog of scored candidates

@@ -10,11 +10,10 @@ name: self-evolve
 # (project token, to deploy). Every change must still pass compile + import + a sim batch before it ships.
 
 on:
-  # ⏸ FROZEN 2026-06-29 for the 2-week clean-read test (VELOCITY verdict): autonomous self-coding is
-  # paused so the CONFIG + CODE hold still while the LEARNING runs — otherwise the bot rewrites itself
-  # ~112x over two weeks and the verdict means nothing. Uncomment to resume the 3h self-improvement loop.
-  # schedule:
-  #   - cron: "0 */3 * * *"     # every 3h — she keeps improving herself around the clock
+  # Self-coding loop back ON 2026-06-30 (Brady's call): the bot resumes rewriting itself every 3h,
+  # test-gated (compile + import + sim, locked rails) -> commits to main -> railway up. Money gate intact.
+  schedule:
+    - cron: "0 */3 * * *"     # every 3h — she keeps improving herself around the clock
   workflow_dispatch: {}
 
 permissions:
