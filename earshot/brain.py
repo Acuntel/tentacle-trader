@@ -309,8 +309,6 @@ class Brain:
             return False, "pattern recognized as a persistent loser — vetoed"
         if self.patterns is not None and self.patterns.is_decayed(getattr(c, "_signature", "")):
             return False, "pattern decayed (its recent edge collapsed — regime shift) — vetoed"
-        if getattr(c, "_tech_veto", None):
-            return False, c._tech_veto
         if c.n_independent < self.conv["min_independent_sources"]:
             return False, f"only {c.n_independent} source(s); need {self.conv['min_independent_sources']}"
         fams = getattr(c, "_families", 1)
@@ -324,6 +322,10 @@ class Brain:
         if self.explore:
             return True, "shadow-explore: cleared hard safety (soft filters logged, not enforced)"
 
+        # ---- SOFT in live only: don't buy into a bearish reversal at the highs (timing). In shadow we
+        #      explore through it so it actually trades + LEARNS whether that timing loses. ----
+        if getattr(c, "_tech_veto", None):
+            return False, c._tech_veto
         if getattr(c, "_analyst_veto", None):
             return False, c._analyst_veto
         if (self.lgate is not None and self.lgate.ready() and getattr(c, "_pwin", None) is not None
