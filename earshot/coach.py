@@ -240,7 +240,22 @@ class Coach:
             b7 = vel.get("brier_7d")
             btrend = ("improving" if vel.get("learning") else
                       "FLAT — no edge yet" if vel.get("no_edge") else "settling")
+            # THE headline Brady asked for: is it on the right path to eventually trade well?
+            m7 = vel.get("mastery_7d")
+            mtrend = f" ({m7:+.1f} this week)" if isinstance(m7, (int, float)) else ""
+            vmap = {
+                "ON TRACK": f"🧠 GETTING SMARTER? ✅ ON TRACK — mastery {vel.get('mastery_now', 0)}{mtrend} "
+                            "is measurably climbing / the practice trades are beating the market. Leave it running.",
+                "SPINNING": f"🧠 GETTING SMARTER? ⚠️ SPINNING — lots of activity, but mastery {vel.get('mastery_now', 0)}"
+                            f"{mtrend} isn't climbing and the practice trades aren't beating the market. This setup "
+                            "may be topping out below where you need it.",
+                "TOO EARLY": "🧠 GETTING SMARTER? ⏳ TOO EARLY — still gathering enough resolved trades/days to "
+                             "judge the trend honestly. Give it ~1–2 more weeks of this.",
+                "SETTLING": f"🧠 GETTING SMARTER? ➖ SETTLING — mastery {vel.get('mastery_now', 0)}{mtrend}, "
+                            "no clear up-trend yet. Watch the next few days.",
+            }
             self.approvals.daily_digest(
+                vmap.get(vel.get("verdict", "TOO EARLY"), "") + "\n\n"
                 "Still in practice mode — no real money. Daily heartbeat:\n"
                 f"• Son's shadow equity: ${eq} (started $500)" + (f", ~{mret:+.1f}%/mo\n" if isinstance(mret, (int, float)) else "\n") +
                 f"• Mastery: {stt.get('mastery', rep['mastery'])}/{stt.get('needs_mastery', '?')} to unlock the next rung "

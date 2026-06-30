@@ -247,6 +247,8 @@ velocity:
   improving_eps: 0.002        # a 7-day Brier drop >= this counts as genuine calibration improvement
   no_edge_min_samples: 1500   # only call "no edge" once this many P(win) samples have accrued
   no_edge_brier: 0.245        # ...AND Brier is still at/above the ~no-skill baseline (0.25) and not improving
+  verdict_min_trades: 200     # "is it on the right path?" verdict needs this many practice trades...
+  verdict_min_days: 7         # ...OR this many daily snapshots before it's TOO EARLY -> a real call
 
 # ---- Walk-forward validation: the overfit killer (replaces a single train/test split) ----
 validation:

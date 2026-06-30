@@ -150,10 +150,33 @@ class BrainCore:
         no_edge = (n >= int(vcfg.get("no_edge_min_samples", 1500))
                    and brier >= float(vcfg.get("no_edge_brier", 0.245))
                    and (brier_7d is None or brier_7d > -eps))
+        # ---- "Is it on the RIGHT PATH?" verdict — the one-glance answer ----
+        # Key on the HONEST gauges: mastery on real conviction trades (the built-in ladder = "ready to
+        # trade for real" gauge) + the forward learning-trades' directional alpha. NOT the observation-
+        # Brier (which can look great predicting easy near-zero drift). Smarter-on-the-right-path = mastery
+        # climbing off 0 AND/OR the practice trades genuinely beating the market.
+        mst = [h for h in hist if "mastery" in h]
+        mastery_now = float(mst[-1]["mastery"]) if mst else 0.0
+        mastery_7d = (round(mastery_now - float((mst[-8] if len(mst) >= 8 else mst[0])["mastery"]), 2)
+                      if len(mst) >= 2 else None)
+        days = len(hist)
+        real_improvement = (mastery_7d is not None and mastery_7d > 1.0) or \
+                           (avg_alpha is not None and avg_alpha > 0 and dir_hit is not None and dir_hit > 0.5)
+        enough = (trades >= int(vcfg.get("verdict_min_trades", 200))
+                  or days >= int(vcfg.get("verdict_min_days", 7)))
+        if not enough:
+            verdict = "TOO EARLY"
+        elif real_improvement:
+            verdict = "ON TRACK"
+        elif no_edge or (mastery_now <= 0.1 and (avg_alpha or 0) <= 0):
+            verdict = "SPINNING"
+        else:
+            verdict = "SETTLING"
         return {"n": n, "brier": brier, "trust": trust, "brier_7d": brier_7d,
                 "samples_per_day": samples_per_day, "explore_trades": trades,
                 "dir_hit": dir_hit, "avg_explore_alpha": avg_alpha,
-                "learning": learning, "no_edge": no_edge}
+                "learning": learning, "no_edge": no_edge,
+                "mastery_now": mastery_now, "mastery_7d": mastery_7d, "days": days, "verdict": verdict}
 
     # ---- newly-wired data streams: signal flow, regime over time, feature history ----
     def record_stream(self, day: str, active_sources: list, n_signals: int, top_tickers: list):

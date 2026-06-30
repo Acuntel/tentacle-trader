@@ -161,6 +161,10 @@ class Earshot:
         spd = f"+{vel['samples_per_day']}/day" if vel["samples_per_day"] is not None else "samples/day building"
         print(f"learning velocity: P(win) n={vel['n']} brier {vel['brier']} [{btrend}] trust {vel['trust']}  |  "
               f"{ex}  |  {spd}")
+        m7 = vel.get("mastery_7d")
+        print(f"ON THE RIGHT PATH? >>> {vel.get('verdict', '?')} <<<  "
+              f"(mastery {vel.get('mastery_now', 0)}{f', {m7:+.1f}/wk' if isinstance(m7, (int, float)) else ''} | "
+              f"the honest gauge: mastery climbing + practice-trade alpha > 0)")
         if vel["no_edge"]:
             print("  ⚠ HONEST: thousands of samples in, calibration still flat — NO EDGE DETECTED "
                   "in this configuration (faster learning has bought a fast, confident 'no').")
