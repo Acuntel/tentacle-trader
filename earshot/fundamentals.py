@@ -36,7 +36,7 @@ def _read(ticker: str):
     short_pct = g("shortPercentOfFloat")
     days_cover = g("shortRatio")
     s_now, s_prev = g("sharesShort"), g("sharesShortPriorMonth")
-    short_change = ((s_now - s_prev) / s_prev) if (s_now and s_prev) else None
+    short_change = ((s_now - s_prev) / s_prev) if (s_now is not None and s_prev) else None
     fpe = g("forwardPE")
     margin = g("profitMargins")
     rev_g = g("revenueGrowth")
