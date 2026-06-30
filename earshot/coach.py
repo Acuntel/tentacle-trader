@@ -201,11 +201,11 @@ class Coach:
                 if patch and all(k in patch for k in ("file", "find", "replace")):
                     self.proposer.add_code(patch)
             self.proposer.emit_due()                       # send only the single BEST un-sent idea (paced, ≤ cap/day)
-        if self.forge is not None and self.forge.due():     # FREE deterministic search (no LLM per step)
-            self.last_summary += f"  | forge: {self.forge.tick()}"
-        if self.hive is not None and self.hive.due():       # the recursive multi-model agent council tick
-            hv = self.hive.tick(rep)
-            self.last_summary += f"  | hive: {hv}"
+        # Capture the agent spin-ups' results — they were appended to last_summary then OVERWRITTEN below
+        # (a visibility bug: the Forge + Hive ran every time but you could never SEE their work). Surface
+        # them in the FINAL summary instead.
+        forge_r = self.forge.tick() if (self.forge is not None and self.forge.due()) else None
+        hive_r = self.hive.tick(rep) if (self.hive is not None and self.hive.due()) else None
         self.learner._persist_know()
 
         if not rt["ok"]:                                  # a safety rail got weakened — scream
@@ -225,6 +225,10 @@ class Coach:
             f"of {len(self.book.book) if self.book else 0} strategies ({evo['evolved']} evolved); "
             f"HONESTY: {honesty.get('status', 'n/a')[:70]}; "
             f"trajectory {'↑ growing faster' if traj.get('improving') else 'flat (day ' + str(traj.get('days', 0)) + ')'}")
+        if forge_r:
+            self.last_summary += f"\n    🔨 FORGE (free search): {forge_r}"
+        if hive_r:
+            self.last_summary += f"\n    🐝 HIVE (multi-model agents spinning up tasks): {hive_r}"
         if self.approvals is not None:                       # once/day heartbeat, in plain English
             try:
                 stt = self.instinct.status()

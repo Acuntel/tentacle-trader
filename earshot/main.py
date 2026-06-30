@@ -168,6 +168,14 @@ class Earshot:
         if vel["no_edge"]:
             print("  ⚠ HONEST: thousands of samples in, calibration still flat — NO EDGE DETECTED "
                   "in this configuration (faster learning has bought a fast, confident 'no').")
+        # AGENT SPIN-UPS at a glance every cycle (the Hive council + the Forge search)
+        _hv = self.learner.know.get("hive", {})
+        _fg = self.learner.know.get("forge", {})
+        _ch = _fg.get("champion") or {}
+        print(f"agents: 🐝 Hive — {len(_hv.get('queue', []))} queued, {len(_hv.get('done', []))} done "
+              f"(spun up {max(0, int(_hv.get('next_id', 1)) - 1)} tasks total)  |  "
+              f"🔨 Forge gen {_fg.get('generation', 0)}, champion edge {_ch.get('edge', '—')} "
+              f"/ forward {_ch.get('forward_edge', '—')}")
         print("-" * 74)
 
         # 0) HUMAN-IN-THE-LOOP — handle any Telegram approve/deny taps (approved patches -> apply Action)
