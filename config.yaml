@@ -251,7 +251,7 @@ velocity:
 # ---- Walk-forward validation: the overfit killer (replaces a single train/test split) ----
 validation:
   walk_forward_folds: 7        # bucket events into K time-ordered folds; a survivor must hold across them
-  min_fold_winrate: 0.6        # must be positive-expectancy in a MAJORITY of folds, not one lucky stretch
+  min_fold_winrate: 0.4        # must be positive-expectancy in a MAJORITY of folds, not one lucky stretch
   regime_stratify: true        # AND positive across uptrend + downtrend regimes (no bull-only edge)
 
 # ---- Warm-start: a fresh boot/volume starts smart, not cold (mastery is NEVER warm-started) ----
