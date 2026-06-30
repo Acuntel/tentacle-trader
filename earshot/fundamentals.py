@@ -108,4 +108,7 @@ def entry_read(ticker: str, cfg: dict) -> tuple[float, list[str]]:
     if r["quality"] < cfg.get("zombie_quality_floor", 0.3):
         mult *= 0.9                                   # cash-burning zombie -> trust the 'catalyst' less
         notes.append("⚠ low fundamental quality")
+    if r["squeeze"] > 0.7 and r["quality"] < 0.3:
+        mult *= 0.85                                  # avoid high-squeeze junk traps
+        notes.append("⚠ squeeze trap")
     return round(max(0.7, min(1.3, mult)), 3), notes
