@@ -87,6 +87,17 @@ class ApprovalQueue:
                     return fnd.split(":", 1)[0].strip()
         return None
 
+    @staticmethod
+    def _knob_value(patches):
+        """The NEW value a config patch sets a knob to (for the anti-FLIP-BACK memory). e.g. a
+        'min_pwin: 0.45' -> 'min_pwin: 0.40' patch returns '0.40'. None for code/source patches."""
+        for p in (patches or []):
+            if str(p.get("file", "")).endswith("config.yaml"):
+                rep = str(p.get("replace", ""))
+                if ":" in rep:
+                    return rep.split(":", 1)[1].split("#")[0].strip()
+        return None
+
     def propose(self, kind: str, title: str, summary: str, patches=None, meta=None) -> str | None:
         """Queue a change for approval. kind in {code, config, source}. patches = [{file,find,replace}]
         for code/config; None for a new-source-needs-wiring note. Returns the id, or None if disabled,
@@ -99,6 +110,11 @@ class ApprovalQueue:
         knob = self._knob(patches)
         if knob and (time.time() - self.st.get("tuned", {}).get(knob, 0)) < self.knob_cooldown:
             return None                                  # just tuned this knob — don't thrash / re-ask it
+        # ANTI-FLIP-BACK: refuse to set a knob to a value it was recently set to (kills A->B->A oscillation,
+        # the "changes itself back" Brady saw — e.g. min_fold_winrate 0.5->0.6->0.4->0.6...).
+        val = self._knob_value(patches) if knob else None
+        if knob and val and val in self.st.setdefault("tuned_values", {}).get(knob, []):
+            return None
         if not self._budget_ok():
             return None
         cid = f"A{self.st['next']:04d}"
@@ -110,6 +126,10 @@ class ApprovalQueue:
         self.st["last_sent_ts"] = time.time()
         if knob:
             self.st.setdefault("tuned", {})[knob] = time.time()
+            if val:                                      # remember recent values so it can't flip back to them
+                tv = self.st.setdefault("tuned_values", {}).setdefault(knob, [])
+                tv.append(val)
+                self.st["tuned_values"][knob] = tv[-6:]
         # AUTONOMOUS: just DO it and TEXT Brady — no ✅/❌ question. The money gate is still enforced by the
         # apply Action (gate + locked rails + money-token guard); this only removes the human-approval step.
         if self.autonomous and patches:

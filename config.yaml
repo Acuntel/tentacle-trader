@@ -28,9 +28,10 @@ survival:
 
 # ---- The firing gate ----
 conviction:
-  min_score_to_trade: 25        # LOWERED 2026-06-30 so it ACTUALLY trades the top qualifying setups each
-                                # session (top candidates score ~25-45; old bar 60 fired ~never). Shadow only;
-                                # real money still hard-gated. Raise back toward 55-60 to be selective again.
+  min_score_to_trade: 15        # LOWERED again 2026-06-30 (25->15): trade more of the qualifying multi-confirm
+                                # setups. Shadow only; real money still hard-gated. NOTE: trade COUNT is mostly
+                                # capped by the 2-source/2-family multi-confirm requirement below (the strategy's
+                                # core) + max_open_positions, not by this score — lowering further does little.
   min_independent_sources: 2    # >= 2 independent sources must confirm the SAME catalyst
   min_families: 2               # >= 2 DIFFERENT signal families (filing+surprise+flow...), not 2 of the same
   min_pwin: 0.40                # once the learned model has >=30 samples, require P(win) above this to fire
@@ -359,4 +360,4 @@ approvals:
   scope: notable               # code + new sources + config/strategy threshold shifts ("everything notable")
   auto_deploy: true            # approve -> commit to main + railway up (real-money gate stays locked regardless)
   autonomous: true             # FULL internal autonomy: apply self-changes + TEXT Brady (no ✅/❌ questions)
-  knob_cooldown_min: 360       # after tuning a config knob, don't re-tune it for 6h (kills the oscillation)
+  knob_cooldown_min: 2880      # 6h -> 48h: don't re-tune the SAME knob for 2 days (kills the fast oscillation)

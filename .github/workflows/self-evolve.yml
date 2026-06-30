@@ -13,7 +13,9 @@ on:
   # Self-coding loop back ON 2026-06-30 (Brady's call): the bot resumes rewriting itself every 3h,
   # test-gated (compile + import + sim, locked rails) -> commits to main -> railway up. Money gate intact.
   schedule:
-    - cron: "0 */3 * * *"     # every 3h — she keeps improving herself around the clock
+    - cron: "0 9 * * *"      # ONCE DAILY (was every 3h): the 3h cron + the live proposer were two
+                             # uncoordinated self-editors fighting each other. Slowing this to daily lets
+                             # the live proposer (which HAS the anti-oscillation memory) be the primary tuner.
   workflow_dispatch: {}
 
 permissions:
