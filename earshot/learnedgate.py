@@ -89,13 +89,13 @@ class LearnedGate:
         """Conservative P(win) that leans on Forge-validated features with hand-tuned priors."""
         feats = self.featurize(dossier, verdict)
         base = self.predict(feats)
-        # Forge-found edge (v2): o_max_pain (negative), is_price (negative), o_unusual_puts
-        # (positive), o_pcr_vol (negative). Apply conservative multiplicative adjustments.
+        # Forge-found edge (v3): f_profit_margin (negative), quality (negative), is_price (negative),
+        # is_flow (negative). Apply conservative multiplicative adjustments per Free Forge search.
         adj = 1.0
-        adj *= 1.0 - 0.03 * max(0, feats.get("o_max_pain", 0))            # penalize high max pain
-        adj *= 1.0 - 0.03 * (1.0 if feats.get("is_price", 0) > 0.5 else 0.0)  # penalize price-only
-        adj *= 1.0 + 0.03 * max(0, feats.get("o_unusual_puts", 0))        # reward unusual puts signal
-        adj *= 1.0 - 0.03 * max(0, feats.get("o_pcr_vol", 0))             # penalize high put/call vol
+        adj *= 1.0 - 0.02 * max(0, feats.get("f_profit_margin", 0))       # penalize high profit margin
+        adj *= 1.0 - 0.02 * max(0, feats.get("quality", 0))               # penalize high quality signal
+        adj *= 1.0 - 0.02 * (1.0 if feats.get("is_price", 0) > 0.5 else 0.0)  # penalize price-only
+        adj *= 1.0 - 0.02 * (1.0 if feats.get("is_flow", 0) > 0.5 else 0.0)   # penalize flow-only
         # Only apply adjustments when model is trusted; otherwise return unadjusted base
         if not self.ready() or self.trust() < 0.3:
             return base
