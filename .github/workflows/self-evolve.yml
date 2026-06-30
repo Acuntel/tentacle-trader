@@ -10,8 +10,11 @@ name: self-evolve
 # (project token, to deploy). Every change must still pass compile + import + a sim batch before it ships.
 
 on:
-  schedule:
-    - cron: "0 */3 * * *"     # every 3h — she keeps improving herself around the clock
+  # ⏸ FROZEN 2026-06-29 for the 2-week clean-read test (VELOCITY verdict): autonomous self-coding is
+  # paused so the CONFIG + CODE hold still while the LEARNING runs — otherwise the bot rewrites itself
+  # ~112x over two weeks and the verdict means nothing. Uncomment to resume the 3h self-improvement loop.
+  # schedule:
+  #   - cron: "0 */3 * * *"     # every 3h — she keeps improving herself around the clock
   workflow_dispatch: {}
 
 permissions:

@@ -338,7 +338,8 @@ telegram:
                                #        getUpdates loop; two pollers 409-conflict). Sets TELEGRAM_SHARED_BOT.
                                #        FALSE = Tentacle owns a dedicated bot and polls for ✅/❌ taps itself.
   daily_digest: true           # once/day summary of the AUTO-applied tuning (weights/lessons) — no approval
-  max_proposals_per_day: 20    # AUTONOMOUS mode: allow more self-changes/day (each is a one-way 🔧 update text)
+  max_proposals_per_day: 0     # ⏸ FROZEN 2026-06-29 for the 2-week clean-read test: NO self-config/code changes
+                               #    (learning + daily heartbeat stay ON). Restore to 20 to resume self-modification.
   min_interval_min: 20         # less pacing friction so meaningful changes actually land
   min_impact: 40               # loosened quality bar (was 60) so it can make real changes, not just tiny ones
   pool_refill_below: 12        # keep CONSTANTLY thinking — maintain a deep backlog of scored candidates
