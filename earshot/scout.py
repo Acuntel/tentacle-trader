@@ -51,7 +51,7 @@ class SourceScout:
                 "source": src, "trades": t, "precision": round(st["wins"] / t, 2),
                 "avg_ret": round(st["sum_ret"] / t, 2), "weight": self.weights.get(src, 0.5),
             })
-        rows.sort(key=lambda r: r["precision"])
+        rows.sort(key=lambda r: r["precision"], reverse=True)
         weak = [r["source"] for r in rows if r["trades"] >= 8 and r["precision"] < 0.4]
         return {"sources": rows, "decaying": weak}
 
