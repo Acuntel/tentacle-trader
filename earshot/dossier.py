@@ -72,6 +72,8 @@ def build(candidate, macro: str = "") -> dict:
         pillars.add("options")
     if fund and fund.get("squeeze", 0) >= 0.5:
         pillars.add("squeeze")
+    if fund and fund.get("quality", 0) >= 0.6:
+        pillars.add("quality")
 
     return {"ticker": candidate.ticker, "catalyst": candidate.catalyst.value, "macro": macro,
             "pillars": sorted(pillars), "independence": len(pillars), "news_events": news_events,
