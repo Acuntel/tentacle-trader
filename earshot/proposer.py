@@ -93,7 +93,7 @@ class Proposer:
 
     def _unsent(self):
         denied = self.know.get("approvals", {}).get("denied", {})
-        return [p for p in self.pool if not p.get("sent") and p["hash"] not in denied]
+        return [p for p in self.pool if not p.get("sent") and p["hash"] not in denied and p.get("impact", 0) >= self.floor]
 
     def _add(self, item: dict):
         if any(p["hash"] == item["hash"] for p in self.pool):
