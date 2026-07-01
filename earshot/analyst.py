@@ -70,6 +70,7 @@ class Analyst:
             except Exception:
                 self._client = None
         self._groq = (self.provider not in ("anthropic", "heuristic")) and llm.have_brain()
+        self._llm_cache: dict[str, dict] = {}
 
     @property
     def llm_live(self) -> bool:
