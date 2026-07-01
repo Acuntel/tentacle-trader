@@ -130,7 +130,7 @@ def _mkt_return(proxy: str, start_ts: float):
             return None
         c0 = float(closes.iloc[pos])
         c1 = float(closes.iloc[-1])
-        return (c1 / c0 - 1) * 100 if c0 > 0 else None
+        return (c1 / c0 - 1) * 100 if c0 != 0 else None
     except Exception:
         return None
 
