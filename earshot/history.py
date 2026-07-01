@@ -116,7 +116,7 @@ def _fetch_one(ticker: str, years: int) -> int:
             continue
     if not rows:
         return 0
-    with open(_path(ticker), "w") as f:
+    with open(_path(ticker), "w", newline="") as f:
         f.write("\n".join(rows))
     return len(rows)
 
