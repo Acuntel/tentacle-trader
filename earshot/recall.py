@@ -59,8 +59,9 @@ def backlog(know, k: int = 6):
         return []
     rc = know.setdefault("recall", {})
     cur = int(rc.get("cursor", 0))
-    pick = [uniq[(cur + i) % len(uniq)] for i in range(min(k, len(uniq)))]
-    rc["cursor"] = (cur + k) % len(uniq)
+    n = min(k, len(uniq))
+    pick = [uniq[(cur + i) % len(uniq)] for i in range(n)]
+    rc["cursor"] = (cur + n) % len(uniq)
     return pick
 
 
