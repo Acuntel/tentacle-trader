@@ -22,7 +22,8 @@ def _replay_ledger(lgate, cap: int) -> int:
     if not os.path.exists(RESOLVED):
         return 0
     try:
-        rows = open(RESOLVED).read().splitlines()[-cap:]
+        with open(RESOLVED) as f:
+            rows = f.read().splitlines()[-cap:]
     except Exception:
         return 0
     old_lr, lgate.lr = lgate.lr, min(lgate.lr, 0.03)
