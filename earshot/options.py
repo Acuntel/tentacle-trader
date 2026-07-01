@@ -83,7 +83,7 @@ def _read(ticker: str):
 
     def avg_iv(rows, lo, hi):
         xs = [_num(r.get("impliedVolatility")) for r in rows
-              if lo <= float(r["strike"]) / spot <= hi and _num(r.get("impliedVolatility")) > 0]
+              if lo <= float(r.get("strike", 0)) / spot <= hi and _num(r.get("impliedVolatility")) > 0]
         return sum(xs) / len(xs) if xs else None
 
     put_iv, call_iv = avg_iv(puts, 0.88, 0.97), avg_iv(calls, 1.03, 1.12)
