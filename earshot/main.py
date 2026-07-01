@@ -15,7 +15,7 @@ import yaml
 from . import prices, market, history, warmstart
 from .sources import build_sources
 from .approvals import ApprovalQueue
-from .brain import Brain
+from .brain import Brain, FAMILY
 from .survival import MotherInstinct
 from .risk import RiskGate
 from .learning import Learner
@@ -33,6 +33,15 @@ from .sim import SimEngine
 from .coach import Coach
 from .audit import Auditor
 from .core import BrainCore
+
+
+# The tentacles run on wildly different clocks: an 8-K, a contract award, or a demand-delta fires ONCE,
+# while news/social echo for hours. A single 30-minute confirmation window meant every slow signal got
+# one brief shot at meeting a second family before being deleted — cross-family convergence (the whole
+# strategy) was structurally starved. Slow, low-volume families now LINGER in the signal memory; the
+# noisy high-volume families keep the short window. Lateness is still priced by the earliness/runup gate.
+SLOW_FAMILIES = {"filing", "regulatory", "surprise", "alt", "demand", "onchain", "flow",
+                 "attention", "crowd"}
 
 
 def load_config(path: str) -> dict:
@@ -60,7 +69,7 @@ class Earshot:
         self.brain = Brain(cfg)
         self.instinct = MotherInstinct(cfg)
         self.risk = RiskGate(cfg)
-        self.learner = Learner(self.weights)
+        self.learner = Learner(self.weights, priors=cfg["source_weights"])  # priors anchor the learned weights
         self.executor = get_executor(cfg["identity"]["mode"])
         self.scout = SourceScout(self.learner.know, self.weights)
         self.daily = DailyGuard(cfg)
@@ -69,6 +78,7 @@ class Earshot:
         self.base_min = cfg["conviction"]["min_score_to_trade"]
         self.buffer: list = []                                  # rolling signal memory
         self.window = int(cfg["sources"].get("signal_window_sec", 1800))
+        self.slow_ttl = int(cfg["sources"].get("slow_family_ttl_sec", 14400))  # slow tentacles linger 4h
         self.macro_mon = MacroMonitor(                          # FRED alt-data / macro regime
             expand_cap=int(cfg["sources"].get("fred_expand_cap", 0)))
         self.brain.patterns = self.learner.patterns            # share the learned pattern memory
@@ -159,8 +169,9 @@ class Earshot:
               f"{round(100*vel['dir_hit'])}%, alpha {vel['avg_explore_alpha']:+.2f}%"
               if vel["dir_hit"] is not None else "explore: warming up")
         spd = f"+{vel['samples_per_day']}/day" if vel["samples_per_day"] is not None else "samples/day building"
+        from .patterns import field_rate
         print(f"learning velocity: P(win) n={vel['n']} brier {vel['brier']} [{btrend}] trust {vel['trust']}  |  "
-              f"{ex}  |  {spd}")
+              f"{ex}  |  {spd}  |  field alpha-win base {field_rate(self.learner.know):.2f}")
         m7 = vel.get("mastery_7d")
         print(f"ON THE RIGHT PATH? >>> {vel.get('verdict', '?')} <<<  "
               f"(mastery {vel.get('mastery_now', 0)}{f', {m7:+.1f}/wk' if isinstance(m7, (int, float)) else ''} | "
@@ -191,8 +202,13 @@ class Earshot:
             got = s.safe_fetch()
             polled.append(f"{s.key}:{len(got)}")
             self.buffer.extend(got)
-        # rolling memory: keep the recent window so async polls still confirm each other
-        self.buffer = [sg for sg in self.buffer if now - sg.ts <= self.window]
+        # rolling memory: keep the recent window so async polls still confirm each other.
+        # Per-FAMILY TTL: slow/one-shot families (filing/regulatory/demand/...) linger hours so a fast
+        # family can still arrive and confirm them; noisy families keep the short window (anti-spam).
+        self.buffer = [sg for sg in self.buffer if now - sg.ts <=
+                       (self.slow_ttl if FAMILY.get(sg.source, "other") in SLOW_FAMILIES else self.window)]
+        if len(self.buffer) > 60000:                     # hard cap: memory safety on the long TTLs
+            self.buffer = self.buffer[-60000:]
         signals = self._dedup()
         print(f"  polled: {' '.join(polled) or '(nothing due this tick)'}")
         print(f"  signal memory: {len(signals)} live signals (last {self.window // 60}m)")

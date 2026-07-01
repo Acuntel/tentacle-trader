@@ -115,6 +115,14 @@ class Brain:
                 by_ticker[tk].append(s)
 
         out: list[Candidate] = []
+        # NEAR-MISS learning budget (shadow only): a bounded number of names that clear min-sources but
+        # NOT min-families still get the full data workup (price/tech/options/fundamentals/analyst) so
+        # they become off-book LEARNING trades. The conviction gate is untouched (min_families still
+        # bites there) — this only widens what the learner can practice on. Without it the explore
+        # flood starves: cross-family co-occurrence is rare, so almost nothing "qualifies" to learn from.
+        nearmiss_budget = int(self.cfg.get("exploration", {}).get("nearmiss_per_cycle", 8)) \
+            if self.explore else 0
+        nearmiss_used = 0
         for tk, sigs in by_ticker.items():
             # best strength per distinct source (don't let one source double-count)
             per_source: dict[str, float] = {}
@@ -139,7 +147,12 @@ class Brain:
             families = {FAMILY.get(s, "other") for s in per_source}
             qualifies = (len(per_source) >= self.conv["min_independent_sources"]
                          and len(families) >= self.conv.get("min_families", 1))
-            runup = prices.runup_pct_today(tk) if qualifies else None
+            learn_scope = qualifies
+            if (not qualifies and nearmiss_used < nearmiss_budget
+                    and len(per_source) >= self.conv["min_independent_sources"]):
+                learn_scope = True                          # full workup for learning, not for conviction
+                nearmiss_used += 1
+            runup = prices.runup_pct_today(tk) if learn_scope else None
             earliness = 0.9 if runup is None else (0.5 if runup > self.conv["max_runup_pct"] else 1.0)
             score = self._score(per_source, ccfg["prior"], earliness, len(families))
 
@@ -159,16 +172,16 @@ class Brain:
             # cleared the catalyst gate, so we never price-scan the whole fleet (anti-ban).
             tech_notes, tech_veto = [], None
             opt_notes, opt_confirm = [], False
-            if qualifies and self.tech_on:
+            if learn_scope and self.tech_on:
                 allow, tmult, tech_notes = technicals.entry_read(tk, self.tech)
                 score *= tmult
                 if not allow:
                     tech_veto = "price action says wait — bearish reversal at the highs"
-            if qualifies and self.opt_on:
+            if learn_scope and self.opt_on:
                 omult, opt_confirm, opt_notes = options.entry_read(tk, self.opt)
                 score *= omult                              # options agreement strengthens, fear weakens
             fund_notes, feats = [], {}
-            if qualifies and self.fund_on:
+            if learn_scope and self.fund_on:
                 fmult, fund_notes = fundamentals.entry_read(tk, self.fund)
                 score *= fmult                              # squeeze fuel boosts, zombie quality shrinks
                 feats = fundamentals.features(tk)
@@ -203,10 +216,11 @@ class Brain:
             cand._options_confirm = opt_confirm
             cand._features = feats                          # fundamentals features for the learned model
             cand._qualified = qualifies                     # WS1: cleared sources+families -> has a price + features
+            cand._qualified_learn = learn_scope             # near-miss: explorable, but never conviction
 
             # ANALYST BRAIN — reason over a real dossier (independence + judge + learned P(win)),
             # not source-counting. Runs only on already-qualifying names (cheap, LLM-gated).
-            if qualifies and self.analyst is not None:
+            if learn_scope and self.analyst is not None:
                 if self.lgate is not None and getattr(self, "distill", None) is None:
                     from .distill import DistilledJudge      # learn to mimic the LLM; share with the analyst
                     self.distill = DistilledJudge(self.lgate.know)
@@ -276,7 +290,8 @@ class Brain:
             return []
         elig = []
         for c in cands:
-            if not getattr(c, "_qualified", False) or getattr(c, "_lgate_features", None) is None:
+            ok_learn = getattr(c, "_qualified_learn", getattr(c, "_qualified", False))
+            if not ok_learn or getattr(c, "_lgate_features", None) is None:
                 continue
             sig = getattr(c, "_signature", "")
             if self.patterns is not None and (self.patterns.is_loser(sig) or self.patterns.is_decayed(sig)):

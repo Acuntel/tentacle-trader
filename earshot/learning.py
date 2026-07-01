@@ -7,7 +7,7 @@ import os
 import time
 
 from .models import Candidate, Outcome, iso
-from .patterns import PatternMemory
+from .patterns import PatternMemory, field_rate, update_field_rate
 from . import prices
 
 OPEN_PATH = "state/open_positions.json"
@@ -31,8 +31,9 @@ def _append(path, obj):
 
 
 class Learner:
-    def __init__(self, weights: dict):
+    def __init__(self, weights: dict, priors: dict | None = None):
         self.weights = weights  # SHARED dict — updates here propagate to live tentacles
+        self.priors = dict(priors or {})  # config source_weights = the anchor learned weights orbit
         self.open = _load(OPEN_PATH, [])
         self.learn_open = _load(LEARN_OPEN_PATH, [])  # WS1: off-book learning trades (no mastery/equity)
         self.obs = _load(OBS_PATH, [])      # pending observations (learn-from-all-data)
@@ -175,10 +176,22 @@ class Learner:
         return {"resolved": n_res, "dir_hits": dir_hits, "open": len(self.learn_open)}
 
     def _credit_sources(self, sources, win: bool, ret: float, rate: float = 0.15):
-        """Nudge each source's weight toward its proven precision (on ALPHA). Shared by trades AND
-        observations (gentler rate for observations). Includes DRIFT detection: if a source's recent
-        window of outcomes has decayed well below its lifetime precision, cut it faster than the slow
-        average would — markets are non-stationary, so a stale edge should fade quickly."""
+        """Nudge each source's weight toward its proven RELATIVE precision (on ALPHA). Shared by trades
+        AND observations (gentler rate for observations).
+
+        Two hard-won anchors:
+        • FIELD-RELATIVE, not 0.5-absolute. Alpha-wins have a ~0.34 base rate, so judging sources against
+          an implicit 0.5 dragged EVERY firing source to the weight floor while dead sources kept their
+          priors (trust inversion). Neutral = winning at the field rate; above the field rises, below sinks.
+        • PRIOR-ANCHORED, not self-referential. The old target was a multiple of the CURRENT weight, so a
+          wrongly-punished source could never climb back (the floor was absorbing). Anchoring the target on
+          the config prior × relative precision makes the weight a stationary function of the evidence —
+          it self-heals from any bad state instead of random-walking into a corner.
+
+        Includes DRIFT detection: if a source's recent window has decayed well below its lifetime
+        precision, cut it faster — markets are non-stationary, a stale edge should fade quickly."""
+        update_field_rate(self.know, win)            # one labeled outcome -> the shared base-rate tracker
+        fld = field_rate(self.know)
         for src in sources:
             st = self.know["sources"].setdefault(src, {"trades": 0, "wins": 0, "sum_ret": 0.0})
             st["trades"] += 1
@@ -189,7 +202,11 @@ class Learner:
             st["recent"] = rec[-20:]
             precision = st["wins"] / st["trades"]
             base = self.weights.get(src, 0.5)
-            target = base * (0.6 + precision)        # precision 0->0.6x, 0.5->1.1x, 1.0->1.6x
+            prior = self.priors.get(src, 0.5)
+            # at-field -> the prior; edge scales it. ASYMMETRIC slopes (losses cut harder than wins
+            # lift, matching the mother-instinct loss-aversion) so a truly bad source sinks decisively.
+            slope = 1.2 if precision >= fld else 2.5
+            target = prior * (1.0 + slope * (precision - fld))
             # WS3 adaptive rate: a source with FEW resolved outcomes earns/loses trust faster (we're
             # ignorant of it), settling to the base rate once it has a real track record (>=40).
             eff_rate = rate if st["trades"] >= 40 else min(0.4, rate * (1.0 + (40 - st["trades"]) / 40.0))

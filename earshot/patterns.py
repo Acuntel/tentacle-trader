@@ -12,6 +12,40 @@ from __future__ import annotations
 
 import math
 
+# ---- THE FIELD RATE: what fraction of ALL labeled setups beat the market (alpha-win base rate). ----
+# Since v3.4 every label is ALPHA (beat SPY), so the base win-rate is ~0.34, NOT 0.5 — most stocks lose
+# to the index. Every consumer that judged "good vs bad" against an absolute 0.5 anchor (source weights,
+# pattern multipliers, loser vetoes, calibration) was therefore dragging EVERYTHING toward the floor and
+# throwing away the real signal: RELATIVE skill vs the field. These helpers give every learner the one
+# shared, honest anchor. Persisted in knowledge.json (survives redeploys, like everything learned).
+BASE_KEY = "base_rate"
+
+
+def update_field_rate(know: dict, win: bool, ema: float = 0.02):
+    """One labeled outcome -> nudge the rolling field rate (plain average first 50, then a slow EMA)."""
+    b = know.setdefault(BASE_KEY, {"n": 0, "ema": 0.5})
+    y = 1.0 if win else 0.0
+    b["n"] = int(b.get("n", 0)) + 1
+    prev = float(b.get("ema", 0.5))
+    if b["n"] <= 50:
+        b["ema"] = round(prev + (y - prev) / b["n"], 4)
+    else:
+        b["ema"] = round((1 - ema) * prev + ema * y, 4)
+
+
+def field_rate(know: dict, default: float = 0.5) -> float:
+    """The current base rate of alpha-wins across everything we label. Until the rolling tracker has
+    enough of its own samples, derive it from the (much larger) per-source ledger so a redeploy onto an
+    old volume is instantly anchored to reality instead of the 0.5 fantasy."""
+    b = know.get(BASE_KEY) or {}
+    if int(b.get("n", 0)) >= 30:
+        return float(b.get("ema", default))
+    tot = wins = 0
+    for v in (know.get("sources") or {}).values():
+        tot += int(v.get("trades", 0))
+        wins += int(v.get("wins", 0))
+    return round(wins / tot, 4) if tot >= 200 else default
+
 
 def _wilson_lower(wins: int, n: int, z: float = 1.64) -> float:
     if n == 0:
@@ -25,28 +59,68 @@ def _wilson_lower(wins: int, n: int, z: float = 1.64) -> float:
 
 class PatternMemory:
     def __init__(self, know: dict):
-        self.p = know.setdefault("patterns", {})        # signature -> stats (persisted in knowledge.json)
+        self.know = know
+        self.p = know.setdefault("patterns", {})        # exact signature -> stats (persisted)
+        self.agg = know.setdefault("patterns_agg", {})  # HIERARCHICAL backoff levels (catalyst / +families)
 
     @staticmethod
     def signature(catalyst: str, families, macro: str = "") -> str:
         sig = f"{catalyst}|{'+'.join(sorted(families))}"
         return f"{sig}|{macro}" if macro else sig
 
+    @staticmethod
+    def _levels(sig: str) -> list[str]:
+        """Coarser views of a signature: catalyst|families, then catalyst alone. The full sig includes
+        the multi-part macro regime, which fragments the space (a one-bit FRED flip = a fresh bucket that
+        restarts at n=0). Backoff lets a rare/new exact sig borrow its family's track record — n-gram
+        style — instead of flying blind. Sim/study signatures keep their own namespace (no backoff)."""
+        if sig.startswith(("sim_", "study_")):
+            return []
+        parts = sig.split("|")
+        out = []
+        if len(parts) > 2:
+            out.append("|".join(parts[:2]))             # catalyst|families (macro stripped)
+        if len(parts) > 1:
+            out.append(parts[0])                        # catalyst alone
+        return out
+
+    def field(self) -> float:
+        return field_rate(self.know)
+
     def _stats(self, sig: str) -> dict:
         return self.p.get(sig, {"trades": 0, "wins": 0, "sum_ret": 0.0, "sum_win_ret": 0.0})
 
-    def multiplier(self, sig: str) -> float:
-        """Confidence multiplier from this pattern's proven track record (neutral until 5+ trades)."""
+    def _backoff(self, sig: str, min_n: int) -> dict:
+        """The FINEST level with enough data: exact sig, else catalyst|families, else catalyst."""
         st = self._stats(sig)
+        if st["trades"] >= min_n:
+            return st
+        for lvl in self._levels(sig):
+            a = self.agg.get(lvl)
+            if a and a["trades"] >= min_n:
+                return a
+        return st
+
+    def multiplier(self, sig: str) -> float:
+        """Confidence multiplier from the pattern's track record — judged RELATIVE to the field base
+        rate, not an absolute 0.5 (in an alpha-labeled world ~0.34 of everything wins, so 0.5-anchoring
+        haircut EVERY pattern). Empirical-Bayes: the win-rate is shrunk toward the field prior by 10
+        pseudo-counts, so an at-field pattern is exactly neutral at any sample size (a Wilson lower
+        bound vs the field MEAN would punish every small-n pattern for being small-n, which is the same
+        floor-drag bug in a new coat). Backs off to coarser levels when the exact sig is data-poor."""
+        st = self._backoff(sig, 5)
         if st["trades"] < 5:
             return 1.0
-        lb = _wilson_lower(st["wins"], st["trades"])    # conservative win-rate
-        return max(0.5, min(1.5, 1.0 + (lb - 0.5) * 1.5))
+        fld = self.field()
+        post = (st["wins"] + 10 * fld) / (st["trades"] + 10)   # shrunk toward the field prior
+        return max(0.5, min(1.5, 1.0 + (post - fld) * 2.5))
 
     def is_loser(self, sig: str) -> bool:
-        """A pattern with enough samples and a conservatively-bad win-rate -> veto it."""
-        st = self._stats(sig)
-        return st["trades"] >= 12 and _wilson_lower(st["wins"], st["trades"]) < 0.30
+        """Veto a pattern that is conservatively WORSE THAN THE FIELD by a clear margin — not one that
+        merely wins less than a coin-flip (almost everything does, on alpha labels). Wilson keeps the
+        veto conservative; the 0.15 margin leaves room for the bound's small-n pessimism."""
+        st = self._backoff(sig, 12)
+        return st["trades"] >= 12 and _wilson_lower(st["wins"], st["trades"]) < self.field() - 0.15
 
     def is_decayed(self, sig: str) -> bool:
         """CONCEPT DRIFT: a once-good pattern whose RECENT window is much worse than its lifetime —
@@ -57,7 +131,7 @@ class PatternMemory:
             return False
         recent_wr = sum(rec) / len(rec)
         life_wr = st["wins"] / st["trades"]
-        return recent_wr < life_wr - 0.25 and recent_wr < 0.45
+        return recent_wr < life_wr - 0.25 and recent_wr < max(0.2, self.field() - 0.05)
 
     def refresh_decay(self) -> list[str]:
         """All patterns currently in decay — computed in the brain core's simultaneous synthesis."""
@@ -66,6 +140,8 @@ class PatternMemory:
     def suggested_target(self, sig: str, default: float) -> float:
         """How much this pattern usually pays when it wins -> the profit target to aim for."""
         st = self._stats(sig)
+        if st["wins"] < 5:
+            st = self._backoff(sig, 12)                 # borrow the family's payoff profile if data-poor
         if st["wins"] >= 5:
             return round(max(4.0, min(25.0, st["sum_win_ret"] / st["wins"])), 1)
         return default
@@ -73,13 +149,14 @@ class PatternMemory:
     def record(self, sig: str, win: bool, pnl_pct: float):
         if not sig:
             return
-        st = self.p.setdefault(sig, {"trades": 0, "wins": 0, "sum_ret": 0.0, "sum_win_ret": 0.0})
-        st["trades"] += 1
-        st["sum_ret"] += pnl_pct
-        if win:
-            st["wins"] += 1
-            st["sum_win_ret"] += pnl_pct
-        st["recent"] = (st.get("recent", []) + [1 if win else 0])[-20:]   # rolling window for decay
+        for key, table in [(sig, self.p)] + [(lvl, self.agg) for lvl in self._levels(sig)]:
+            st = table.setdefault(key, {"trades": 0, "wins": 0, "sum_ret": 0.0, "sum_win_ret": 0.0})
+            st["trades"] += 1
+            st["sum_ret"] += pnl_pct
+            if win:
+                st["wins"] += 1
+                st["sum_win_ret"] += pnl_pct
+            st["recent"] = (st.get("recent", []) + [1 if win else 0])[-20:]   # rolling window for decay
 
     def report(self, k: int = 5) -> dict:
         rows = [{"sig": s, "n": v["trades"], "win": round(v["wins"] / v["trades"], 2),

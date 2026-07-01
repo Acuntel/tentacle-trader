@@ -13,6 +13,7 @@ from __future__ import annotations
 import time
 
 from .learning import WMIN, WMAX
+from .patterns import field_rate
 
 SECTIONS = {
     "sources": dict, "catalysts": dict, "weights": dict, "patterns": dict, "model": dict,
@@ -73,6 +74,8 @@ class BrainCore:
     # ---- THE simultaneous fusion — everything sharpens everything, in one pass ----
     def synthesize(self, patterns) -> dict:
         srcs = self.know["sources"]
+        fld = field_rate(self.know)                           # the shared alpha-win base rate (~0.34, not 0.5)
+        priors = self.cfg.get("source_weights", {})
         moved = []
         for src, st in srcs.items():
             if st.get("trades", 0) < self.min_samples:
@@ -80,7 +83,10 @@ class BrainCore:
             precision = st["wins"] / st["trades"]
             lead = self.lead_score(src)                       # earliness bonus
             base = self.weights.get(src, 0.5)
-            target = base * (0.6 + precision) * (0.95 + 0.1 * lead)
+            # FIELD-RELATIVE + PRIOR-ANCHORED (see learning._credit_sources): neutral = winning at the
+            # field rate; the target orbits the config prior so a wrongly-floored weight self-heals.
+            slope = 1.2 if precision >= fld else 2.5          # loss-averse: below-field cuts harder
+            target = priors.get(src, 0.5) * (1.0 + slope * (precision - fld)) * (0.95 + 0.1 * lead)
             new = round(max(WMIN, min(WMAX, 0.85 * base + 0.15 * target)), 3)
             if abs(new - base) >= 0.005:
                 self.weights[src] = new

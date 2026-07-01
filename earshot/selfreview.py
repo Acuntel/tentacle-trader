@@ -13,6 +13,7 @@ import os
 import time
 
 from .models import iso
+from .patterns import field_rate
 from . import market
 
 REVIEW_PATH = "state/self_review.jsonl"
@@ -71,13 +72,16 @@ class SelfReview:
                         "fix": f"lower the '{cat}' prior" + (f" -> {applied}" if applied else ""),
                         "auto_applied": bool(applied)})
 
-        # 3) Per-source precision — de-weight a source that keeps misleading it.
+        # 3) Per-source precision — de-weight a source that keeps misleading it. Judged RELATIVE to the
+        # field's alpha-win base rate (~0.34): "below the field by a clear margin", not an absolute bar
+        # that half of all honest sources sit under (which ratcheted everything to the floor).
+        fld = field_rate(know)
         for src, st in (know.get("sources") or {}).items():
             n = st.get("trades", 0)
             if n >= max(self.min_n, 8):
                 prec = st.get("wins", 0) / n
                 avg = st.get("sum_ret", 0.0) / n
-                if prec < 0.35 and avg <= 0:
+                if prec < max(0.15, fld - 0.08) and avg <= 0:
                     new_w = self._deweight(src)
                     findings.append({
                         "issue": f"source '{src}' is low-precision",

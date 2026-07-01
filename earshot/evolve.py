@@ -16,6 +16,7 @@ import json
 import random
 
 from . import history
+from .patterns import field_rate
 
 
 def _event_samples(n: int, min_move: float = 3.0):
@@ -101,8 +102,13 @@ def run_studies(core, patterns, sample: int = 150) -> dict:
     return core.know["studies"]
 
 
-# ---- #3: calibration — make stated confidence match realized win-rate ----
+# ---- #3: calibration — is the bot's SELECTION better than the field it picks from? ----
 def update_calibration(core) -> dict:
+    """The old factor treated conviction/100 as a win-probability claim and compared it to the raw
+    win-rate — a category error that pinned the factor at its 0.7 floor once labels went alpha (~0.34
+    base rate), permanently haircutting every score. The honest question is RELATIVE: do the trades the
+    bot CHOSE beat the field's alpha-win base rate? Picks at the field rate -> 1.0 (conviction adds
+    nothing, no punishment); picks above -> amplify; below -> shrink. Wins are alpha where available."""
     buckets: dict[int, list[int]] = {}
     try:
         with open("state/outcomes.jsonl") as f:
@@ -112,15 +118,16 @@ def update_calibration(core) -> dict:
                 b = 55 if c < 70 else 70 if c < 85 else 85
                 d = buckets.setdefault(b, [0, 0])
                 d[0] += 1
-                d[1] += 1 if o["win"] else 0
+                a = o.get("alpha")
+                d[1] += 1 if (a > 0 if a is not None else o["win"]) else 0
     except FileNotFoundError:
         return {"factor": 1.0, "note": "no outcomes yet"}
     tot = sum(n for n, _ in buckets.values())
     bins = {str(b): {"n": n, "win": round(w / n, 3)} for b, (n, w) in buckets.items() if n}
     if tot >= 20:
-        avg_conf = sum(b * n for b, (n, _) in buckets.items()) / tot / 100
         avg_win = sum(w for _, w in buckets.values()) / tot
-        factor = round(max(0.7, min(1.1, avg_win / max(0.1, avg_conf))), 3)   # win << conf -> shrink
+        fld = field_rate(core.know)
+        factor = round(max(0.7, min(1.1, (avg_win / max(0.05, fld)) ** 0.5)), 3)  # sqrt: soften small-n swings
     else:
         factor = 1.0
     core.know["calibration"] = {"bins": bins, "factor": factor, "n": tot}
