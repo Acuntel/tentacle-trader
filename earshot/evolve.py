@@ -57,8 +57,6 @@ def optimize_rules(core, cfg, sample: int = 300) -> dict:
                             r = -stop; break
                         if chg >= target:
                             r = target; break
-                        if j == min(i + 1 + hold, len(closes)) - 1:
-                            r = chg
                         r = chg
                     rets.append(r)
                 util = sum(x if x >= 0 else lam * x for x in rets) / len(rets)   # loss-averse expectancy
