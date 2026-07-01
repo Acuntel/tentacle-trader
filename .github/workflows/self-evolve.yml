@@ -34,6 +34,21 @@ jobs:
       - name: Install deps
         run: pip install -r requirements.txt
 
+      # The daily state backup (Acuntel/tentacle-state) gives CI the REAL learned brain + ledger, so the
+      # FITNESS gate (patch must not worsen prediction Brier on real outcomes) is live here too — without
+      # it selfcode only proves "doesn't crash". Missing token/files degrade gracefully (fitness skips).
+      - name: Pull the learned brain (fitness baseline) from the state backup
+        env:
+          GH_TOKEN: ${{ secrets.STATE_PULL_TOKEN }}
+        run: |
+          mkdir -p state
+          for f in knowledge.json resolved_obs.jsonl; do
+            curl -sf -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github.raw" \
+              "https://api.github.com/repos/Acuntel/tentacle-state/contents/latest/$f" -o "state/$f" \
+              && echo "pulled $f" || echo "no $f (fitness gate will skip)"
+          done
+
       - name: Propose + test-gate one self-improvement
         env:
           # GROQ is the baseline; the others are OPTIONAL repo secrets — when set, selfcode's "code" task

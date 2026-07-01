@@ -37,6 +37,20 @@ jobs:
           git config user.name  "tentacle-self-evolve"
           git config user.email "self-evolve@tentacle.bot"
 
+      # Real brain + ledger from the daily state backup -> the apply gate's FITNESS check (a patch must
+      # not worsen prediction Brier on real outcomes) runs live here too. Degrades gracefully if absent.
+      - name: Pull the learned brain (fitness baseline) from the state backup
+        env:
+          GH_TOKEN: ${{ secrets.STATE_PULL_TOKEN }}
+        run: |
+          mkdir -p state
+          for f in knowledge.json resolved_obs.jsonl; do
+            curl -sf -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github.raw" \
+              "https://api.github.com/repos/Acuntel/tentacle-state/contents/latest/$f" -o "state/$f" \
+              && echo "pulled $f" || echo "no $f (fitness gate will skip)"
+          done
+
       # ---- STAGE (Tentacle, propose time): persist the patch so a later ✅ can apply it ----
       - name: Stage patch
         if: github.event.action == 'stage-approval'

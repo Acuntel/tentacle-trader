@@ -103,6 +103,7 @@ class Earshot:
         # progressive multi-horizon resolution (1h/1d/5d): learning accrues in HOURS, not only after a hold
         lc = cfg.get("learning", {})
         self.learner.set_horizons(lc.get("horizons_hours", [24]), lc.get("horizon_credit", [0.05]))
+        self.observe_cap = int(lc.get("observe_cap", 800))     # pending-observation ceiling (label funnel)
         # warm-start the P(win) model so a fresh volume isn't a cold start (mastery is NOT warm-started)
         try:
             ws = warmstart.run(self.lgate, self.learner, self.sim, cfg)
@@ -293,7 +294,7 @@ class Earshot:
         for c in cands[:5]:
             print(f"    {c.ticker:<6} score {c.confidence:5.1f}  {c.catalyst.value:<18} "
                   f"{getattr(c, '_families', 1)} fam  ~${c.size_usd:.0f}")
-        self.learner.observe(cands)        # every confirmed setup -> a labeled example to learn from
+        self.learner.observe(cands, max_pending=self.observe_cap)  # every worked-up setup -> a labeled example
 
         # 5) act — but NOT if the day is halted, and NEVER when the market is closed (can't trade it)
         if self.daily.halted():

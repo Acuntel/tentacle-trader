@@ -57,7 +57,8 @@ conviction:
 # is free, so buy a lot of it. The mastery ladder still earns ONLY on conviction-grade trades.
 exploration:
   enabled: true
-  top_k: 20              # learning trades opened per cycle (the most-UNCERTAIN qualifying names first)
+  top_k: 30              # learning trades opened per cycle (the most-UNCERTAIN qualifying names first;
+                         #   20->30 now that near-miss workups widened the eligible pool)
   notional_usd: 100      # paper size per learning trade — OFF the real $500 book (bookkeeping only)
   allow_short: true      # take the SHORT side when the model's view is bearish — learn the down-tape too
   short_pwin: 0.28       # P(win) below this (or analyst direction != up) -> short instead of long.
@@ -252,6 +253,8 @@ sim:
 learning:
   horizons_hours: [1, 24, 120]      # resolve each observation at 1h / 1d / 5d (short = fast, long = real)
   horizon_credit: [0.03, 0.05, 0.08]  # credit rate per horizon (short = noisier = lighter); < a real trade's 0.15
+  observe_cap: 2000                 # pending-observation ceiling (800 was saturating at 573 live with the
+                                    #   5-day horizon holding obs open; a full cap silently drops new setups)
 
 # ---- WS6 Learning velocity: make "is it actually learning?" the headline metric, measured honestly ----
 velocity:
@@ -305,8 +308,9 @@ hive:
 forge:
   enabled: true
   every_minutes: 20
-  population: 300              # HUNDREDS of free experiments per generation (raise freely — still $0/CPU)
-  generations_per_tick: 6     # each generation breeds the next => 300 x 6 = 1,800 free experiments/tick
+  population: 500              # HUNDREDS of free experiments per generation (raise freely — still $0/CPU)
+  generations_per_tick: 8     # each generation breeds the next => 500 x 8 = 4,000 free experiments/tick
+                              #   (measured ~1.4s for 1,800 — pure local CPU, no API/ban cost)
   elite_frac: 0.2             # top 20% survive + breed the next hundreds
   explore_frac: 0.1           # 10% fresh random explorers each generation (escape local optima)
   plateau_ticks: 6            # ticks with no improvement before asking the LLM (rare oracle) for a direction

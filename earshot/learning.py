@@ -225,15 +225,17 @@ class Learner:
         ct["wins"] += 1 if a > 0 else 0
         ct["sum_ret"] += a
 
-    # ---- LEARN FROM ALL DATA (not just trades): label every confirmed setup we observe ----
+    # ---- LEARN FROM ALL DATA (not just trades): label every setup we fully worked up ----
     def observe(self, candidates, max_pending: int = 800):
-        """Record every multi-family setup we SEE (traded or not) so it becomes a labeled example.
-        One per ticker per day. This is how the brain learns from the whole data stream."""
+        """Record every setup we SEE and fully analyzed (traded or not) so it becomes a labeled example.
+        One per ticker per day. Widened from multi-family-only to everything in LEARN SCOPE (incl. the
+        bounded near-miss workups): the resolved-obs ledger is what feeds the P(win) model, the Forge,
+        semantic memory, and warm-start — every extra observed setup compounds through all of them."""
         from . import prices
         today = iso(time.time())[:10]
         have = {(o["ticker"], o["day"]) for o in self.obs}
         for c in candidates:
-            if getattr(c, "_families", 1) < 2:        # only confirmed (multi-family) setups
+            if not (getattr(c, "_qualified_learn", False) or getattr(c, "_families", 1) >= 2):
                 continue
             if self.core is not None:
                 self.core.record_leadtime(c)          # which source got here FIRST (lead-time learning)

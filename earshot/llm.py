@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import os
+import random
 import time
 
 try:
@@ -106,7 +107,45 @@ ROUTING = {
 }
 RESERVE = {"low": 0.50, "normal": 0.80, "high": 0.95}     # per-provider daily fraction a priority may use
 _BUDGET_PATH = "state/llm_budget.json"
+_STATS_PATH = "state/llm_stats.json"                      # LEARNED router: per (provider|task) track record
 _COOLDOWN: dict[str, float] = {}                          # name -> epoch until which to skip (after a 429)
+_stats_cache: dict | None = None
+
+
+# ---- THE LEARNED ROUTER — the pool stops being a hand-ordered guess and learns who's good at what ----
+def _stats() -> dict:
+    global _stats_cache
+    if _stats_cache is None:
+        from .persist import load_json
+        _stats_cache = load_json(_STATS_PATH, {})
+    return _stats_cache
+
+
+def _save_stats():
+    from .persist import save_json
+    save_json(_STATS_PATH, _stats())
+
+
+def _record(name: str, task: str, ok: bool, limited: bool = False, latency: float | None = None):
+    d = _stats().setdefault(f"{name}|{task}", {"calls": 0, "ok": 0, "limited": 0, "lat": 0.0})
+    d["calls"] += 1
+    d["ok"] += 1 if ok else 0
+    d["limited"] += 1 if limited else 0
+    if latency is not None:
+        d["lat"] = round(0.9 * d["lat"] + 0.1 * latency, 2) if d["lat"] else round(latency, 2)
+    _save_stats()
+
+
+def feedback(name: str | None, task: str, good: bool):
+    """DOWNSTREAM quality signal — not 'did it answer' but 'was the answer actually good' (a self-code
+    patch survived the test+fitness gate, JSON parsed, a review was actionable). This is what teaches
+    the router which model truly codes/reasons best for US, from our own outcomes."""
+    if not name:
+        return
+    d = _stats().setdefault(f"{name}|{task}", {"calls": 0, "ok": 0, "limited": 0, "lat": 0.0})
+    d["graded"] = int(d.get("graded", 0)) + 1
+    d["good"] = int(d.get("good", 0)) + (1 if good else 0)
+    _save_stats()
 
 
 def _has_key(name: str) -> bool:
@@ -153,7 +192,30 @@ def _spend(name: str, tokens: int):
 
 
 def _chain(task: str) -> list[str]:
-    return ROUTING.get(task, ROUTING["default"])
+    """Preferred order for a task, RE-RANKED by measured performance: answer rate + downstream
+    'was it actually good' grades, with the hand-tuned order as the prior for unproven providers.
+    A 10% exploration swap keeps sampling non-leaders so a recovered/new provider can earn its way
+    up (otherwise one early 429 streak buries a good model forever)."""
+    base = ROUTING.get(task, ROUTING["default"])
+    s = _stats()
+
+    def _score(pos: int, name: str) -> float:
+        prior = 1.0 - pos * 0.02                          # hand order = the prior / tiebreak
+        d = s.get(f"{name}|{task}")
+        if not d or d.get("calls", 0) < 5:
+            # unproven: assume NEUTRAL quality (~0.7) so a proven performer outranks it but a proven
+            # failer sinks below it — same scale as the measured score, hand order breaks ties.
+            return 0.63 + 0.10 * prior
+        ok_rate = (d.get("ok", 0) + 1) / (d.get("calls", 0) + 2)          # laplace-smoothed
+        graded = d.get("graded", 0)
+        good_rate = (d.get("good", 0) + 1) / (graded + 2) if graded else ok_rate
+        return 0.55 * ok_rate + 0.35 * good_rate + 0.10 * prior
+
+    ranked = [n for _, _, n in sorted(((-_score(i, n), i, n) for i, n in enumerate(base)))]
+    if len(ranked) > 2 and random.random() < 0.10:
+        j = random.randrange(1, len(ranked))
+        ranked[0], ranked[j] = ranked[j], ranked[0]
+    return ranked
 
 
 def _call(name: str, system: str, user: str, want_json: bool, max_tokens: int,
@@ -208,13 +270,17 @@ def _ask(system, user, want_json, max_tokens, temperature, timeout, priority, ta
             continue
         if not _budget_ok(name, priority, est):           # daily token cap applies to ALL — caps paid spend too
             continue
+        t0 = time.time()
         content, used, limited = _call(name, system, user, want_json, max_tokens, temperature, timeout)
         if limited:
             _COOLDOWN[name] = now + 300                    # rest a rate-limited provider for 5 min
+            _record(name, task, ok=False, limited=True)
             continue
         if content is not None:
             _spend(name, used or est)                      # track spend for every provider (free + paid)
+            _record(name, task, ok=True, latency=time.time() - t0)   # the router learns who delivers
             return content, name
+        _record(name, task, ok=False)
     return None, None
 
 
@@ -234,14 +300,19 @@ def ask_meta(system: str, user: str, want_json: bool = False, max_tokens: int = 
 
 
 def ask_json(system: str, user: str, **kw) -> dict | None:
-    txt = ask(system, user, want_json=True, **kw)
+    task = kw.get("task", "reason")
+    txt, name = _ask(system, user, True, kw.get("max_tokens", 1024), kw.get("temperature", 0.3),
+                     kw.get("timeout", 30.0), kw.get("priority", "normal"), task, kw.get("avoid"))
     if not txt:
         return None
     try:
-        return json.loads(txt)
+        out = json.loads(txt)
     except Exception:
         try:
             s, e = txt.index("{"), txt.rindex("}")
-            return json.loads(txt[s:e + 1])
+            out = json.loads(txt[s:e + 1])
         except Exception:
+            feedback(name, task, False)                   # answered but unusable — a real quality miss
             return None
+    feedback(name, task, True)                            # parseable structured output = a quality hit
+    return out
