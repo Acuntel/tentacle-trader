@@ -89,21 +89,17 @@ class LearnedGate:
         """Conservative P(win) that leans on Forge-validated features with hand-tuned priors."""
         feats = self.featurize(dossier, verdict)
         base = self.predict(feats)
-        # Forge-found edge (v3): f_profit_margin (negative), quality (negative), is_price (negative),
-        # is_flow (negative). Apply conservative multiplicative adjustments per Free Forge search.
-        adj = 1.0
-        # Forge-found edge (v3): f_profit_margin (negative), quality (negative), is_price (negative),
-        # is_flow (negative). Apply conservative multiplicative adjustments per Free Forge search.
+        # Forge-found edge (v4): is_regulatory, squeeze, f_days_to_cover, f_quality.
         # Only apply adjustments when model is trusted; otherwise return unadjusted base.
         if not self.ready() or self.trust() < 0.3:
             return base
         adj = 1.0
-        adj *= 1.0 - 0.02 * max(0, feats.get("f_profit_margin", 0))       # penalize high profit margin
-        adj *= 1.0 - 0.02 * max(0, feats.get("quality", 0))               # penalize high quality signal
-        adj *= 1.0 - 0.08 * (1.0 if feats.get("is_price", 0) > 0.5 else 0.0)  # stronger penalize price-only per Forge findings
-        adj *= 1.0 - 0.02 * (1.0 if feats.get("is_flow", 0) > 0.5 else 0.0)   # penalize flow-only
+        adj *= 1.0 - 0.03 * (1.0 if feats.get("is_regulatory", 0) > 0.5 else 0.0)  # penalize regulatory per Forge
+        adj *= 1.0 + 0.03 * max(0, feats.get("squeeze", 0))                        # reward squeeze per Forge
+        adj *= 1.0 - 0.03 * max(0, feats.get("f_days_to_cover", 0))                # penalize high days to cover per Forge
+        adj *= 1.0 + 0.03 * max(0, feats.get("f_quality", 0))                      # reward quality per Forge
         # Clamp adjustment to prevent pathological suppression of valid signals
-        adj = max(0.85, min(1.0, adj))
+        adj = max(0.88, min(1.12, adj))
         return max(0.0, min(1.0, base * adj))
 
     def update(self, feats: dict, win: bool):
