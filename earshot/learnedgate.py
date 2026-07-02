@@ -94,10 +94,10 @@ class LearnedGate:
         if not self.ready() or self.trust() < 0.3:
             return base
         adj = 1.0
-        adj *= 1.0 - 0.03 * (1.0 if feats.get("is_regulatory", 0) > 0.5 else 0.0)  # penalize regulatory per Forge
-        adj *= 1.0 + 0.03 * max(0, feats.get("squeeze", 0))                        # reward squeeze per Forge
-        adj *= 1.0 - 0.03 * max(0, feats.get("f_days_to_cover", 0))                # penalize high days to cover per Forge
-        adj *= 1.0 + 0.03 * max(0, feats.get("f_quality", 0))                      # reward quality per Forge
+        adj *= 1.0 - 0.05 * (1.0 if feats.get("is_regulatory", 0) > 0.5 else 0.0)  # penalize regulatory per Forge
+        adj *= 1.0 + 0.05 * max(0, feats.get("squeeze", 0))                        # reward squeeze per Forge
+        adj *= 1.0 - 0.04 * max(0, feats.get("f_days_to_cover", 0))                # penalize high days to cover per Forge
+        adj *= 1.0 + 0.04 * max(0, feats.get("f_quality", 0))                      # reward quality per Forge
         # Clamp adjustment to prevent pathological suppression of valid signals
         adj = max(0.88, min(1.12, adj))
         return max(0.0, min(1.0, base * adj))
