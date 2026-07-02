@@ -100,7 +100,7 @@ class LearnedGate:
         adj = 1.0
         adj *= 1.0 - 0.02 * max(0, feats.get("f_profit_margin", 0))       # penalize high profit margin
         adj *= 1.0 - 0.02 * max(0, feats.get("quality", 0))               # penalize high quality signal
-        adj *= 1.0 - 0.04 * (1.0 if feats.get("is_price", 0) > 0.5 else 0.0)  # stronger penalize price-only per Forge findings
+        adj *= 1.0 - 0.06 * (1.0 if feats.get("is_price", 0) > 0.5 else 0.0)  # stronger penalize price-only per Forge findings
         adj *= 1.0 - 0.02 * (1.0 if feats.get("is_flow", 0) > 0.5 else 0.0)   # penalize flow-only
         # Clamp adjustment to prevent pathological suppression of valid signals
         adj = max(0.85, min(1.0, adj))
