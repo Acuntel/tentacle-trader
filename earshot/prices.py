@@ -106,7 +106,14 @@ def forward_return_pct(ticker: str, entry_ts: float, hold_days: int):
     try:
         h = yf.Ticker(ticker).history(period=f"{hold_days + 10}d")
         if len(h) >= 2:
-            return float((h["Close"].iloc[-1] / h["Close"].iloc[0] - 1) * 100)
+            # Find first close on/after entry to align with actual entry timing
+            pos = None
+            for i, ts in enumerate(h.index):
+                if ts.timestamp() >= entry_ts:
+                    pos = i
+                    break
+            if pos is not None and pos < len(h):
+                return float((h["Close"].iloc[-1] / h["Close"].iloc[pos] - 1) * 100)
     except Exception:
         pass
     return None
