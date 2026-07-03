@@ -37,7 +37,7 @@ conviction:
   min_pwin: 0.40                # once the learned model has >=30 samples, require P(win) above this to fire
   shadow_explore: true          # in shadow, take every setup that clears HARD safety (bypass soft/heuristic
                                 # vetoes) so the learner gets real out-of-sample data. Set false to mirror live.
-  regime_downtrend_premium: 15  # in LIVE, a downtrend tape doesn't bench longs — it raises the score bar by this
+  regime_downtrend_premium: 25  # in LIVE, a downtrend tape doesn't bench longs — it raises the score bar by this
   family_bonus: 0.18            # confidence multiplier per extra family that agrees (cross-confirmation)
   max_runup_pct: 5.0            # if price already ran > this since the signal, the easy move is gone
   size_bands:                   # confidence score -> fraction of the rung's live capital
