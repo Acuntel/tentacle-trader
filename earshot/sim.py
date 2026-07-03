@@ -123,10 +123,23 @@ class SimEngine:
         saturated = self.state["episodes"] >= self.sat_eps
         target_ran = self.sat_per_cycle if saturated else self.per_cycle
         ran = 0
-        for _ in range(target_ran * 3):                         # extra tries since most days aren't events
-            if ran >= target_ran:
+        # pre-filter candidate indices to slash wasted _episode calls and boost throughput
+        candidates = []
+        for _ in range(target_ran * 6):
+            t = random.choice(tickers)
+            bars = history.load(t)
+            if len(bars) < self.hold + 60:
+                continue
+            closes = [c for _, c in bars]
+            i = random.randint(55, len(closes) - self.hold - 1)
+            if closes[i - 1] > 0:
+                r1 = (closes[i] / closes[i - 1] - 1) * 100
+                if r1 >= self.move_pct:
+                    candidates.append((t, bars, i, r1))
+            if len(candidates) >= target_ran:
                 break
-            ep = self._episode(tickers)
+        for t, bars, i, r1 in candidates[:target_ran]:
+            ep = self._episode_from(t, bars, i, r1)
             if not ep:
                 continue
             ran += 1
