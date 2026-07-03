@@ -137,6 +137,17 @@ class ApprovalQueue:
             item["decision"] = "AUTO-APPLIED"
             item["decided_ts"] = iso(time.time())
             self.st["log"] = (self.st["log"] + [item])[-200:]
+            # SCOREBOARD: stamp the loop's vitals at apply time. The coach re-measures ~24h later and
+            # reports whether this change actually MOVED the metrics — "survived the gate" is not the
+            # reward; "improved the recursive loop" is. (know['self_changes'], evaluated by coach.)
+            m0 = self.know.get("model", {})
+            ex0 = self.know.get("explore", {})
+            tr0 = int(ex0.get("trades", 0) or 0)
+            self.know.setdefault("self_changes", []).append({
+                "id": cid, "ts": time.time(), "title": title[:120], "kind": kind,
+                "at": {"n": int(m0.get("n", 0) or 0), "brier": float(m0.get("brier", 0.25) or 0.25),
+                       "explore": tr0, "dir_hits": int(ex0.get("dir_hits", 0) or 0)}})
+            self.know["self_changes"] = self.know["self_changes"][-60:]
             m = item.get("meta") or {}
             notify.send(f"🔧 <b>I changed myself</b>\n\n{notify.esc(m.get('plain') or title)}\n\n"
                         f"<b>Why:</b> {notify.esc(m.get('why') or summary)}\n<i>{notify.esc(str(res))}</i>")

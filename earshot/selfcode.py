@@ -52,10 +52,56 @@ def _unsafe(code) -> bool:
 
 SYSTEM = ("You improve an autonomous trading bot's own Python source. Propose ONE small, safe, "
           "concrete change that fixes a bug or measurably improves it. You may NOT weaken the hard "
-          "risk caps, the real-money gate, or the Gauntlet. Reply ONLY as JSON: "
+          "risk caps, the real-money gate, or the Gauntlet. "
+          "HOT-PATH RULE: only patch code that actually EXECUTES — in `why`, name the caller that "
+          "invokes what you changed. NEVER add or 'improve' a helper nothing calls; if you find dead "
+          "code, propose DELETING it. A patch that merely survives tests but changes no runtime "
+          "behavior is a failure, not a win. Reply ONLY as JSON: "
           '{"file": "earshot/<name>.py", "find": "<exact snippet present once>", '
-          '"replace": "<the improved snippet>", "why": "<one sentence>"}. '
+          '"replace": "<the improved snippet>", "why": "<one sentence incl. the call site>"}. '
           "Keep `find` short and unique; `replace` must be valid Python.")
+
+# Target priority (Brady's law for the self-coder):
+#   1. FIX WHAT'S WRONG — a module the auditor flagged BROKEN jumps the whole queue.
+#   2. IMPROVE ITSELF — most remaining effort goes to the RECURSIVE LOOP core, the modules that turn
+#      signals into labels, labels into models, and models into decisions.
+#   3. COVERAGE — the rest of the codebase keeps a minority share so plumbing bugs don't rot forever.
+LOOP_CORE = ("learning.py", "learnedgate.py", "patterns.py", "brain.py", "core.py", "forge.py",
+             "sim.py", "coach.py", "council.py", "proposer.py", "dossier.py", "memory.py",
+             "histtrain.py", "warmstart.py", "enrich.py", "strategies.py", "evolve.py")
+LOOP_SHARE = 0.75      # fraction of non-emergency attempts aimed at the loop core
+
+
+def _broken_module() -> str | None:
+    """The most recent module the 24/7 auditor flagged 'BROKEN — fix urgently' within the last 48h.
+    Real breakage jumps the queue — fixing what's wrong beats improving what works."""
+    cutoff = iso(time.time() - 48 * 3600)
+    try:
+        lines = open(os.path.join(EVO_DIR, "code_proposals.jsonl")).readlines()[-300:]
+    except Exception:
+        return None
+    for ln in reversed(lines):
+        try:
+            o = json.loads(ln)
+        except Exception:
+            continue
+        if str(o.get("status", "")).startswith("BROKEN") and str(o.get("ts", "")) >= cutoff:
+            f = os.path.basename(str(o.get("file", "")))
+            if f.endswith(".py") and f not in LOCKED and os.path.exists(os.path.join(PKG, f)):
+                return f
+    return None
+
+
+def _pick_target(mods: list[str]) -> str:
+    import random
+    broken = _broken_module()
+    if broken and broken in mods:
+        return broken
+    core = [m for m in mods if m in LOOP_CORE]
+    rest = [m for m in mods if m not in LOOP_CORE]
+    if core and (not rest or random.random() < LOOP_SHARE):
+        return random.choice(core)
+    return random.choice(rest or core)
 
 
 def _mission() -> str:
@@ -68,13 +114,14 @@ def _mission() -> str:
         ex = k.get("explore", {})
         fld = k.get("base_rate", {}).get("ema")
         tr = ex.get("trades", 0)
-        return ("MISSION: raise the bot's LEARNING VELOCITY. Current state: P(win) model "
+        return ("MISSION, in priority order: (1) FIX anything actually broken; (2) raise the bot's "
+                "LEARNING VELOCITY — more labeled samples/day, better calibration, tighter feedback "
+                "loops; (3) only then anything else. Current state: P(win) model "
                 f"n={m.get('n', 0)} brier={m.get('brier', '?')} (lower=better), "
                 f"explore trades={tr}"
                 + (f" dir-hit={ex.get('dir_hits', 0)}/{tr}" if tr else "")
                 + (f", field alpha-win base rate={fld}" if fld else "") +
-                ". Prefer changes that add labeled samples/day, improve calibration, tighten a "
-                "feedback loop, or fix a real bug. Avoid cosmetic refactors.\n\n")
+                ". Avoid cosmetic refactors.\n\n")
     except Exception:
         return ""
 
@@ -169,10 +216,9 @@ def _fitness_check(base: dict | None) -> tuple[bool, str]:
 def _propose() -> tuple[dict | None, str | None]:
     """Ask the pool's best measured coder for ONE concrete patch. Returns (proposal, provider) so the
     gate's verdict can GRADE the model that wrote it (the router learns who actually codes well)."""
-    mods = _modules()
-    # rotate target so the whole codebase evolves over time
-    idx = int(time.time() // 3600) % len(mods)
-    mod = mods[idx]
+    # weighted target: the recursive-loop core gets most attempts (blind clock-rotation guaranteed
+    # cosmetic tweaks to peripheral modules — the loop is what we're here to improve)
+    mod = _pick_target(_modules())
     src = open(os.path.join(PKG, mod)).read()
     r = llm.ask_meta(SYSTEM, _mission() + f"Improve earshot/{mod}. Source:\n" + src[:11000],
                      want_json=True, max_tokens=1200, priority="low", task="code")

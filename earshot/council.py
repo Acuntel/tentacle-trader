@@ -48,13 +48,18 @@ COORD_SYS = (
 CODER_SYS = (
     "You improve an autonomous trading bot's own Python source. Propose ONE small, safe, concrete change "
     "to the given file that fixes a bug or measurably improves it. You may NOT weaken the hard risk caps, "
-    "the real-money gate, or the Gauntlet. Reply ONLY JSON: {\"find\":\"<exact snippet present once in the "
-    "file>\",\"replace\":\"<the improved snippet>\",\"why\":\"<one sentence>\"}. Keep `find` short and "
-    "unique; `replace` must be valid Python.")
+    "the real-money gate, or the Gauntlet. HOT-PATH RULE: only patch code that actually EXECUTES — in "
+    "`why`, name the caller that invokes what you changed. NEVER add or 'improve' a helper nothing calls "
+    "(a past self-change created a dead gate_score() and the loop wasted 7+ patches polishing it); if you "
+    "find dead code, propose DELETING it. Reply ONLY JSON: {\"find\":\"<exact snippet present once in the "
+    "file>\",\"replace\":\"<the improved snippet>\",\"why\":\"<one sentence incl. the call site>\"}. Keep "
+    "`find` short and unique; `replace` must be valid Python.")
 REVIEW_SYS = (
     "You are a SKEPTICAL senior engineer reviewing ANOTHER model's patch to a LIVE trading bot. Reject it "
     "if it could break the loop, changes behavior unsafely, touches a risk rail, or is speculative / not "
-    "clearly justified. Only keep changes you are confident are correct and safe. Reply ONLY JSON: "
+    "clearly justified. KILL any patch to code with no caller (dead code) or whose `why` does not name a "
+    "real call site — 'survives tests' is not 'improves the bot'. Only keep changes you are confident are "
+    "correct, safe, and actually reachable at runtime. Reply ONLY JSON: "
     "{\"verdict\":\"keep|kill\",\"issues\":[\"...\"],\"confidence\":0-100}.")
 JUDGE_SYS = ("Final gate on a code change for a trading bot, given the patch and a reviewer's critique. "
              "Reply ONLY JSON: {\"ship\":true|false,\"why\":\"<short>\"}.")

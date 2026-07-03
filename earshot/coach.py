@@ -102,6 +102,41 @@ class Coach:
         rep.update(self.core.snapshot())                  # the WHOLE shared brain, in one view
         return rep
 
+    def _score_self_changes(self) -> list[str]:
+        """The self-change SCOREBOARD: ~24h after each auto-applied change, compare the loop's vitals
+        (labels gained, Brier, explore dir-hit on the trades SINCE) to the snapshot stamped at apply
+        time. Attribution is approximate (several changes can overlap a day), but it ends the illusion
+        that 'survived the gate' = 'helped': a change that moves nothing gets called out as such, and
+        the verdicts steer the next proposals. Verdicts persist on the change record + the journal."""
+        out = []
+        changes = self.know.get("self_changes") or []
+        if not changes:
+            return out
+        m = self.know.get("model", {})
+        ex = self.know.get("explore", {})
+        now = time.time()
+        for c in changes:
+            if c.get("verdict") or now - c.get("ts", 0) < 24 * 3600:
+                continue
+            a = c.get("at") or {}
+            dn = int(m.get("n", 0) or 0) - int(a.get("n", 0) or 0)
+            db = round(float(m.get("brier", 0.25) or 0.25) - float(a.get("brier", 0.25) or 0.25), 4)
+            tr0, tr1 = int(a.get("explore", 0) or 0), int(ex.get("trades", 0) or 0)
+            h0, h1 = int(a.get("dir_hits", 0) or 0), int(ex.get("dir_hits", 0) or 0)
+            dh = round((h1 - h0) / (tr1 - tr0), 2) if tr1 > tr0 else None
+            good = (db < -0.003) or (dh is not None and dh > 0.5)
+            bad = db > 0.005
+            c["verdict"] = "helped" if good and not bad else ("hurt" if bad else "no measurable effect")
+            c["after"] = {"labels_gained": dn, "d_brier": db, "dir_hit_since": dh}
+            line = (f"{c['id']} \"{c.get('title', '')[:60]}\" -> {c['verdict']} "
+                    f"(Δbrier {db:+.4f}, +{dn} labels"
+                    f"{f', dir-hit since {dh}' if dh is not None else ''})")
+            _append(PROPOSALS, {"ts": iso(time.time()), "status": "SCORED (24h loop-metric verdict)",
+                                "file": "self-change " + c["id"], "change": c.get("title", ""),
+                                "why": line})
+            out.append(line)
+        return out
+
     def run(self, news_signals=None, macro_ctx="") -> dict:
         self.last = time.time()
         patterns = self.learner.patterns
@@ -143,8 +178,20 @@ class Coach:
                 pass
             self.last_backup_day = day
 
+        # SELF-CHANGE SCOREBOARD — every auto-applied change was stamped with the loop's vitals at
+        # apply time (approvals). ~24h later, re-measure: did samples/day, Brier, or explore dir-hit
+        # actually MOVE? The verdict is journaled + fed to the LLM as evidence, so the proposer stops
+        # believing "survived the gate" means "helped" — improvement of the loop is the reward.
+        sc_verdicts = self._score_self_changes()
+
         # (3) the LLM reasons across the ENTIRE brain snapshot + the mother's creed + her feelings
         rep = self._report(news_signals, macro_ctx)
+        if sc_verdicts:                                    # measured self-change verdicts = evidence
+            rep["self_change_scoreboard"] = sc_verdicts[-8:]
+        recent_sc = [c for c in (self.know.get("self_changes") or []) if c.get("verdict")]
+        if recent_sc:                                      # what the last scored changes actually did
+            rep["self_change_recent"] = [
+                f"{c['verdict']}: {c.get('title', '')[:60]}" for c in recent_sc[-6:]]
         traj = rep.get("trajectory", {})
         tuned, lessons, code_props, watch, cfg_props = (
             ["synthesis"] if syn.get("weights_moved") else [], [], [], [], [])
@@ -195,7 +242,7 @@ class Coach:
             self.proposer.harvest(rep)                     # load up scored config-tweak ideas (refills when low)
             if code_props:                                 # a gate-ready code idea joins the same ranked pool
                 try:
-                    patch = selfcode._propose()
+                    patch, _coder = selfcode._propose()    # (proposal, provider) since the learned router
                 except Exception:
                     patch = None
                 if patch and all(k in patch for k in ("file", "find", "replace")):
@@ -225,6 +272,9 @@ class Coach:
             f"of {len(self.book.book) if self.book else 0} strategies ({evo['evolved']} evolved); "
             f"HONESTY: {honesty.get('status', 'n/a')[:70]}; "
             f"trajectory {'↑ growing faster' if traj.get('improving') else 'flat (day ' + str(traj.get('days', 0)) + ')'}")
+        if sc_verdicts:
+            self.last_summary += f"; SCORED {len(sc_verdicts)} self-change(s) on loop metrics: " + \
+                                 " | ".join(v.split(' -> ')[-1][:40] for v in sc_verdicts[:3])
         if forge_r:
             self.last_summary += f"\n    🔨 FORGE (free search): {forge_r}"
         if hive_r:

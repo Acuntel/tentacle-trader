@@ -85,22 +85,11 @@ class LearnedGate:
         z = self.b + sum(self.w.get(k, 0.0) * v for k, v in feats.items())
         return 1.0 / (1.0 + math.exp(-max(-30.0, min(30.0, z))))
 
-    def gate_score(self, dossier: dict, verdict: dict) -> float:
-        """Conservative P(win) that leans on Forge-validated features with hand-tuned priors."""
-        feats = self.featurize(dossier, verdict)
-        base = self.predict(feats)
-        # Forge-found edge (v4): is_regulatory, squeeze, f_days_to_cover, f_quality.
-        # Only apply adjustments when model is trusted; otherwise return unadjusted base.
-        if not self.ready() or self.trust() < 0.3:
-            return base
-        adj = 1.0
-        adj *= 1.0 - 0.05 * (1.0 if feats.get("is_regulatory", 0) > 0.5 else 0.0)  # penalize regulatory per Forge
-        adj *= 1.0 + 0.05 * max(0, feats.get("squeeze", 0))                        # reward squeeze per Forge
-        adj *= 1.0 - 0.04 * max(0, feats.get("f_days_to_cover", 0))                # penalize high days to cover per Forge
-        adj *= 1.0 + 0.04 * max(0, feats.get("f_quality", 0))                      # reward quality per Forge
-        # Clamp adjustment to prevent pathological suppression of valid signals
-        adj = max(0.88, min(1.12, adj))
-        return max(0.0, min(1.0, base * adj))
+    # NOTE (2026-07-03): a former `gate_score()` helper was DELETED here. It was created by a
+    # self-change, never wired to a caller, and then became flypaper — the improve-code lane
+    # "improved" it 7+ times because dead code always survives the gate (it can't break or regress
+    # anything). Forge findings reach the live path through forge.champion_pwin() in brain.py.
+    # If you (the self-coder) are reading this: only patch code with a real call site.
 
     def update(self, feats: dict, win: bool):
         pred = self.predict(feats)

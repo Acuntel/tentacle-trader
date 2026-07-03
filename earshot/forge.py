@@ -255,7 +255,10 @@ class Forge:
             q.append({"id": f"H{nid:04d}", "hash": h, "kind": "improve_code", "spec": "learnedgate.py",
                       "why": (f"Free Forge search found a gating policy worth ~{champ.get('alpha')}% return "
                               f"(+{round(edge, 2)}% vs accept-all); the features that matter most are "
-                              f"{champ.get('top')}. Adjust the P(win) gate to lean on those, conservatively."),
+                              f"{champ.get('top')}. ONLY touch code on the live path: featurize()/predict()/"
+                              "update() are called from brain.evaluate + learning.resolve_*; the champion "
+                              "already reaches the gate via forge.champion_pwin() in brain.evaluate. Do NOT "
+                              "create new helper functions — nothing will call them."),
                       "prio": 75, "ts": iso(time.time())})
             return True
         except Exception:
