@@ -33,8 +33,10 @@ class DistilledJudge:
         target = max(0.0, min(1.0, float(verdict.get("conviction", 50)) / 100.0))
         pred = self.predict(feats) / 100.0
         err = target - pred
+        # clip gradient to avoid exploding updates on large feature values
+        clip = 5.0
         for k, v in feats.items():
-            self.w[k] = self.w.get(k, 0.0) + self.lr * err * v
+            self.w[k] = self.w.get(k, 0.0) + self.lr * err * max(-clip, min(clip, v))
         self.b += self.lr * err
         self.n += 1
         self.mse = 0.99 * self.mse + 0.01 * err * err
