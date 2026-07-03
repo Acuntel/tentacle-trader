@@ -66,7 +66,7 @@ def embed(texts, input_type: str = "query", max_batch: int = 32, max_texts: int 
     for s in range(0, len(todo), max_batch):
         batch = todo[s:s + max_batch]
         try:
-            r = requests.post(URL, timeout=40,
+            r = requests.post(URL, timeout=20,
                               headers={"Authorization": f"Bearer {_key()}", "Content-Type": "application/json"},
                               json={"input": batch, "model": MODEL, "input_type": input_type,
                                     "encoding_format": "float", "truncate": "END"})
