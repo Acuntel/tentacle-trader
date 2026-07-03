@@ -125,6 +125,7 @@ def update_calibration(core) -> dict:
     tot = sum(n for n, _ in buckets.values())
     bins = {str(b): {"n": n, "win": round(w / n, 3)} for b, (n, w) in buckets.items() if n}
     if tot >= 20:
+        # bucket-weighted average win rate, not raw sum of wins / sum of counts
         avg_win = sum(w for _, w in buckets.values()) / tot
         fld = field_rate(core.know)
         factor = round(max(0.7, min(1.1, (avg_win / max(0.05, fld)) ** 0.5)), 3)  # sqrt: soften small-n swings
