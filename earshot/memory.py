@@ -51,6 +51,10 @@ class SemanticMemory:
         self._vecs = embed.embed([r[0] for r in rows], max_texts=self.cap) if rows else []
         self._built = time.time()
 
+    def _maybe_refresh(self):
+        if self._rows is None or (time.time() - self._built) > self.refresh:
+            self._build()
+
     def recall(self, sig: str):
         """Return {n, mean_ret, win_rate} over the k most semantically-similar past setups, or None."""
         if not (embed.available() and sig):
