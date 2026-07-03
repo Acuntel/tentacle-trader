@@ -214,7 +214,7 @@ sources:
 
 # ---- Exit engine (when to SELL) ----
 exits:
-  trail_pct: 6.0               # give back 5% from the peak after a gain -> lock it in
+  trail_pct: 7.5               # give back 5% from the peak after a gain -> lock it in
   trail_arm_pct: 6.0           # only start trailing once up +4%
 
 # ---- Analyst brain: a COMBINATION of the free LLM + the rule heuristic (both vote, then fuse) ----
