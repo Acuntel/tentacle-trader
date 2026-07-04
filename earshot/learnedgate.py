@@ -78,7 +78,7 @@ class LearnedGate:
                 except (TypeError, ValueError):
                     continue
                 if fv == fv and abs(fv) > 1e-9:                 # finite, non-zero (NaN-safe)
-                    feat.setdefault(prefix + str(k), round(math.tanh(fv), 4))
+                    feat[prefix + str(k)] = round(math.tanh(fv), 4)
         return feat
 
     def predict(self, feats: dict) -> float:
