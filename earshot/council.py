@@ -132,7 +132,7 @@ class Hive:
     def _pop(self):
         if not self.q:
             return None
-        self.q.sort(key=lambda t: -int(t.get("prio", 50)))
+        self.q.sort(key=lambda t: (-int(t.get("prio", 50)), t.get("ts", "")))
         return self.q.pop(0)
 
     def _finish(self, task, result):
