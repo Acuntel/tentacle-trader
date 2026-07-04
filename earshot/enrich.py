@@ -70,7 +70,7 @@ class EnrichmentEngine:
         for c in cands:
             if picked >= self.max_per_cycle:
                 break
-            if getattr(c, "_families", 1) >= 2:          # already confirmed -> skip
+            if len(getattr(c, "_families", set())) >= 2:          # already confirmed -> skip
                 continue
             if now - self._probed.get(c.ticker, 0) < self.cooldown:
                 continue
