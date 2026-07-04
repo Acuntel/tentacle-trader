@@ -43,7 +43,7 @@ def build(candidate, macro: str = "") -> dict:
     for s in candidate.signals:
         fams.setdefault(FAMILY.get(s.source, "other"), []).append(s.headline)
 
-    news_events = _distinct_events(fams.get("news", []))
+    news_events = _distinct_events(tuple(fams.get("news", [])))
     # Filing headlines are distinct semantic events even if Jaccard overlaps with news
     filing_events = len(fams.get("filing", []))
     tech = technicals.read(candidate.ticker)
