@@ -59,6 +59,8 @@ def rsi(c, n=14):
     for i in range(len(c) - n, len(c)):
         ch = c[i] - c[i - 1]
         g += max(ch, 0.0); s += max(-ch, 0.0)
+    if g == 0 and s == 0:
+        return 50.0
     if s == 0:
         return 100.0
     rs = (g / n) / (s / n)
