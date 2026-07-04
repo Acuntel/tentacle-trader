@@ -33,7 +33,7 @@ def _realized_vol(ticker: str):
     if not d or len(d["c"]) < 21:
         return None
     c = d["c"]
-    rets = [c[i] / c[i - 1] - 1 for i in range(len(c) - 20, len(c)) if c[i - 1]]
+    rets = [c[i] / c[i - 1] - 1 for i in range(1, len(c)) if c[i - 1]]  # use ALL available returns for better vol estimate
     rets = [r for r in rets if isfinite(r)]               # never let a NaN reach pstdev
     return pstdev(rets) * sqrt(252) if len(rets) >= 10 else None
 
