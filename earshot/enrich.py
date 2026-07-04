@@ -24,7 +24,7 @@ def _stocktwits(ticker: str, weight: float) -> list[RawSignal]:
         r = requests.get(f"https://api.stocktwits.com/api/2/streams/symbol/{ticker}.json",
                          headers={"User-Agent": UA}, timeout=10)
         msgs = r.json().get("messages", [])
-        if len(msgs) < 5:
+        if len(msgs) < 3:
             return []
         def s(m):
             return ((m.get("entities") or {}).get("sentiment") or {}).get("basic")
