@@ -66,7 +66,7 @@ class Proposer:
         self.know = know
         self.ap = approvals
         self.pool = know.setdefault("proposal_pool", [])   # [{hash,title,patch,plain,why,tech,impact,sent}]
-        self.refill_below = int(cfg.get("telegram", {}).get("pool_refill_below", 8))
+        self.refill_below = int(cfg.get("telegram", {}).get("pool_refill_below", 12))
         self.min_impact = int(cfg.get("telegram", {}).get("min_impact", 60))   # HIGH-confidence bar
         self.floor = int(cfg.get("telegram", {}).get("min_impact_floor", 25))  # absolute floor to ever send
         # loosened gate: when nothing clears min_impact, still send the single best idea, flagged low-conf
