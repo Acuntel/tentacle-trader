@@ -212,7 +212,7 @@ class Hive:
         if not patch or not all(k in patch for k in ("find", "replace")):
             return {"status": "no_patch", "coder": coder}
         find, repl = patch["find"], patch["replace"]
-        if find not in src or src.count(find) != 1 or repl == find:
+        if find not in src or src.count(find) != 1 or repl == find or len(repl) > 1000:
             return {"status": "bad_anchor", "coder": coder}     # not a uniquely-applyable edit
         # REVIEWER — a DIFFERENT model than the coder
         rv = llm.ask_json(REVIEW_SYS,
