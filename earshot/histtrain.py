@@ -65,7 +65,7 @@ class HistoricalTrainer:
             dates = [d for d, _ in bars]
             closes = [c for _, c in bars]
             i = random.randint(55, len(closes) - self.hold - 1)
-            if closes[i - 1] <= 0 or (closes[i] / closes[i - 1] - 1) * 100 < self.move_pct:
+            if closes[i - 1] <= 0 or abs(closes[i] / closes[i - 1] - 1) * 100 < self.move_pct:
                 continue
             entry, ret, j = closes[i], 0.0, i + self.hold
             for k in range(i + 1, i + 1 + self.hold):
