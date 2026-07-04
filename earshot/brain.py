@@ -158,7 +158,7 @@ class Brain:
 
             # macro-regime tilt (rate cuts / risk-on help; risk-off hurts)
             if "risk_off" in self.macro:
-                score *= 0.9
+                score *= 0.85
             elif "risk_on" in self.macro:
                 score *= 1.05
             # learned PATTERN recognition: amplify proven setups, set data-driven profit target
