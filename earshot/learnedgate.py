@@ -95,8 +95,11 @@ class LearnedGate:
         pred = self.predict(feats)
         err = (1.0 if win else 0.0) - pred
         lr = self._lr_eff()                            # WS3: fast when ignorant, settles under the flood
+        # L2 regularization on update: decay weights toward zero to prevent rare-feature blowup
+        # from destabilizing the online learner under sample floods.
+        reg = 1e-4 * lr
         for k, v in feats.items():
-            self.w[k] = self.w.get(k, 0.0) + lr * err * v
+            self.w[k] = self.w.get(k, 0.0) * (1.0 - reg) + lr * err * v
         self.b += lr * err
         self.n += 1
         self.brier = 0.99 * self.brier + 0.01 * (pred - (1.0 if win else 0.0)) ** 2   # EMA Brier
