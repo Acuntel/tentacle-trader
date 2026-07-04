@@ -57,7 +57,7 @@ class LearnedGate:
         is_price = 1.0 if "price" in p else 0.0
         feat = {
             "independence": indep, "news_events": news, "opt_bias": opt_b, "tech_bias": tech_b,
-            "squeeze": math.tanh(sqz * 2.0), "quality": qual, "analyst_conv": conv,
+            "squeeze": math.tanh(sqz * 3.0), "quality": qual, "analyst_conv": conv,
             "is_filing": is_filing, "is_options": is_options, "is_price": is_price,
             "indep_x_conv": indep * conv, "opt_x_tech": opt_b * tech_b, "sqz_x_filing": sqz * is_filing,
             "risk_on": 1.0 if "risk_on" in macro else 0.0,
