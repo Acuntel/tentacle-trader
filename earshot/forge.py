@@ -155,7 +155,7 @@ class Forge:
             acc = [rets[i] for i in range(a, b) if scores[i] >= cut]
             if acc:
                 fold_means.append(sum(acc) / len(acc))
-        if len(fold_means) < folds:
+        if len(fold_means) < (folds + 1) // 2:
             return None
         if sum(1 for m in fold_means if m > 0) < (len(fold_means) + 1) // 2:
             return None
