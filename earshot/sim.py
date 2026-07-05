@@ -64,13 +64,23 @@ class SimEngine:
         bars = history.load(t)
         if len(bars) < self.hold + 60:
             return None
-        dates = [d for d, _ in bars]
         closes = [c for _, c in bars]
         i = random.randint(55, len(closes) - self.hold - 1)
         if closes[i - 1] <= 0:
             return None
         r1 = (closes[i] / closes[i - 1] - 1) * 100
         if r1 < self.move_pct:                                   # only act on a real up-catalyst
+            return None
+        return self._episode_from(t, bars, i, r1)
+
+    def _episode_from(self, t: str, bars, i: int, r1: float) -> dict | None:
+        """The episode core, given a pre-sampled (ticker, bars, index, day-1 move %). Self-change A0056
+        rewrote step() to pre-filter candidates and call this directly — but shipped the CALL without
+        the METHOD (the 2026-07-05 every-cycle outage; the phantom-call lint in selfcode._gate now
+        rejects that class statically). This is the method, for real."""
+        dates = [d for d, _ in bars]
+        closes = [c for _, c in bars]
+        if i < 55 or i > len(closes) - self.hold - 1 or closes[i - 1] <= 0:
             return None
         sma50 = sum(closes[i - 50:i]) / 50
         trend = "uptrend" if closes[i] > sma50 else "downtrend"
