@@ -238,13 +238,17 @@ class Earshot:
             tag = "WIN " if o["win"] else "LOSS"
             print(f"  [SELL/{r['exit']}] {tag} {o['ticker']} {o['pnl_pct']:+.1f}% "
                   f"(${o['pnl_usd']:+.2f}) | felt {m['felt']:+.1f} | {m['note']}")
-        # LEARN FROM ALL DATA: label matured observations (confirmed setups we saw, traded or not)
-        learned = self.learner.resolve_observations()
+        # LEARN FROM ALL DATA: label matured observations (confirmed setups we saw, traded or not).
+        # ONLY while the market is OPEN: a label written against a closed market's frozen price is
+        # degenerate — zero drift -> alpha 0 -> "loss" with certainty -> the model learns to predict
+        # ~0 for everything and the Brier plunges to a FAKE-perfect 0.01 (seen live on July 4th).
+        # Matured horizons simply resolve at the next open, where the price actually carries news.
+        learned = self.learner.resolve_observations() if mkt_open else 0
         if learned:
             print(f"  learned from {learned} matured observations (data, not just trades)")
         # WS1: resolve OFF-BOOK learning trades (stop/target/time) — floods patterns/P(win)/weights,
-        # never touches mastery or the $500. Resolves every cycle (market open or closed, like exits).
-        if self.explore_cfg.get("enabled", True) and self.brain.explore:
+        # never touches mastery or the $500. Market-open only (same degenerate-label guard as above).
+        if mkt_open and self.explore_cfg.get("enabled", True) and self.brain.explore:
             exr = self.learner.resolve_learning(int(self.explore_cfg.get("max_open", 300)),
                                                 float(self.explore_cfg.get("credit_rate", 0.10)))
             if exr["resolved"]:

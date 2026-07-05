@@ -77,6 +77,9 @@ jobs:
           git add earshot
           git commit -m "self-evolve: autonomous tested change (compile+import+sim gate; rails locked)"
           git push origin HEAD:main || (git pull --rebase origin main && git push origin HEAD:main)
+          # DEPLOY-INTEGRITY: ship exactly what is ON MAIN after the push — never this runner's tree.
+          # (A push race once deployed a patched sim.py that wasn't on main; it crashed every cycle.)
+          git fetch origin main && git reset --hard origin/main
           # a push alone does NOT rebuild this Railway service -> deploy it so the change goes live
           npm i -g @railway/cli >/dev/null 2>&1 || true
           railway up --service tentacle-trader --detach --ci \

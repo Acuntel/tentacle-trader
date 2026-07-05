@@ -131,6 +131,40 @@ def _modules() -> list[str]:
                   and f not in {"__init__.py", "selfcode.py"})
 
 
+def _phantom_calls() -> list[str]:
+    """AST lint: `self._private(...)` calls with no definition in the module. This is the exact
+    hallucination class that took the live loop DOWN (2026-07-05): a patch invented
+    `self._episode_from(...)` in sim.py — compile/import passed, and the CI sim-batch never reached
+    the call because CI has no history cache, so the crash only fired in production. Underscore
+    methods are class-internal by convention, so a missing one is a hard finding — and it's checkable
+    statically, with zero data."""
+    import ast
+    bad = []
+    for m in sorted(os.listdir(PKG)):
+        if not m.endswith(".py"):
+            continue
+        try:
+            tree = ast.parse(open(os.path.join(PKG, m)).read())
+        except SyntaxError:
+            continue                                    # the compile gate reports this better
+        defined = set()
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                defined.add(node.name)
+            elif isinstance(node, ast.Assign):
+                for t in node.targets:
+                    if (isinstance(t, ast.Attribute) and isinstance(t.value, ast.Name)
+                            and t.value.id == "self"):
+                        defined.add(t.attr)
+        for node in ast.walk(tree):
+            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                    and isinstance(node.func.value, ast.Name) and node.func.value.id == "self"
+                    and node.func.attr.startswith("_") and not node.func.attr.startswith("__")
+                    and node.func.attr not in defined):
+                bad.append(f"{m}: self.{node.func.attr}() is not defined anywhere in the module")
+    return bad
+
+
 def _gate() -> tuple[bool, str]:
     """Prove the working tree is still healthy. Returns (ok, reason)."""
     for m in os.listdir(PKG):
@@ -139,6 +173,9 @@ def _gate() -> tuple[bool, str]:
                 py_compile.compile(os.path.join(PKG, m), doraise=True)
             except py_compile.PyCompileError as e:
                 return False, f"compile fail {m}: {str(e).splitlines()[0][:120]}"
+    phantoms = _phantom_calls()
+    if phantoms:
+        return False, "phantom method call (hallucinated helper): " + "; ".join(phantoms[:3])
     # fresh interpreter so edited modules are actually re-imported + a sim batch runs
     code = ("import yaml; cfg=yaml.safe_load(open('config.yaml'));"
             "import earshot.main;"

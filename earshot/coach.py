@@ -102,6 +102,51 @@ class Coach:
         rep.update(self.core.snapshot())                  # the WHOLE shared brain, in one view
         return rep
 
+    def _improvement_report(self) -> str:
+        """The digest's SELF-IMPROVEMENT section: what the machine changed about itself this week and
+        what those changes MEASURABLY did (24h verdicts), plus what the agents produced. This exists
+        because the old digest headlined the money gauges (mastery/equity/growth-to-goal) — which are
+        frozen by design until an edge is proven — so every day honestly read '0%' while the actual
+        self-improvement work was invisible. Improvement is reported where improvement happens."""
+        sc = self.know.get("self_changes") or []
+        week = time.time() - 7 * 86400
+        recent = [c for c in sc if c.get("ts", 0) >= week]
+        scored = [c for c in recent if c.get("verdict")]
+        helped = [c for c in scored if c["verdict"] == "helped"]
+        hurt = [c for c in scored if c["verdict"] == "hurt"]
+        neutral = len(scored) - len(helped) - len(hurt)
+        lines = [f"• Self-changes this week: {len(recent)} applied → scored so far: "
+                 f"{len(helped)} helped / {neutral} no measurable effect / {len(hurt)} hurt "
+                 f"({len(recent) - len(scored)} awaiting their 24h verdict)."]
+        ex = (helped or scored)
+        if ex:
+            c = ex[-1]
+            a = c.get("after", {})
+            dh = a.get("dir_hit_since")
+            lines.append(f"   latest verdict: \"{c.get('title', '')[:55]}\" → {c['verdict']} "
+                         f"(Δbrier {a.get('d_brier', 0):+.4f}, +{a.get('labels_gained', 0)} labels"
+                         f"{f', dir-hit since {dh}' if dh is not None else ''})")
+        hv = self.know.get("hive", {})
+        fg = self.know.get("forge", {})
+        ch = fg.get("champion") or {}
+        fwd = ch.get("forward_edge")
+        lines.append(f"• Agents: Hive {len(hv.get('done', []))} tasks done, {len(hv.get('queue', []))} queued; "
+                     f"Forge gen {fg.get('generation', 0)}, champion edge {ch.get('edge', '—')}, forward "
+                     f"holdout {fwd if fwd is not None else 'pending'} → "
+                     f"{'earning live influence' if (fwd is not None and fwd > 0) else 'NOT trusted live (honest gate)'}.")
+        try:
+            s = json.load(open("state/llm_stats.json"))
+            coders = sorted(((v.get("good", 0) / max(1, v.get("graded", 1)), k, v)
+                             for k, v in s.items() if k.endswith("|code") and v.get("graded", 0) >= 3),
+                            reverse=True)
+            if coders:
+                _, k, v = coders[0]
+                lines.append(f"• Best coder model right now: {k.split('|')[0]} "
+                             f"({v.get('good')}/{v.get('graded')} patches survived the gate).")
+        except Exception:
+            pass
+        return "\n".join(lines)
+
     def _score_self_changes(self) -> list[str]:
         """The self-change SCOREBOARD: ~24h after each auto-applied change, compare the loop's vitals
         (labels gained, Brier, explore dir-hit on the trades SINCE) to the snapshot stamped at apply
@@ -310,21 +355,26 @@ class Coach:
             }
             self.approvals.daily_digest(
                 vmap.get(vel.get("verdict", "TOO EARLY"), "") + "\n\n"
-                "Still in practice mode — no real money. Daily heartbeat:\n"
-                f"• Son's shadow equity: ${eq} (started $500)" + (f", ~{mret:+.1f}%/mo\n" if isinstance(mret, (int, float)) else "\n") +
-                f"• Mastery: {stt.get('mastery', rep['mastery'])}/{stt.get('needs_mastery', '?')} to unlock the next rung "
-                f"({stt.get('samples', '?')} resolved trades)\n"
-                f"• Learning velocity: {vel.get('n', '?')} P(win) samples"
+                "Still in practice mode — no real money.\n\n"
+                "💰 MONEY GAUGES — these can ONLY move on a proven edge; reading 0 here is the design "
+                "protecting the $500, not a lack of work:\n"
+                f"• Shadow equity ${eq} (started $500)" + (f", ~{mret:+.1f}%/mo" if isinstance(mret, (int, float)) else "") +
+                f"; mastery {stt.get('mastery', rep['mastery'])}/{stt.get('needs_mastery', '?')} "
+                f"({stt.get('samples', '?')} resolved conviction trades)\n\n"
+                "📈 LEARNING GAUGES — this is where day-to-day improvement actually shows:\n"
+                f"• {vel.get('n', '?')} P(win) samples"
                 f"{f' (+{spd}/day)' if spd is not None else ''}, calibration Brier {vel.get('brier', '?')} "
                 f"({btrend}{f', 7d {b7:+.3f}' if b7 is not None else ''}); "
                 f"{vel.get('explore_trades', 0)} practice trades, dir-hit "
                 f"{round(100*vel['dir_hit']) if vel.get('dir_hit') is not None else '?'}%.\n"
                 f"• Today I retuned {syn['weights_moved']} source trust-levels and wrote {len(lessons)} new lesson(s).\n"
-                f"• Self-improvement ideas: considered {len(pool)}, {len(passed)} clear my confidence bar, "
-                f"{len(unsent)} waiting for your ✅/❌.\n"
-                + ("• ⚠️ HONEST: thousands of samples in and calibration still isn't improving — I have found "
+                f"• Idea pipeline: considered {len(pool)}, {len(passed)} clear my confidence bar, "
+                f"{len(unsent)} queued.\n\n"
+                "🔁 SELF-IMPROVEMENT — what I changed about myself and what it measurably did:\n"
+                + self._improvement_report() + "\n"
+                + ("\n⚠️ HONEST: thousands of samples in and calibration still isn't improving — I have found "
                    "NO real edge in this configuration yet.\n" if vel.get("no_edge") else "")
-                + f"• Honest edge check: {honesty.get('status', 'still gathering data')[:130]}")
+                + f"\nHonest edge check: {honesty.get('status', 'still gathering data')[:130]}")
         return {"syn": syn, "rules": rules, "studies": studies, "calib": cal, "redteam": rt,
                 "benchmark": bench, "lessons": lessons, "code_proposals": code_props,
                 "new_sources": new_sources, "by": "groq+brain" if v else "brain"}

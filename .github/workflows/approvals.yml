@@ -102,6 +102,10 @@ jobs:
           if [ -z "$RAILWAY_TOKEN" ]; then
             echo "No RAILWAY_TOKEN secret — the change is merged to main; deploy with: railway up"; exit 0
           fi
+          # DEPLOY-INTEGRITY: ship exactly what is ON MAIN — never this runner's working tree. A push
+          # race once left a patched sim.py deployed-but-not-on-main; it crashed every cycle for hours
+          # (main is the source of truth; a deploy that diverges from it is invisible + undebuggable).
+          git fetch origin main && git reset --hard origin/main
           npm i -g @railway/cli
           railway up --service tentacle-trader --detach --ci || echo "railway up failed — deploy manually with: railway up"
 
