@@ -103,7 +103,7 @@ def _read(ticker: str):
     rv = _realized_vol(ticker)
     iv_rv = round(atm_iv / rv, 2) if (atm_iv and rv) else None
 
-    bias = 0.0
+    bias = 0.0  # neutral starting point before option signals
     if pcr_vol is not None:
         bias += 0.2 if pcr_vol < 0.7 else (-0.2 if pcr_vol > 1.3 else 0.0)
     if skew is not None:
