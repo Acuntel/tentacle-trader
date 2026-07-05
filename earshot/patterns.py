@@ -156,7 +156,7 @@ class PatternMemory:
             if win:
                 st["wins"] += 1
                 st["sum_win_ret"] += pnl_pct
-            st["recent"] = (st.get("recent", []) + [1 if win else 0])[-20:]   # rolling window for decay
+            st["recent"] = (st.get("recent", [])[-19:] + [1 if win else 0])   # rolling window for decay
 
     def report(self, k: int = 5) -> dict:
         rows = [{"sig": s, "n": v["trades"], "win": round(v["wins"] / v["trades"], 2),
