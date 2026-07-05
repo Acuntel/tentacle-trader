@@ -83,7 +83,7 @@ class LearnedGate:
 
     def predict(self, feats: dict) -> float:
         z = self.b + sum(self.w.get(k, 0.0) * v for k, v in feats.items())
-        return 1.0 / (1.0 + math.exp(-max(-30.0, min(30.0, z))))
+        return 1.0 / (1.0 + math.exp(-max(-20.0, min(20.0, z))))
 
     # NOTE (2026-07-03): a former `gate_score()` helper was DELETED here. It was created by a
     # self-change, never wired to a caller, and then became flypaper — the improve-code lane
