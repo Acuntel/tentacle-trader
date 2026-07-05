@@ -70,7 +70,7 @@ def embed(texts, input_type: str = "query", max_batch: int = 32, max_texts: int 
                               headers={"Authorization": f"Bearer {_key()}", "Content-Type": "application/json"},
                               json={"input": batch, "model": MODEL, "input_type": input_type,
                                     "encoding_format": "float", "truncate": "END"})
-            if r.status_code != 200:
+            if r.status_code != 200 or not r.json().get('data'):
                 continue
             for j, d in enumerate(r.json().get("data", [])):
                 v = d.get("embedding")
