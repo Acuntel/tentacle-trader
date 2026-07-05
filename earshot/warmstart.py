@@ -33,8 +33,9 @@ def _replay_ledger(lgate, cap: int) -> int:
             r = json.loads(line)
         except Exception:
             continue
-        if r.get("feat"):
-            lgate.update(r["feat"], bool(r["win"]))
+        feat = r.get("feat")
+        if feat is not None and r.get("win") is not None:
+            lgate.update(feat, bool(r["win"]))
             n += 1
     lgate.lr = old_lr
     return n
