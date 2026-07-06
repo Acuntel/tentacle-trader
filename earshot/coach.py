@@ -168,7 +168,12 @@ class Coach:
             db = round(float(m.get("brier", 0.25) or 0.25) - float(a.get("brier", 0.25) or 0.25), 4)
             tr0, tr1 = int(a.get("explore", 0) or 0), int(ex.get("trades", 0) or 0)
             h0, h1 = int(a.get("dir_hits", 0) or 0), int(ex.get("dir_hits", 0) or 0)
-            dh = round((h1 - h0) / (tr1 - tr0), 2) if tr1 > tr0 else None
+            # AUDIT FIX: dir-hit needs a MINIMUM SAMPLE — one lucky trade (1/1 = 1.0 > 0.5) was enough
+            # to stamp a permanent "helped" verdict that then steered the proposer LLM. And when there
+            # is no evidence either way yet, DEFER (up to 72h) instead of guessing.
+            dh = round((h1 - h0) / (tr1 - tr0), 2) if (tr1 - tr0) >= 5 else None
+            if dn < 20 and dh is None and now - c.get("ts", 0) < 72 * 3600:
+                continue                                 # too little new data — wait, don't guess
             good = (db < -0.003) or (dh is not None and dh > 0.5)
             bad = db > 0.005
             c["verdict"] = "helped" if good and not bad else ("hurt" if bad else "no measurable effect")

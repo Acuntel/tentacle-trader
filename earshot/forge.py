@@ -72,8 +72,17 @@ def champion_pwin(know, feats, min_edge: float = 0.3, min_fwd: float = 0.0):
     w, fn = ch.get("w") or [], ch.get("feats") or []
     if len(w) != len(fn) or not fn:
         return None
+    # AUDIT FIX: the raw score z is a RANKING value with arbitrary scale/offset — squashing it through
+    # a 0.5-centered sigmoid dragged nearly every live P(win) toward 0 (measured median 0.0023).
+    # Anchor at the champion's own accept CUTOFF (score there = field-neutral) scaled by the training
+    # score std, and center the output on the field base rate with bounded influence.
+    cut, std = ch.get("cut"), ch.get("std")
+    if cut is None or not std:
+        return None                                    # pre-calibration champion -> no live influence
+    from .patterns import field_rate
+    fld = field_rate(know)
     z = sum(w[i] * float(feats.get(fn[i], 0) or 0) for i in range(len(fn)))
-    return 1.0 / (1.0 + math.exp(-max(-30.0, min(30.0, z))))
+    return max(0.05, min(0.95, fld + 0.25 * math.tanh((z - float(cut)) / (2.0 * float(std)))))
 
 
 def _percentile(sorted_vals, q):
@@ -202,6 +211,14 @@ class Forge:
                                    "alpha": round(best_s, 4), "feats": feats,
                                    "top": [f"{k}:{v:+.2f}" for k, v in top], "ts": iso(time.time())}
             self.fg["hist"] = (self.fg["hist"] + [round(best_s, 4)])[-50:]
+            # calibration for champion_pwin: the accept CUTOFF (the field-neutral score) + score std,
+            # so the live blend is anchored to what the champion actually means by "accept"
+            bscores = sorted(sum(w * v for w, v in zip(best_g["w"], vec)) for vec in train_vecs)
+            if bscores:
+                bmean = sum(bscores) / len(bscores)
+                bvar = sum((s - bmean) ** 2 for s in bscores) / max(1, len(bscores) - 1)
+                self.fg["champion"]["cut"] = round(_percentile(bscores, 1.0 - best_g["keep"]), 4)
+                self.fg["champion"]["std"] = round(max(1e-6, bvar ** 0.5), 4)
             baseline = sum(train_rets) / len(train_rets)        # accept-everything = the "do nothing" bar
             edge = best_s - baseline
             self.fg["champion"]["edge"] = round(edge, 4)        # walk-forward edge over accept-all (train)
@@ -211,7 +228,8 @@ class Forge:
                 hscores = [sum(w * v for w, v in zip(best_g["w"], vec)) for vec in hold_vecs]
                 hcut = _percentile(sorted(hscores), 1.0 - best_g["keep"])
                 acc = [hold_rets[k] for k in range(len(hold_rets)) if hscores[k] >= hcut]
-                if len(acc) >= 5:
+                if len(acc) >= 20:   # AUDIT FIX: 5 accepted holdout rows was a coin-flip sample — a
+                                     # lucky handful could hand the champion live influence
                     fwd_edge = round(sum(acc) / len(acc) - sum(hold_rets) / len(hold_rets), 4)
             self.fg["champion"]["forward_edge"] = fwd_edge      # None until enough forward data; gates live use
             escalated = False

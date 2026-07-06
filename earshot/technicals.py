@@ -30,14 +30,18 @@ def _fetch(ticker: str, days: int):
         h = yf.Ticker(ticker).history(period=f"{days}d")
         if len(h) < 6:
             return None
-        o, hi, lo, cl, v = [], [], [], [], []
-        for oo, hh, ll, cc, vv in zip(h["Open"], h["High"], h["Low"], h["Close"], h["Volume"]):
+        o, hi, lo, cl, v, dts = [], [], [], [], [], []
+        for ts, oo, hh, ll, cc, vv in zip(h.index, h["Open"], h["High"], h["Low"], h["Close"], h["Volume"]):
             oo, hh, ll, cc, vv = float(oo), float(hh), float(ll), float(cc), float(vv)
             if not all(math.isfinite(x) for x in (oo, hh, ll, cc)):
                 continue                                  # drop NaN/inf rows (yfinance holiday/partial gaps)
             o.append(oo); hi.append(hh); lo.append(ll); cl.append(cc)
             v.append(vv if math.isfinite(vv) else 0.0)
-        return {"o": o, "h": hi, "l": lo, "c": cl, "v": v} if len(cl) >= 6 else None
+            try:
+                dts.append(str(ts.date()))
+            except Exception:
+                dts.append("")
+        return {"o": o, "h": hi, "l": lo, "c": cl, "v": v, "dt": dts} if len(cl) >= 6 else None
     except Exception:
         return None
 
@@ -67,35 +71,9 @@ def rsi(c, n=14):
     return 100 - 100 / (1 + rs)
 
 
-def atr(d, n=14):
-    h, l, c = d["h"], d["l"], d["c"]
-    if len(c) < n + 1:
-        return None
-    trs = [max(h[i] - l[i], abs(h[i] - c[i - 1]), abs(l[i] - c[i - 1]))
-           for i in range(len(c) - n, len(c))]
-    return sum(trs) / n
-
-
-def _ema(xs, n):
-    k = 2 / (n + 1)
-    e = sum(xs[:n]) / n
-    for x in xs[n:]:
-        e = x * k + e * (1 - k)
-    return e
-
-
-def _ema_series(xs, n):
-    k = 2 / (n + 1)
-    e = sum(xs[:n]) / n
-    out = [e]
-    for x in xs[n:]:
-        e = x * k + e * (1 - k)
-        out.append(e)
-    return out
-
-
-def macd_line(c):
-    return (_ema(c, 12) - _ema(c, 26)) if len(c) >= 26 else None
+# NOTE: a dead indicator cluster (atr / _ema / _ema_series / macd_line) was DELETED here — zero
+# callers anywhere, and it had absorbed multiple approved self-changes (A0094, adcec53). If MACD/
+# ATR are ever wanted, wire them into read()'s bias in the same change that adds them.
 
 
 # ---- candlestick detection (operates on the most recent candles) ----
@@ -166,11 +144,19 @@ def read(ticker: str) -> dict | None:
     if not d:
         return None
     c = d["c"]
-    bull, bear = patterns(d)
+    # AUDIT FIX: candlestick patterns must read COMPLETED candles — during a session yfinance's last
+    # daily bar is today's IN-PROGRESS partial (its shape mutates all day, so entry vetoes and exit
+    # triggers flickered with every tick). Patterns + volume-confirm use completed bars; price,
+    # trend and near_high keep the live values.
+    import datetime as _dt
+    dcomp = d
+    if d.get("dt") and d["dt"][-1] == _dt.date.today().isoformat() and len(c) >= 7:
+        dcomp = {k: (val[:-1] if isinstance(val, list) else val) for k, val in d.items()}
+    bull, bear = patterns(dcomp)
     r = rsi(c)
     s20, s50 = sma(c, 20), sma(c, 50)
     price = c[-1]
-    vol_ratio = (d["v"][-1] / (sma(d["v"], 20) or d["v"][-1])) if sma(d["v"], 20) else 1.0
+    vol_ratio = (dcomp["v"][-1] / (sma(dcomp["v"], 20) or dcomp["v"][-1])) if sma(dcomp["v"], 20) else 1.0
     trend = "up" if (s50 and price > s50) else ("down" if s50 else "flat")
 
     bias = 0.0

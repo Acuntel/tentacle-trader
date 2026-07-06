@@ -186,7 +186,14 @@ class Proposer:
             cid = self.ap.propose("config", title, p["why"], patches=p["patch"],
                                   meta={"plain": plain, "why": p["why"], "tech": p["tech"],
                                         "impact": imp, "low_conf": low_conf})
-            p["sent"] = True                               # don't re-offer (dup/denied handled by ApprovalQueue)
+            # AUDIT FIX: propose() returns None for TEMPORARY blocks too (knob cooldown, pacing,
+            # notify-off) — unconditionally marking sent silently discarded those ideas forever.
+            # Final states (accepted / true dup / previously denied) mark sent; temporary blocks
+            # leave the idea queued for a later pass.
+            from .approvals import _hash as _ap_hash
+            h = _ap_hash("config", title, p["patch"])
+            if cid is not None or h in self.ap.st.get("seen", {}) or h in self.ap.st.get("denied", {}):
+                p["sent"] = True
             self.know["proposal_pool"] = self.pool
             return cid
         return None
