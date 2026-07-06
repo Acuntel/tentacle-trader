@@ -87,8 +87,10 @@ class Coach:
         losses = []
         try:
             with open("state/dungeon/post_mortems.jsonl") as f:
-                losses = [json.loads(x)["root_cause"] for x in f.readlines()[-5:]]
-        except Exception:
+                lines = f.readlines()
+                if lines:
+                    losses = [json.loads(x)["root_cause"] for x in lines[-5:]]
+        except (FileNotFoundError, json.JSONDecodeError, KeyError):
             pass
         rep = {"creed": self.instinct.creed(), "mood": self.instinct.mood(),
                "emotion": self.instinct.emotion(), "ambition": self.instinct.ambition(),
