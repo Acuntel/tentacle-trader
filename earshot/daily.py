@@ -35,6 +35,8 @@ class DailyGuard:
         self.step = float(r.get("caution_step", 5))
         self.cmax = int(r.get("caution_max", 6))
         self.s = _load(DAILY_PATH, {"date": None, "caution": 0})
+        # heal any negative caution already persisted on the volume (the pre-fix decay bug)
+        self.s["caution"] = max(0, self.s.get("caution", 0))
 
     @staticmethod
     def _today() -> str:
@@ -46,7 +48,10 @@ class DailyGuard:
         if self.s.get("date") != d:
             breached = self.s.get("halted", False)
             caution = self.s.get("caution", 0)
-            caution = min(self.cmax, caution + (1 if breached else -1))
+            # AUDIT FIX (night-audit 2): the decay must FLOOR AT ZERO. Without max(0, ...), every clean
+            # day pushed caution further negative (seen live at -7 -> caution_bump -35 -> conviction
+            # bar -19: the score gate silently disabled itself, one clean day at a time).
+            caution = max(0, min(self.cmax, caution + (1 if breached else -1)))
             self.s = {"date": d, "start_equity": equity_now, "low": equity_now,
                       "halted": False, "caution": caution, "resumed_after_breach": breached}
             _save(DAILY_PATH, self.s)
