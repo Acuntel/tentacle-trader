@@ -204,7 +204,8 @@ class Hive:
         fname = os.path.basename(task["spec"]) if task["spec"].endswith(".py") else None
         if not fname or fname in LOCKED or not os.path.exists(os.path.join(PKG, fname)):
             return {"status": "skipped", "why": "no valid/allowed target file"}
-        src = open(os.path.join(PKG, fname)).read()
+        with open(os.path.join(PKG, fname)) as f:
+            src = f.read()
         cm = llm.ask_meta(CODER_SYS, f"Goal: {task.get('why') or task['spec']}\nFile earshot/{fname}:\n" + src[:10000],
                           want_json=True, max_tokens=1100, priority="low", task="code")
         patch = _json(cm.get("content"))
