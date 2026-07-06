@@ -145,6 +145,12 @@ class Coach:
                              f"({v.get('good')}/{v.get('graded')} patches survived the gate).")
         except Exception:
             pass
+        try:
+            bs = self.know.get("backup_status") or {}
+            if bs.get("status") in ("partial", "failed") or bs.get("failed"):
+                lines.append(f"• ⚠️ Brain backup {bs.get('status')}: {', '.join(bs.get('failed', []))[:120]}")
+        except Exception:
+            pass
         return "\n".join(lines)
 
     def _score_self_changes(self) -> list[str]:
@@ -223,7 +229,10 @@ class Coach:
                 from . import backup as _bk
                 bcfg = self.cfg.get("backup", {})
                 if bcfg.get("enabled", True) and bcfg.get("github_repo"):
-                    _bk.push_state(bcfg.get("github_repo"))
+                    bres = _bk.push_state(bcfg.get("github_repo"))
+                    # AUDIT FIX: the result was discarded — a permanently failing backup was invisible
+                    self.know["backup_status"] = {"day": day, "status": bres.get("status"),
+                                                  "failed": bres.get("failed") or []}
             except Exception:
                 pass
             self.last_backup_day = day
@@ -238,6 +247,10 @@ class Coach:
         rep = self._report(news_signals, macro_ctx)
         if sc_verdicts:                                    # measured self-change verdicts = evidence
             rep["self_change_scoreboard"] = sc_verdicts[-8:]
+        try:                                               # AUDIT FIX: sim.findings() had zero callers —
+            rep["sim_findings"] = self.sim.findings()      # the decade's best/worst patterns now reach the LLM
+        except Exception:
+            pass
         recent_sc = [c for c in (self.know.get("self_changes") or []) if c.get("verdict")]
         if recent_sc:                                      # what the last scored changes actually did
             rep["self_change_recent"] = [
@@ -274,6 +287,16 @@ class Coach:
         for p in code_props:
             _append(PROPOSALS, {"ts": iso(time.time()), "status": "PROPOSED — review & merge",
                                 "file": p.get("file"), "change": p.get("change"), "why": p.get("why")})
+        # AUDIT FIX: the LLM's config_changes were harvested then DROPPED (their consumer was deleted
+        # in 4762e9c) — route them through the proposer's ranked pool like every other idea.
+        if self.proposer is not None:
+            for p in cfg_props:
+                try:
+                    self.proposer.add_config(str(p.get("setting", "")), p.get("to"),
+                                             plain=f"shift {p.get('setting')} {p.get('from')} → {p.get('to')}",
+                                             why=str(p.get("why", ""))[:200], impact=45)
+                except Exception:
+                    pass
         new_sources = []
         if self.scout is not None:
             try:

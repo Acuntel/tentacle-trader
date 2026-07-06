@@ -18,7 +18,10 @@ except Exception:  # pragma: no cover
 API = "https://api.github.com"
 # the irreplaceable brain (history/ is excluded — it's re-downloadable yfinance bars)
 CRITICAL = ["knowledge.json", "outcomes.jsonl", "sim.json", "ladder.json", "open_positions.json",
-            "observations.json", "resolved_obs.jsonl", "self_review.jsonl"]
+            "observations.json", "resolved_obs.jsonl", "self_review.jsonl",
+            # AUDIT: the WS1 learning book + its ledger + the dungeon post-mortems are irreplaceable
+            # learned state too — they were silently missing from the daily off-volume backup
+            "learning_positions.json", "learning_outcomes.jsonl", "dungeon/post_mortems.jsonl"]
 MAX_FILE = 5_000_000        # skip anything large (the contents API is for small files)
 
 
@@ -32,7 +35,10 @@ def _put(repo: str, token: str, path: str, data: bytes, msg: str) -> bool:
          "X-GitHub-Api-Version": "2022-11-28"}
     sha = None
     try:
-        g = requests.get(url, headers=h, timeout=20)
+        # AUDIT FIX: the sha lookup must use the OBJECT media type — the default content type errors
+        # for files >1MB, so the PUT then 422s ("sha wasn't supplied") forever once a growing file
+        # (knowledge.json, resolved_obs.jsonl) crosses 1MB — a silent, permanent backup failure.
+        g = requests.get(url, headers={**h, "Accept": "application/vnd.github.object+json"}, timeout=20)
         if g.status_code == 200:
             sha = g.json().get("sha")               # overwrite the existing file
     except Exception:
@@ -65,6 +71,7 @@ def push_state(repo: str | None, state_dir: str = "state", files=None) -> dict:
         except Exception:
             continue
         if len(data) > MAX_FILE:
+            fail.append(f"{name} (>{MAX_FILE // 1_000_000}MB, skipped)")   # surfaced, not silent
             continue
         (ok if _put(repo, token, f"latest/{name}", data, f"state backup {day}: {name}") else fail).append(name)
     return {"status": "ok" if (ok and not fail) else ("partial" if ok else "failed"),

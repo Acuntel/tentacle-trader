@@ -119,6 +119,5 @@ jobs:
           ID: ${{ github.event.client_payload.id }}
         run: |
           rm -f "pending/${ID}.json" || true
-          echo "{\"id\": \"${ID}\", \"decision\": \"denied\"}" >> decisions.jsonl
           git add -A && git commit -m "denied ${ID} (Telegram)" || { echo "nothing to discard"; exit 0; }
           git push origin main || (git pull --rebase origin main && git push origin main)

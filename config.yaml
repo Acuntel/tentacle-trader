@@ -146,7 +146,8 @@ market:
 technicals:
   enabled: true
   rsi_overbought: 70
-  rsi_oversold: 30
+  # AUDIT: rsi_oversold was deleted — no code ever read it (technicals hardcodes the 30 floor);
+  # a knob the autonomous tuner can turn that does NOTHING is worse than no knob.
   entry_veto_on_bearish_reversal: true   # block a BUY into a shooting-star / bearish-engulfing at the highs
   exit_on_bearish_reversal: true         # a bearish reversal candle (+overbought / trend-break) -> take the exit
 
@@ -371,7 +372,6 @@ telegram:
 # RAILWAY_TOKEN (project token) for the auto-deploy. Without them, approvals are saved to a queue file.
 approvals:
   enabled: true
-  scope: notable               # code + new sources + config/strategy threshold shifts ("everything notable")
   auto_deploy: true            # approve -> commit to main + railway up (real-money gate stays locked regardless)
   autonomous: true             # FULL internal autonomy: apply self-changes + TEXT Brady (no ✅/❌ questions)
   knob_cooldown_min: 2880      # 6h -> 48h: don't re-tune the SAME knob for 2 days (kills the fast oscillation)

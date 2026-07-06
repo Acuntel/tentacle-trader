@@ -45,7 +45,10 @@ class StrategyBook:
         for k in list(self.stats):              # migrate: drop any pre-walk-forward stats so we never
             if not (isinstance(self.stats[k], dict) and "folds" in self.stats[k]):  # crash on old schema
                 del self.stats[k]
+            elif not self.stats[k].get("cal"):  # AUDIT: fold semantics changed to CALENDAR bins —
+                del self.stats[k]               # relative-fold stats must not mix into calendar folds
         self.book = self._generate(self._count())
+        self._inject_hive()                     # designed strategies from the Hive strategist compete too
 
     def _count(self) -> int:
         return max(COUNT_MIN, min(COUNT_MAX, int(self.core.know.get("strategy_count", self.cfg_count))))
@@ -69,10 +72,33 @@ class StrategyBook:
     def _params(d: dict) -> dict:
         return {k: v for k, v in (d or {}).items() if k != "id"}
 
+    def _inject_hive(self):
+        """AUDIT FIX: the Hive STRATEGIST's designs used to land in know['hive']['strategies'] and go
+        NOWHERE (the only consumers were the coordinator prompt and a count) — an entire agent role
+        producing dead output. Designs that carry the executable grid parameters now enter the book
+        as H-* entries and COMPETE in the same walk-forward tournament as everything else."""
+        seen_ids = {s["id"] for s in self.book}
+        for d in (self.core.know.get("hive", {}).get("strategies") or [])[-20:]:
+            try:
+                s = {"style": str(d.get("style", "")), "min_move": int(d.get("min_move", 0)),
+                     "stop": int(d.get("stop", 0)), "target": int(d.get("target", 0)),
+                     "hold": int(d.get("hold", d.get("hold_days", 0))),
+                     "uptrend": bool(d.get("uptrend", True))}
+            except Exception:
+                continue
+            if not rh_ok(s) or not (1 <= s["min_move"] <= 15 and 3 <= s["stop"] <= 15
+                                    and 5 <= s["target"] <= 30 and 1 <= s["hold"] <= 15):
+                continue
+            sid = f"H-{s['style'][:4]}-{s['min_move']}-{s['stop']}-{s['target']}-{s['hold']}"
+            if sid not in seen_ids:
+                self.book.append({"id": sid, **s})
+                seen_ids.add(sid)
+
     def resize_if_requested(self):
         want = self._count()
-        if want != len(self.book):
+        if want != len(self.book) - sum(1 for s in self.book if s["id"].startswith("H-")):
             self.book = self._generate(want)               # the bot controls how many it tests
+            self._inject_hive()
 
     def _trade(self, s: dict, closes: list[float], dates: list[str], i: int):
         """Return the ALPHA of the trade (return minus SPY over the same dates) so the tournament
@@ -109,7 +135,7 @@ class StrategyBook:
 
     @staticmethod
     def _blank(strat: dict) -> dict:
-        return {"folds": {}, "reg": {}, "n": 0, "def": strat}
+        return {"folds": {}, "reg": {}, "n": 0, "def": strat, "cal": True}
 
     def evaluate(self) -> dict:
         if not self.on:
@@ -132,12 +158,25 @@ class StrategyBook:
             closes = [c for _, c in bars]
             L = len(closes)
             i = random.randint(252, L - 11)
-            bsize = L / self.folds
+            # AUDIT FIX: folds are CALENDAR bins over a fixed 10y window, not per-ticker relative
+            # position — histories of different lengths (2016-2026 vs 2024-2026) used to land the SAME
+            # calendar period in different folds, quietly breaking the walk-forward time separation.
+            import datetime as _dt
+            try:
+                d_ord = _dt.date.fromisoformat(dates[i]).toordinal()
+            except Exception:
+                continue
+            today_ord = _dt.date.today().toordinal()
+            span = 3650.0
+            rel = 1.0 - (today_ord - d_ord) / span
+            if rel < 0:
+                continue                                    # older than the window
             # PURGE + EMBARGO: drop events whose hold window could straddle a fold boundary, so a
             # train trade never leaks into the adjacent test fold (leak-free walk-forward CV).
-            if min(abs(i - round(k * bsize)) for k in range(1, self.folds)) < embargo:
+            boundaries = [today_ord - span + k * span / self.folds for k in range(1, self.folds)]
+            if boundaries and min(abs(d_ord - b) for b in boundaries) < max(embargo, 18):
                 continue
-            fold = min(self.folds - 1, int((i / L) * self.folds))   # which TIME period (walk-forward)
+            fold = min(self.folds - 1, int(min(0.999, rel) * self.folds))   # calendar walk-forward bin
             regime = "up" if closes[i] > (sum(closes[i - 50:i]) / 50) else "down"
             events.append((closes, dates, i, fold, regime))
         ran = 0

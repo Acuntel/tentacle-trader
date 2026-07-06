@@ -44,7 +44,8 @@ def build(candidate, macro: str = "") -> dict:
         fams.setdefault(FAMILY.get(s.source, "other"), []).append(s.headline)
 
     news_events = _distinct_events(tuple(fams.get("news", [])))
-    # Filing headlines are distinct semantic events even if Jaccard overlaps with news
+    # Filing headlines are distinct semantic events even if Jaccard overlaps with news.
+    # AUDIT FIX: this was computed and thrown away (write-only) — now returned + featurized.
     filing_events = len(fams.get("filing", []))
     tech = technicals.read(candidate.ticker)
     opt = options.read(candidate.ticker)
@@ -79,5 +80,6 @@ def build(candidate, macro: str = "") -> dict:
 
     return {"ticker": candidate.ticker, "catalyst": candidate.catalyst.value, "macro": macro,
             "pillars": sorted(pillars), "independence": len(pillars), "news_events": news_events,
+            "filing_events": filing_events,
             "n_sources": candidate.n_independent, "tech": tech, "options": opt, "fundamentals": fund,
             "headlines": [s.headline for s in candidate.signals][:6]}

@@ -65,8 +65,11 @@ JUDGE_SYS = ("Final gate on a code change for a trading bot, given the patch and
              "Reply ONLY JSON: {\"ship\":true|false,\"why\":\"<short>\"}.")
 STRAT_SYS = (
     "You are a quant strategist for a long-only equities bot on free data. Given the idea and the bot's "
-    "brain, specify ONE concrete, testable strategy. Reply ONLY JSON: {\"name\":\"...\",\"entry\":\"...\","
-    "\"exit\":\"...\",\"hold_days\":N,\"families\":[\"...\"],\"rationale\":\"...\"}. Be realistic; no "
+    "brain, specify ONE concrete strategy IN THE TOURNAMENT'S EXECUTABLE GRAMMAR so it actually gets "
+    "backtested (free-text designs go nowhere). Reply ONLY JSON: {\"name\":\"...\", "
+    "\"style\":\"momentum|breakout|pullback\", \"min_move\":1-15 (trigger day-move %), \"stop\":3-15, "
+    "\"target\":5-30, \"hold\":1-15 (days), \"uptrend\":true|false (require price>SMA50), "
+    "\"rationale\":\"...\"}. Long-only, hold>=1 day, no options/shorts/leverage. Be realistic; no "
     "promises of guaranteed profit.")
 
 

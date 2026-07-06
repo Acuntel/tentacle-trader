@@ -73,6 +73,7 @@ class LearnedGate:
         for pil in ("regulatory", "crowd", "demand", "onchain", "flow", "altdata"):
             feat["is_" + pil] = 1.0 if pil in p else 0.0
         feat["n_src"] = min(float(dossier.get("n_sources", 0) or 0), 10) / 10.0
+        feat["filing_events"] = min(float(dossier.get("filing_events", 0) or 0), 5) / 5.0
         for prefix, d in (("t_", t), ("o_", o), ("f_", f)):
             for k, v in (d.items() if isinstance(d, dict) else ()):
                 try:

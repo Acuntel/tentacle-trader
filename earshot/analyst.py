@@ -70,7 +70,6 @@ class Analyst:
             except Exception:
                 self._client = None
         self._groq = (self.provider not in ("anthropic", "heuristic")) and llm.have_brain()
-        self._llm_cache: dict[str, dict] = {}
 
     @property
     def llm_live(self) -> bool:
@@ -119,7 +118,10 @@ class Analyst:
         if d is not None:                                     # learn to MIMIC the teacher
             try:
                 from .learnedgate import LearnedGate
-                d.record(LearnedGate.featurize(dossier, out), out)
+                # AUDIT FIX: the student must learn the RAW LLM verdict from PRE-LLM features — it was
+                # trained on the blended output (50% heuristic), so at fallback time it echoed the
+                # heuristic back at itself instead of approximating the missing teacher.
+                d.record(LearnedGate.featurize(dossier, h), v)
             except Exception:
                 pass
         return out

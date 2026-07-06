@@ -51,17 +51,14 @@ jobs:
 
       - name: Propose + test-gate one self-improvement
         env:
-          # GROQ is the baseline; the others are OPTIONAL repo secrets — when set, selfcode's "code" task
-          # routes to the stronger coders (DeepSeek/Kimi/GLM/Qwen) first. Missing ones resolve to "" and skip.
-          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          # Only secrets that actually EXIST on the repo are passed (AUDIT: GROQ/GEMINI/DEEPSEEK/GLM
+          # were referenced but never set — the "baseline" coder never participated; the pool below is
+          # what really powers CI self-coding).
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           NV_KIMI_KEY: ${{ secrets.NV_KIMI_KEY }}
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
           CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
           SAMBANOVA_API_KEY: ${{ secrets.SAMBANOVA_API_KEY }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
-          GLM_API_KEY: ${{ secrets.GLM_API_KEY }}
         run: python -m earshot.selfcode | tee /tmp/selfcode.out
 
       - name: Ship the tested change to main + deploy live (autonomous, rails-locked)
