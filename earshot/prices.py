@@ -120,21 +120,44 @@ def forward_return_pct(ticker: str, entry_ts: float, hold_days: int):
 
 
 def _mkt_return(proxy: str, start_ts: float):
+    """AUDIT FIX (2026-07-06): the alpha benchmark's window must match the STOCK leg's window (entry ts
+    -> live price now). Daily bars can't do that for fresh entries — the first daily bar ON/AFTER a
+    mid-session entry is stamped TOMORROW, so intraday resolutions returned None (alpha silently fell
+    back to the RAW return: the 1h-horizon labels weren't alpha at all) and multi-day windows skipped
+    ALL of day-1's market drift. Short windows now use 5-minute SPY bars aligned to the entry minute;
+    longer windows use daily bars anchored one bar EARLIER (the entry day's close, not the next day's)."""
     if not _HAVE_YF:
         return None
     try:
-        days = min(400, max(6, int((time.time() - start_ts) / 86400) + 6))
+        span_days = (time.time() - start_ts) / 86400
+        if span_days <= 5:                               # match last_price()'s intraday 5m marking
+            h = yf.Ticker(proxy).history(period=f"{max(2, int(span_days) + 2)}d", interval="5m")
+            closes = h["Close"]
+            if len(closes) < 2:
+                return None
+            pos = None
+            for i, ts in enumerate(h.index):             # first 5m bar on/after entry
+                if ts.timestamp() >= start_ts:
+                    pos = i
+                    break
+            if pos is None:                              # entry after the last bar (e.g. after close)
+                pos = len(closes) - 1
+            c0, c1 = float(closes.iloc[pos]), float(closes.iloc[-1])
+            return (c1 / c0 - 1) * 100 if c0 else None
+        days = min(400, max(6, int(span_days) + 6))
         h = yf.Ticker(proxy).history(period=f"{days}d")
         closes = h["Close"]
         if len(closes) < 2:
             return None
         pos = None
-        for i, ts in enumerate(h.index):                 # first bar on/after entry
+        for i, ts in enumerate(h.index):                 # first bar on/after entry...
             if ts.timestamp() >= start_ts:
                 pos = i
                 break
         if pos is None or pos >= len(closes):
             return None
+        if pos > 0:
+            pos -= 1                                     # ...then step back to the ENTRY day's close
         c0 = float(closes.iloc[pos])
         c1 = float(closes.iloc[-1])
         return (c1 / c0 - 1) * 100 if c0 != 0 else None

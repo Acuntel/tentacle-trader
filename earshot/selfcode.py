@@ -176,11 +176,25 @@ def _gate() -> tuple[bool, str]:
     phantoms = _phantom_calls()
     if phantoms:
         return False, "phantom method call (hallucinated helper): " + "; ".join(phantoms[:3])
-    # fresh interpreter so edited modules are actually re-imported + a sim batch runs
+    # fresh interpreter so edited modules are actually re-imported + a sim batch runs.
+    # STATE-GROUNDED SMOKE: also exercise the data-dependent hot-path functions against the REAL
+    # brain state (live volume, or the daily backup pulled into CI). Three outages shipped through
+    # the old gate because their broken lines only execute with real data (sim._episode_from needed
+    # a history cache; enrich's len(int) needed candidates; core.velocity's int('2026-07-06') needed
+    # a growth history). Compile+import can't see those; running the functions on real state can.
     code = ("import yaml; cfg=yaml.safe_load(open('config.yaml'));"
             "import earshot.main;"
             "from earshot.learning import Learner; from earshot.sim import SimEngine;"
             "SimEngine(cfg, Learner(dict(cfg['source_weights']))).step();"
+            "from earshot.persist import load_json;"
+            "know=load_json('state/knowledge.json',{});"
+            "from earshot.learnedgate import LearnedGate; from earshot.core import BrainCore;"
+            "from earshot.patterns import PatternMemory, field_rate;"
+            "lg=LearnedGate(know); pm=PatternMemory(know);"
+            "core=BrainCore(know, dict(know.get('weights') or {}), cfg);"
+            "core.velocity(lg); core.synthesize(pm); core.trajectory(); core.snapshot();"
+            "field_rate(know);"
+            "[(pm.multiplier(s), pm.is_loser(s), pm.is_decayed(s)) for s in list(know.get('patterns') or {})[:25]];"
             "print('GATE_OK')")
     try:
         r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=120)

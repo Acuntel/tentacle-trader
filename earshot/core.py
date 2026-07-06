@@ -146,7 +146,18 @@ class BrainCore:
         hist = self.know["growth"].get("history", [])
         smp = [h for h in hist if "samples" in h]
         bri = [h for h in hist if "brier" in h]
-        samples_per_day = max(0, int((smp[-1]["samples"] - smp[-2]["samples"]) / max(1, (int(smp[-1]["day"]) - int(smp[-2]["day"]))))) if len(smp) >= 2 else None
+        # Rate = samples gained / DAYS elapsed between snapshots (they aren't always consecutive days).
+        # NOTE: "day" is an ISO date STRING — a self-patch (A0097) called int() on it and crashed every
+        # cycle. Parse real dates; fall back to 1 day.
+        samples_per_day = None
+        if len(smp) >= 2:
+            try:
+                import datetime as _dt
+                _days = max(1, (_dt.date.fromisoformat(str(smp[-1]["day"]))
+                                - _dt.date.fromisoformat(str(smp[-2]["day"]))).days)
+            except Exception:
+                _days = 1
+            samples_per_day = max(0, int((smp[-1]["samples"] - smp[-2]["samples"]) / _days))
         brier_7d = None
         if len(bri) >= 2:
             ref = bri[-8] if len(bri) >= 8 else bri[0]
