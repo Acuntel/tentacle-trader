@@ -65,11 +65,16 @@ def optimize_rules(core, cfg, sample: int = 300) -> dict:
                     best = {"stop_pct": stop, "target_pct": target, "hold_days": hold,
                             "util": round(util, 3), "win": round(sum(1 for x in rets if x > 0) / len(rets), 3),
                             "n": len(rets)}
-    # apply the decade-optimized rule as the learned baseline across catalysts (free data can't label
-    # catalysts historically, so this is the honest best: rules proven on a decade of real up-moves).
-    for cat in cfg.get("catalysts", {}):
-        core.know["catalyst_rules"][cat] = {"stop_pct": best["stop_pct"],
-                                            "target_pct": best["target_pct"], "hold_days": best["hold_days"]}
+    # AUDIT FIX: write the decade-optimized rule to a single __default__ FALLBACK key — stamping the
+    # same generic-momentum rule over EVERY catalyst each coach pass clobbered any per-catalyst rule
+    # the system might ever learn (live: all 8 catalysts were identical clones).
+    rules = core.know["catalyst_rules"]
+    per_cat = {k: json.dumps(v, sort_keys=True) for k, v in rules.items() if k != "__default__"}
+    if per_cat and len(set(per_cat.values())) == 1:
+        for k in list(per_cat):
+            rules.pop(k, None)                              # one-time cleanup of the clobbered clones
+    rules["__default__"] = {"stop_pct": best["stop_pct"],
+                            "target_pct": best["target_pct"], "hold_days": best["hold_days"]}
     return best
 
 

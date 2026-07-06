@@ -241,6 +241,9 @@ class MotherInstinct:
         if self.state["paper_equity"] <= floor and not self.dead:
             self.state["dead"] = True
             self.state["rung"] = 0
+            # the lineage of failure is permanent — each death lengthens the next grief period
+            self.state.setdefault("deaths", []).append(
+                {"ts": time.time(), "equity": round(self.state["paper_equity"], 2)})
             note = f"RUIN FLOOR HIT (${floor:.0f}) — my son died. Halted; back to shadow to re-qualify."
         else:
             note = self._maybe_promote_demote()
@@ -250,15 +253,41 @@ class MotherInstinct:
     def felt_utility(self, pnl_pct: float) -> float:
         return round(pnl_pct if pnl_pct >= 0 else self.lam * pnl_pct, 2)
 
+    def maybe_revive(self) -> str | None:
+        """AUDIT FIX: death was PERMANENT (the dead flag had no exit), but the design spec says death
+        = halt + demote + RE-QUALIFY from the bottom. After a grief period (longer for every death on
+        her conscience), the mother starts raising a NEW son from the original stake: equity, peak,
+        recent outcomes and the curve all reset — mastery is re-earned from zero at rung 0. The deaths
+        list is never cleared. Real money remains hard-gated regardless (executor + Gauntlet + arm)."""
+        if not self.dead:
+            return None
+        deaths = self.state.setdefault("deaths", [])
+        if not deaths:                                     # legacy dead-state stored before the ledger
+            deaths.append({"ts": time.time(), "equity": round(self.state["paper_equity"], 2)})
+            _save(LADDER_PATH, self.state)
+            return None
+        cool_days = 3 * len(deaths)
+        if time.time() - deaths[-1]["ts"] < cool_days * 86400:
+            return None
+        self.state.update({"dead": False, "rung": 0, "paper_equity": self.start,
+                           "peak_equity": self.start, "recent": [], "equity_curve": []})
+        _save(LADDER_PATH, self.state)
+        return (f"REBIRTH after {cool_days} days of grief — raising a NEW son from ${self.start:.0f} at "
+                f"the bottom rung; {len(deaths)} death(s) on my conscience, never again.")
+
     def _maybe_promote_demote(self) -> str:
         rc = self.rung_cfg()
         m = self.mastery()
         n = len(self.state["recent"])
-        # demote on drawdown breach
-        dd = (self.state["peak_equity"] - self.state["paper_equity"]) / self.start
+        # demote on drawdown breach. AUDIT FIX: normalized by PEAK, not the original stake — dividing
+        # by start meant a grown son (e.g. 10x) got demoted on a routine 2.4% dip; and the peak now
+        # RESETS on demotion, else one deep drawdown stayed >threshold forever and cascaded the rungs
+        # down one by one on every subsequent outcome.
+        dd = (self.state["peak_equity"] - self.state["paper_equity"]) / max(1e-9, self.state["peak_equity"])
         if dd > self.ruin_pct * 0.6 and self.state["rung"] > 0:
             self.state["rung"] -= 1
-            return f"DEMOTED to rung {self.state['rung']} (drawdown {dd*100:.0f}%). Earn it back."
+            self.state["peak_equity"] = self.state["paper_equity"]   # fresh start at the lower rung
+            return f"DEMOTED to rung {self.state['rung']} (drawdown {dd*100:.0f}% from peak). Earn it back."
         # promote when mastery + samples clear this rung's bar
         if m >= rc["promote_mastery"] and n >= rc["min_samples"]:
             nxt = [r for r in self.ladder if r["rung"] == self.state["rung"] + 1]
@@ -269,6 +298,9 @@ class MotherInstinct:
         return f"holding rung {self.state['rung']} ({rc['stage']}); mastery {m}/{rc['promote_mastery']}, {n}/{rc['min_samples']} samples"
 
     def status(self) -> dict:
+        reborn = self.maybe_revive()                       # grief ends on schedule; checked every cycle
+        if reborn:
+            print(f"  {reborn}")
         rc = self.rung_cfg()
         return {
             "mode": self.mode, "rung": self.state["rung"], "stage": rc["stage"],

@@ -63,6 +63,7 @@ def embed(texts, input_type: str = "query", max_batch: int = 32, max_texts: int 
         else:
             todo.append(t)
             idx.append(i)
+    added = 0
     for s in range(0, len(todo), max_batch):
         batch = todo[s:s + max_batch]
         try:
@@ -78,9 +79,16 @@ def embed(texts, input_type: str = "query", max_batch: int = 32, max_texts: int 
                     gi = idx[s + j]
                     out[gi] = v
                     cache[_h(todo[s + j])] = v
+                    added += 1
         except Exception:
             continue
-    _save()
+    # AUDIT FIX: save only when something NEW was embedded (it rewrote the whole file on every call,
+    # even pure cache hits) and cap the cache — 1024 floats/entry grows without bound otherwise.
+    if added:
+        if len(cache) > 4000:
+            for k in list(cache)[: len(cache) - 4000]:      # FIFO-ish eviction (insertion-ordered dict)
+                cache.pop(k, None)
+        _save()
     return out
 
 

@@ -62,7 +62,8 @@ class BrainCore:
     # ---- learned per-catalyst trading rules (#1) merged over the config defaults ----
     def rule(self, catalyst: str, default: dict) -> dict:
         r = dict(default)
-        learned = self.know["catalyst_rules"].get(catalyst)
+        # catalyst-specific learning wins; the decade-swept generic rule is only a FALLBACK
+        learned = self.know["catalyst_rules"].get(catalyst) or self.know["catalyst_rules"].get("__default__")
         if learned:
             r.update({k: learned[k] for k in ("stop_pct", "target_pct", "hold_days") if k in learned})
         return r

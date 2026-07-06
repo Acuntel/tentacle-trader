@@ -38,6 +38,11 @@ class SemanticMemory:
                     try:
                         o = json.loads(line)
                         sig, ret = o.get("sig"), o.get("ret")
+                        # AUDIT FIX: only DAY+ horizon labels — pooling the 1h rows (near-zero drift,
+                        # ~coin-flip) with the real labels diluted "similar setups returned X%" badly.
+                        h = float(o.get("h", 120) or 120)
+                        if h < 24:
+                            continue
                         if sig and ret is not None:
                             r = float(ret)
                             if r == r:                              # finite
