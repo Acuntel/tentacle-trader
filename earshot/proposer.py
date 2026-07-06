@@ -105,7 +105,7 @@ class Proposer:
 
     # ---- harvest CONFIG tweak candidates (only when the pool is running low) ----
     def harvest(self, snapshot: dict) -> int:
-        if len(self._unsent()) >= self.refill_below or not llm.have_free_brain():
+        if len(self._unsent()) >= self.refill_below or not llm.have_free_brain() or not TUNABLE:
             return 0
         text = self._text()
         menu = {}
