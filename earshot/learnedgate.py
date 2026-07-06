@@ -27,7 +27,7 @@ class LearnedGate:
         self.w = {f: float(m.get("w", {}).get(f, 0.0)) for f in FEATURES}
         self.b = float(m.get("b", 0.0))
         self.n = int(m.get("n", 0))
-        self.brier = float(m.get("brier", 0.25))      # running calibration quality (lower = better)
+        self.brier = float(m.get("brier", 0.22))      # running calibration quality (lower = better)
         self.lr = lr
         # WS3 adaptive learning rate: large while the model is IGNORANT (few samples), annealing to a
         # FLOOR as n grows so a flood of WS1 samples can't thrash it — but never to zero, so it keeps
