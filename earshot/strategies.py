@@ -120,10 +120,12 @@ class StrategyBook:
             return {"ran": 0, "note": "history loading"}
         embargo = 12                                       # > the longest hold -> no train/test leakage
         events = []                                        # (closes, dates, i, fold, regime)
-        for _ in range(self.per_cycle_events * 14):
+        tickers_local = list(tickers)
+        random.shuffle(tickers_local)
+        for t in tickers_local:
             if len(events) >= self.per_cycle_events:
                 break
-            bars = history.load(random.choice(tickers))
+            bars = history.load(t)
             if len(bars) < 320:
                 continue
             dates = [d for d, _ in bars]
