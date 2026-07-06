@@ -46,7 +46,7 @@ class Learner:
         self.core = None                           # shared BrainCore, attached by main
         # progressive resolution horizons: (hours_since_entry, credit_rate). Short = noisier = lighter.
         # The long horizon is the real label; the short ones let learning accrue in HOURS, not days.
-        self._horizons = [(24.0, 0.05)]            # default; main overrides from config.learning
+        self._horizons = [(6.0, 0.10), (24.0, 0.05)]            # default; main overrides from config.learning
 
     def _persist_know(self):
         self.know["weights"] = self.weights      # learned weights ride along, survive restarts
