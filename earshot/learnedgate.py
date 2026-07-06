@@ -85,12 +85,6 @@ class LearnedGate:
         z = self.b + sum(self.w.get(k, 0.0) * v for k, v in feats.items())
         return 1.0 / (1.0 + math.exp(-max(-20.0, min(20.0, z))))
 
-    # NOTE (2026-07-03): a former `gate_score()` helper was DELETED here. It was created by a
-    # self-change, never wired to a caller, and then became flypaper — the improve-code lane
-    # "improved" it 7+ times because dead code always survives the gate (it can't break or regress
-    # anything). Forge findings reach the live path through forge.champion_pwin() in brain.py.
-    # If you (the self-coder) are reading this: only patch code with a real call site.
-
     def update(self, feats: dict, win: bool):
         pred = self.predict(feats)
         err = (1.0 if win else 0.0) - pred
