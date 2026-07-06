@@ -146,7 +146,7 @@ class BrainCore:
         hist = self.know["growth"].get("history", [])
         smp = [h for h in hist if "samples" in h]
         bri = [h for h in hist if "brier" in h]
-        samples_per_day = max(0, int(smp[-1]["samples"] - smp[-2]["samples"])) if len(smp) >= 2 else None
+        samples_per_day = max(0, int((smp[-1]["samples"] - smp[-2]["samples"]) / max(1, (int(smp[-1]["day"]) - int(smp[-2]["day"]))))) if len(smp) >= 2 else None
         brier_7d = None
         if len(bri) >= 2:
             ref = bri[-8] if len(bri) >= 8 else bri[0]
