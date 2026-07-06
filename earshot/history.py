@@ -128,14 +128,20 @@ def ensure_slice(years: int = 10, limit: int = 40, tickers: list[str] | None = N
         return {"fetched": 0, "have": 0, "total": 0, "note": "no yfinance"}
     uni = tickers or universe()
     todo = [t for t in uni if not _fresh(t) and not is_dead(t)][:limit]
-    fetched = 0
+    fetched, failed = 0, []
     for t in todo:
         if _fetch_one(t, years):
             fetched += 1
             _mark_ok(t)
         else:
-            _mark_fail(t)                       # 3 strikes -> the reaper drops it from the universe
+            failed.append(t)
         time.sleep(0.2)                         # polite spacing — anti-ban
+    # AUDIT FIX: only strike failures when the batch was NOT a wholesale outage. A transient Yahoo
+    # rate-limit used to fail entire batches, striking every name 3x within minutes and permanently
+    # blacklisting the universe (is_dead has no expiry). Zero fetches = global failure -> strike no one.
+    if fetched > 0:
+        for t in failed:
+            _mark_fail(t)                       # 3 strikes -> the reaper drops it from the universe
     have = sum(1 for t in uni if _fresh(t))
     return {"fetched": fetched, "have": have, "total": len(uni)}
 

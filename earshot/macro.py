@@ -128,8 +128,12 @@ class MacroMonitor:
                         "rates_up" if ff[0] > ff[1] + 0.02 else "rates_flat")
         vix = v.get("VIXCLS")
         curve = v.get("T10Y2Y")
-        risk_off = (vix and vix[0] > 22) or (curve and curve[0] < 0)
-        tags.append("risk_off" if risk_off else "risk_on")
+        # AUDIT FIX: only claim a risk regime when there is EVIDENCE — a failed FRED pull used to
+        # fabricate "risk_on" from an empty dict (brain then applied a 1.05x boost) and the non-empty
+        # context blocked a retry for 24h. No data -> no tag -> retried on the next update.
+        if vix or curve:
+            risk_off = (vix and vix[0] > 22) or (curve and curve[0] < 0)
+            tags.append("risk_off" if risk_off else "risk_on")
         ip = v.get("INDPRO")
         if ip:
             tags.append("growth_up" if ip[0] >= ip[1] else "growth_down")

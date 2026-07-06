@@ -79,12 +79,19 @@ class ApprovalQueue:
 
     @staticmethod
     def _knob(patches):
-        """The config key a patch tunes (for the anti-oscillation cooldown); None for code/source patches."""
+        """The thing a patch tunes (for the anti-oscillation cooldown). Config: the yaml key.
+        AUDIT FIX — code patches too: file + the digit-stripped find snippet, so re-tuning the SAME
+        LINE's constants trips the cooldown (8 approvals ratcheted one tanh scale 2->64 in 2 days
+        because .py patches had no cooldown key at all)."""
+        import re as _re
         for p in (patches or []):
-            if str(p.get("file", "")).endswith("config.yaml"):
-                fnd = str(p.get("find", ""))
+            f = str(p.get("file", ""))
+            fnd = str(p.get("find", ""))
+            if f.endswith("config.yaml"):
                 if ":" in fnd:
                     return fnd.split(":", 1)[0].strip()
+            elif f.endswith(".py") and fnd:
+                return f.rsplit("/", 1)[-1] + "|" + _re.sub(r"[\d.]+", "#", fnd)[:80]
         return None
 
     @staticmethod

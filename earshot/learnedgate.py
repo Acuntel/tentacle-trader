@@ -57,7 +57,9 @@ class LearnedGate:
         is_price = 1.0 if "price" in p else 0.0
         feat = {
             "independence": indep, "news_events": news, "opt_bias": opt_b, "tech_bias": tech_b,
-            "squeeze": math.tanh(sqz * 64.0), "quality": qual, "analyst_conv": conv,
+            # AUDIT FIX: 8 self-changes ratcheted this scale 2->4->...->64; tanh(sqz*64) saturates at
+            # sqz=0.05 (near-binary feature, information destroyed). sqz is already 0..1 — mild scale.
+            "squeeze": math.tanh(sqz * 2.0), "quality": qual, "analyst_conv": conv,
             "is_filing": is_filing, "is_options": is_options, "is_price": is_price,
             "indep_x_conv": indep * conv, "opt_x_tech": opt_b * tech_b, "sqz_x_filing": sqz * is_filing,
             "risk_on": 1.0 if "risk_on" in macro else 0.0,
@@ -104,8 +106,17 @@ class LearnedGate:
         return self.n >= min_n
 
     def trust(self) -> float:
-        """How much to trust the model's edge for sizing — 1.0 when well-calibrated (Brier≈0.18),
-        fading to 0 as calibration degrades (Brier≈0.30). Gates Kelly-style sizing on real reliability."""
+        """How much to trust the model's edge for sizing — 0 at (or worse than) the NO-SKILL Brier,
+        rising toward 1 as calibration genuinely beats it. AUDIT FIX: the no-skill floor depends on the
+        label base rate — always predicting the field rate p scores Brier p(1-p) (~0.224 at p=0.34),
+        NOT 0.25. The old fixed [0.18, 0.30] window granted a zero-skill predictor trust ~0.4-0.7,
+        which then drove Kelly-style sizing. Skill is measured RELATIVE to the field's floor."""
         if not self.ready():
             return 0.0
-        return max(0.0, min(1.0, (0.30 - self.brier) / 0.12))
+        try:
+            from .patterns import field_rate
+            fld = field_rate(self.know)
+        except Exception:
+            fld = 0.5
+        b0 = max(0.05, fld * (1 - fld))                # the no-skill Brier for this label distribution
+        return max(0.0, min(1.0, (b0 - self.brier) / (b0 * 0.35)))

@@ -19,9 +19,19 @@ def _spy_map() -> dict:
     if _SPY["map"] and now - _SPY["ts"] < 3600:
         return _SPY["map"]
     bars = history.load("SPY")
-    if len(bars) < 30 and not _SPY["ensured"] and history.have_yf():
+    # AUDIT FIX: refresh on STALENESS too, not only once when the cache is missing — SPY.csv froze at
+    # its first download (the 'ensured' latch) while every peer refreshed via the regular top-ups
+    # (SPY isn't in the stock universe), so alpha labels for post-freeze dates silently degraded to
+    # raw returns. ensure_slice's own _fresh check makes this a cheap no-op when SPY is current.
+    stale = False
+    try:
+        import datetime as _dt
+        stale = bool(bars) and (_dt.date.today() - _dt.date.fromisoformat(bars[-1][0])).days > 3
+    except Exception:
+        pass
+    if (len(bars) < 30 or stale) and history.have_yf():
         try:
-            history.ensure_slice(10, 1, tickers=["SPY"])       # cache the market proxy once
+            history.ensure_slice(10, 1, tickers=["SPY"])       # cache/refresh the market proxy
         except Exception:
             pass
         _SPY["ensured"] = True

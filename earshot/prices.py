@@ -104,14 +104,20 @@ def forward_return_pct(ticker: str, entry_ts: float, hold_days: int):
     if time.time() - entry_ts < hold_days * 86400:
         return None
     try:
-        h = yf.Ticker(ticker).history(period=f"{hold_days + 10}d")
+        days = min(400, max(hold_days + 10, int((time.time() - entry_ts) / 86400) + 6))
+        h = yf.Ticker(ticker).history(period=f"{days}d")
         if len(h) >= 2:
-            # Find first close on/after entry to align with actual entry timing
             pos = None
             for i, ts in enumerate(h.index):
                 if ts.timestamp() >= entry_ts:
                     pos = i
                     break
+            # AUDIT FIX: mirror _mkt_return — the first daily bar ON/AFTER a mid-session entry is
+            # TOMORROW, so the stock leg skipped day-1 while the SPY leg (fixed 07-06) included it:
+            # mismatched alpha windows. Step back to the ENTRY day's close; window sized by elapsed
+            # time (a late-resolving position used to fall off the front of a hold_days+10 window).
+            if pos is not None and pos > 0:
+                pos -= 1
             if pos is not None and pos < len(h):
                 return float((h["Close"].iloc[-1] / h["Close"].iloc[pos] - 1) * 100)
     except Exception:

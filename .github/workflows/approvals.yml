@@ -61,7 +61,10 @@ jobs:
         run: |
           mkdir -p pending
           python -c "import json,os; cid=os.environ['ID']; json.dump({'id':cid,'title':os.environ.get('TITLE',''),'patches':json.loads(os.environ['PATCHES_JSON'])}, open('pending/'+cid+'.json','w'), indent=2)"
-          git add pending && git commit -m "stage approval ${ID}" && git push origin main || echo "nothing to stage"
+          git add pending && git commit -m "stage approval ${ID}" || { echo "nothing to stage"; exit 0; }
+          # AUDIT FIX: retry the push after a rebase — a race with the ~90min self-change commits
+          # used to silently DROP the staged patch (the later approve-tap then found nothing to apply)
+          git push origin main || (git pull --rebase origin main && git push origin main)
 
       # ---- APPLY (✅): inline patch if present, else staged pending/<id>.json; gate, merge, deploy ----
       - name: Apply patch through the gate
@@ -117,4 +120,5 @@ jobs:
         run: |
           rm -f "pending/${ID}.json" || true
           echo "{\"id\": \"${ID}\", \"decision\": \"denied\"}" >> decisions.jsonl
-          git add -A && git commit -m "denied ${ID} (Telegram)" && git push origin main || echo "nothing to discard"
+          git add -A && git commit -m "denied ${ID} (Telegram)" || { echo "nothing to discard"; exit 0; }
+          git push origin main || (git pull --rebase origin main && git push origin main)

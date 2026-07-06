@@ -113,13 +113,16 @@ def update_calibration(core) -> dict:
     try:
         with open("state/outcomes.jsonl") as f:
             for line in f:
-                o = json.loads(line)
-                c = o["confidence"]
+                try:                       # AUDIT FIX: one corrupt/partial line (non-atomic append)
+                    o = json.loads(line)   # used to kill the ENTIRE coach pass, every 30min, forever
+                    c = o["confidence"]
+                except Exception:
+                    continue
                 b = 55 if c < 70 else 70 if c < 85 else 85
                 d = buckets.setdefault(b, [0, 0])
                 d[0] += 1
                 a = o.get("alpha")
-                d[1] += 1 if (a > 0 if a is not None else o["win"]) else 0
+                d[1] += 1 if (a > 0 if a is not None else o.get("win")) else 0
     except FileNotFoundError:
         return {"factor": 1.0, "note": "no outcomes yet"}
     tot = sum(n for n, _ in buckets.values())

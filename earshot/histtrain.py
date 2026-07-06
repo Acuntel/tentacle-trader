@@ -76,7 +76,10 @@ class HistoricalTrainer:
                     ret, j = self.target, k; break
                 ret, j = chg, k
             mkt = marketadj.market_return(dates[i], dates[min(j, len(dates) - 1)])
-            alpha = ret - mkt if mkt is not None else ret
+            if mkt is None:
+                continue          # AUDIT FIX: no benchmark -> SKIP; the raw-return fallback silently
+                                  # trained the persistent decade prior on beta, not alpha
+            alpha = ret - mkt
             self.gate.update(self.features(closes, i), alpha > 0)   # LABEL BY ALPHA, live feature space
             n += 1
         self.trained += n

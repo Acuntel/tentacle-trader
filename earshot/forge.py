@@ -141,25 +141,9 @@ class Forge:
         keep = min(0.7, max(0.2, (a["keep"] + b["keep"]) / 2 + random.gauss(0, 0.05)))
         return {"w": w, "keep": keep}
 
-    def _min_fold_return(self, weights, keep_frac, vecs, rets, folds=4):
-        """Return the minimum mean return across walk-forward folds, or None if not viable."""
-        n = len(vecs)
-        if n < 40:
-            return None
-        scores = [sum(w * v for w, v in zip(weights, vec)) for vec in vecs]
-        size = n // folds
-        fold_means = []
-        for k in range(folds):
-            a, b = k * size, ((k + 1) * size if k < folds - 1 else n)
-            cut = self._percentile(sorted(scores[:a] + scores[b:]), 1.0 - keep_frac)
-            acc = [rets[i] for i in range(a, b) if scores[i] >= cut]
-            if acc:
-                fold_means.append(sum(acc) / len(acc))
-        if len(fold_means) < (folds + 1) // 2:
-            return None
-        if sum(1 for m in fold_means if m > 0) < (len(fold_means) + 1) // 2:
-            return None
-        return min(fold_means)
+    # NOTE: a dead `_min_fold_return()` helper was DELETED here (zero callers; it referenced
+    # self._percentile which is module-level, so it would have CRASHED if ever called — and it
+    # had already absorbed one approved self-change, A0080). Self-coder: only patch called code.
 
     def tick(self) -> dict:
         self.last = time.time()

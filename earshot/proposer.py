@@ -22,7 +22,8 @@ CONFIG_PATH = "config.yaml"
 # leaf_key : (low, high) allowed range. Only reversible trading knobs — never a risk rail.
 TUNABLE = {
     "min_pwin": (0.40, 0.65),
-    "min_score_to_trade": (45, 70),
+    "min_score_to_trade": (10, 40),   # AUDIT FIX: was (45,70) — Brady deliberately runs 15; the old
+                                       # range let the autonomous tuner snap the bar back to 45+ in one step
     "max_runup_pct": (3.0, 8.0),
     "regime_downtrend_premium": (5, 25),
     "min_families": (2, 3),

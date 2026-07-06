@@ -101,11 +101,16 @@ class Brain:
                 frac = band["frac"]
                 break
         # EDGE-BASED sizing: when the P(win) model is trained AND well-calibrated, lean the size on its
-        # edge above a coin-flip (Kelly-lite), blended with the score bands by how much we TRUST it.
+        # edge above THE FIELD (Kelly-lite), blended with the score bands by how much we TRUST it.
+        # AUDIT FIX: the edge was anchored at 0.5, but P(win) is calibrated on alpha labels whose base
+        # rate is ~0.34 — the model's median prediction sits near 0.25, so edge was 0 for ~97% of setups
+        # and every size got a flat 0.70x haircut. Anchor at the live field rate; at-field = neutral 1.0.
         if pwin is not None and self.lgate is not None and self.lgate.ready():
-            edge = max(0.0, min(1.0, (pwin - 0.5) * 4.0))   # 0 at P(win)=0.5, 1.0 at P(win)>=0.75
+            from .patterns import field_rate
+            fld = field_rate(self.lgate.know)
+            edge = max(-1.0, min(1.0, (pwin - fld) / max(0.15, 1 - fld) * 2.5))
             trust = self.lgate.trust()                      # 0 if poorly calibrated, 1 if sharp (Brier)
-            frac *= (1 - trust) + trust * (0.5 + edge)
+            frac *= max(0.25, (1 - trust) + trust * (1.0 + 0.5 * edge))   # at-field -> 1.0, capped floor
         return round(capital * frac, 2)
 
     def evaluate(self, signals: list[RawSignal], capital: float, regime_down: bool) -> list[Candidate]:
@@ -250,7 +255,12 @@ class Brain:
                     if fp is not None:
                         p_live = 0.85 * p_live + 0.15 * fp
                     cand._pwin = round(p_live, 3)
-                    cand._uncertainty = round(1 - abs(cand._pwin - 0.5) * 2, 3)   # 1.0 = most informative
+                    # AUDIT FIX: informativeness anchored at the FIELD rate (predictions cluster near
+                    # ~0.34, so a 0.5 anchor made "uncertainty" a monotone pwin sort, not uncertainty).
+                    from .patterns import field_rate as _fr
+                    _fld = _fr(self.lgate.know)
+                    _half = max(_fld, 1 - _fld)
+                    cand._uncertainty = round(max(0.0, 1 - abs(cand._pwin - _fld) / _half), 3)
                 # SEMANTIC MEMORY: what happened in setups SIMILAR to this one (k-NN over bge-m3)? Bounded,
                 # advisory nudge so a rare signature borrows experience from its neighbors. Fails open.
                 try:
@@ -260,7 +270,11 @@ class Brain:
                     mem = self.memory.recall(getattr(cand, "_signature", ""))
                     if mem and mem["n"] >= 8:
                         cand._memory = mem
-                        edge = max(-1.0, min(1.0, (mem["win_rate"] - 0.5) * 2))
+                        # AUDIT FIX: field-anchored (win_rate here is an alpha-label rate, base ~0.34 —
+                        # the 0.5 anchor penalized even setups winning ABOVE the field)
+                        from .patterns import field_rate as _fr2
+                        _fld2 = _fr2(self.lgate.know) if self.lgate is not None else 0.5
+                        edge = max(-1.0, min(1.0, (mem["win_rate"] - _fld2) / max(_fld2, 1 - _fld2)))
                         cand.confidence = max(0.0, min(100.0, cand.confidence * (1.0 + 0.12 * edge)))
                 except Exception:
                     pass
