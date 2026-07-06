@@ -59,8 +59,15 @@ class StrategyBook:
                         for hold in (3, 5, 10):
                             grid.append({"style": style, "min_move": mn, "stop": stop,
                                          "target": target, "hold": hold, "uptrend": style != "pullback"})
-        random.shuffle(grid)
+        # AUDIT FIX: seeded shuffle — an UNSEEDED shuffle re-mapped every id to a different parameter
+        # set on each boot, so persisted stats kept accruing under ids whose definition had changed
+        # (chimeric records, e.g. S0000 n=135 across several different strategies).
+        random.Random(7).shuffle(grid)
         return [{"id": f"S{i:04d}", **grid[i % len(grid)]} for i in range(n)]
+
+    @staticmethod
+    def _params(d: dict) -> dict:
+        return {k: v for k, v in (d or {}).items() if k != "id"}
 
     def resize_if_requested(self):
         want = self._count()
@@ -134,6 +141,10 @@ class StrategyBook:
         ran = 0
         for strat in self.book:
             st = self.stats.setdefault(strat["id"], self._blank(strat))
+            # AUDIT FIX (belt + suspenders with the seeded shuffle): stats must never keep accruing
+            # under an id whose DEFINITION changed (boot remap, grid change, count change) — reset.
+            if self._params(st.get("def")) != self._params(strat):
+                st = self.stats[strat["id"]] = self._blank(strat)
             for closes, dates, i, fold, regime in events:
                 r = self._trade(strat, closes, dates, i)
                 if r is None:

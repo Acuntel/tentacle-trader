@@ -42,12 +42,14 @@ def _save(path, obj):
 APP_NAME_TICKER = {
     "robinhood": "HOOD", "coinbase": "COIN", "doordash": "DASH", "uber": "UBER", "lyft": "LYFT",
     "spotify": "SPOT", "airbnb": "ABNB", "pinterest": "PINS", "snapchat": "SNAP", "roblox": "RBLX",
-    "draftkings": "DKNG", "cash app": "XYZ", "block": "XYZ", "paypal": "PYPL", "venmo": "PYPL",
+    "draftkings": "DKNG", "cash app": "XYZ", "paypal": "PYPL", "venmo": "PYPL",
     "reddit": "RDDT", "duolingo": "DUOL", "netflix": "NFLX", "disney+": "DIS", "instagram": "META",
     "whatsapp": "META", "facebook": "META", "temu": "PDD", "amazon": "AMZN", "ebay": "EBAY",
     "etsy": "ETSY", "chewy": "CHWY", "carvana": "CVNA", "affirm": "AFRM", "sofi": "SOFI",
     "toast": "TOST", "peloton": "PTON", "tinder": "MTCH", "hinge": "MTCH", "bumble": "BMBL",
     "opendoor": "OPEN", "shop": "SHOP", "webull": "BULL",
+    # AUDIT: the generic key "block" was removed — it matched any app with "block" in the name
+    # (Block Blast!, Blocky builders...); Block Inc's flagship is already covered by "cash app".
 }
 
 
@@ -59,9 +61,12 @@ class AppStoreDemandSource(Source):
     FEEDS = ("topfreeapplications", "topgrossingapplications")
 
     def _match(self, name: str):
-        low = (name or "").lower()
+        # AUDIT FIX: bare substring matching attributed "Netflix Game Controller" to NFLX and
+        # "Whatnot - Live Shopping" to SHOP. Only the FLAGSHIP app is a demand proxy: exact name, or
+        # the subtitle form real chart names use ("Uber - Request a ride", "Shop: All your favorites").
+        low = (name or "").lower().strip()
         for k, tk in APP_NAME_TICKER.items():
-            if k in low:
+            if low == k or low.startswith(k + " - ") or low.startswith(k + ": ") or low.startswith(k + " – "):
                 return tk
         return None
 

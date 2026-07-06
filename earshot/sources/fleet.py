@@ -146,11 +146,14 @@ def build_feed_list(universe: str = "sp500", wide_cap: int = 20000) -> tuple[lis
     tail (swept slowly) — only when universe='all'. Tiering = 10k breadth without making the
     names that matter stale."""
     fast_tickers = list(dict.fromkeys((_sp500() or CORE_TICKERS) + EXTRA_TICKERS))
+    # AUDIT FIX: per-ticker feeds carry THEIR OWN ticker (4th element) — each feed was built for one
+    # exact name, but _one() relied on headline extraction alone, so any headline without a cashtag/
+    # exchange-paren/known-name match was attributed to nobody and silently thrown away.
     fast: list[tuple] = []
     for t in fast_tickers:
-        fast.append((_gnews(f'"{t}" stock'), "google_news", 0.5))
-        fast.append((_yahoo(t), "google_news", 0.55))
-        fast.append((_bing(t), "google_news", 0.5))                 # 3rd independent news angle/ticker
+        fast.append((_gnews(f'"{t}" stock'), "google_news", 0.5, t))
+        fast.append((_yahoo(t), "google_news", 0.55, t))
+        fast.append((_bing(t), "google_news", 0.5, t))              # 3rd independent news angle/ticker
     fast += [(_gnews(q), "google_news", 0.5) for q in KEYWORDS]
     fast += [(f"https://www.reddit.com/r/{s}/.rss", "reddit", 0.35) for s in REDDIT]
     fast += MEDIA
@@ -161,9 +164,9 @@ def build_feed_list(universe: str = "sp500", wide_cap: int = 20000) -> tuple[lis
         for t in _all_us_symbols():
             if t in fastset:
                 continue
-            wide.append((_gnews(f'"{t}" stock'), "google_news", 0.4))
-            wide.append((_yahoo(t), "google_news", 0.45))
-            wide.append((_bing(t), "google_news", 0.4))
+            wide.append((_gnews(f'"{t}" stock'), "google_news", 0.4, t))
+            wide.append((_yahoo(t), "google_news", 0.45, t))
+            wide.append((_bing(t), "google_news", 0.4, t))
             if len(wide) >= wide_cap:
                 break
     return fast, wide
@@ -189,13 +192,16 @@ class MegaFleetSource(Source):
               f"fast sweep ~{fsweep:.0f}m, wide sweep ~{wsweep:.0f}m")
 
     def _one(self, feed):
-        url, skey, strength = feed
+        url, skey, strength = feed[:3]
+        own = feed[3] if len(feed) > 3 else None          # the ticker a per-ticker feed was BUILT for
         try:
             r = requests.get(url, headers={"User-Agent": UA}, timeout=8)
             fp = feedparser.parse(r.content)
             out = []
             for e in fp.entries[:15]:
                 tk = extract_tickers(f"{getattr(e, 'title', '')} {getattr(e, 'summary', '')}")
+                if own:
+                    tk = sorted(set(tk) | {own})          # the query already scoped it to this name
                 if tk:
                     out.append(RawSignal(source=skey, weight=self.weight(skey), ts=now_ts(),
                                          tickers=tk, headline=getattr(e, "title", "")[:160],

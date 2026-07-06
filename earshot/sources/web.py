@@ -38,12 +38,23 @@ class AppStoreReviewSource(Source):
         picks = [self.names[(self.i + k) % len(self.names)] for k in range(self.batch)]
         self.i = (self.i + self.batch) % len(self.names)
         for name in picks:
-            tk = APP_NAME_TICKER[name]
+            tk = APP_NAME_TICKER.get(name)
+            if not tk:
+                continue
             try:
+                # AUDIT FIX: results[0] blindly trusted iTunes search relevance — the term "block"
+                # returned "Block Blast!" (an unrelated game with 2.57M ratings) attributed to the
+                # ticker. Take the first result whose trackName ANCHORS to the queried flagship name.
                 r = requests.get("https://itunes.apple.com/search",
-                                 params={"term": name, "entity": "software", "country": "us", "limit": 1},
+                                 params={"term": name, "entity": "software", "country": "us", "limit": 5},
                                  headers=UA, timeout=TIMEOUT)
-                res = (r.json().get("results") or [None])[0]
+                res = None
+                for cand in (r.json().get("results") or []):
+                    tn = (cand.get("trackName") or "").lower().strip()
+                    if (tn == name or tn.startswith(name + " - ") or tn.startswith(name + ": ")
+                            or tn.startswith(name + " – ")):
+                        res = cand
+                        break
                 if not res:
                     continue
                 count = int(res.get("userRatingCount") or 0)
