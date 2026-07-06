@@ -14,7 +14,7 @@ import requests
 from bs4 import BeautifulSoup
 
 from ..models import RawSignal, now_ts
-from .base import Source, extract_tickers
+from .base import Source, extract_tickers, SeenSet
 
 UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")          # his exact UA
@@ -33,6 +33,10 @@ class OpenInsiderSource(Source):
     key = "edgar_form4"          # insider family + weight bucket
     min_interval = 900.0
     URL = "http://openinsider.com/latest-cluster-buys"
+
+    def __init__(self, weights: dict):
+        super().__init__(weights)
+        self.seen = SeenSet("openinsider")
 
     def fetch(self) -> list[RawSignal]:
         r = _session().get(self.URL, timeout=30)
@@ -54,6 +58,12 @@ class OpenInsiderSource(Source):
             if not ticker:
                 continue
             txt = " ".join(td.get_text(strip=True) for td in tds)
+            # AUDIT FIX: emit each insider row ONCE — the whole visible table used to re-emit with a
+            # fresh ts every 15-minute poll, so week-old cluster buys looked eternally new.
+            rid = f"{ticker}|{txt[:90]}"
+            if self.seen.seen(rid):
+                continue
+            self.seen.add(rid)
             out.append(RawSignal(
                 source=self.key, weight=self.weight(), ts=now_ts(), tickers=[ticker],
                 headline=f"OpenInsider cluster buy: {ticker} — {txt[:90]}", url=self.URL,

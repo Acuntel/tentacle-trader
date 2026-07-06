@@ -88,7 +88,12 @@ class AppStoreDemandSource(Source):
                     source=self.key, weight=self.weight(), ts=now_ts(), tickers=[tk],
                     headline=f"{tk} app demand rising — App Store rank {old or '—'}→#{rank}",
                     url="https://apps.apple.com", strength=min(2.0, 0.6 + max(climb, 25 - rank) / 30)))
-        _save(self.PATH, ranks)                              # baseline = the chart we just saw
+        # AUDIT FIX: MERGE into the baseline like the steam/github siblings — writing the rebuilt dict
+        # wiped every baseline whenever a fetch failed (both feeds erroring saved {}), and each name
+        # then re-fired as a fresh "rank<=25" discovery on the next good poll.
+        if ranks:
+            prev.update(ranks)
+            _save(self.PATH, prev)
         return out
 
 

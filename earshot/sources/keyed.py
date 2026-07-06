@@ -7,7 +7,7 @@ import os
 import requests
 
 from ..models import RawSignal, now_ts
-from .base import Source, extract_tickers
+from .base import Source, extract_tickers, SeenSet
 
 TIMEOUT = 12
 
@@ -54,6 +54,7 @@ class FinnhubSource(Source):
         super().__init__(weights)
         self.token = os.getenv("FINNHUB_API_KEY")
         self.enabled = bool(self.token)
+        self.seen_earnings = SeenSet("finnhub_earnings")
         if not self.enabled:
             print("  [tentacle:finnhub] inactive (no FINNHUB_API_KEY)")
 
@@ -86,6 +87,12 @@ class FinnhubSource(Source):
                 continue
             surprise = (act - est) / abs(est)
             if surprise > 0.02:  # a beat
+                # AUDIT FIX: emit each report ONCE — the 2-day calendar window re-emitted the same
+                # beat with a fresh ts every 30s poll for 48 hours straight.
+                rid = f"{sym}|{e.get('date') or frm}"
+                if self.seen_earnings.seen(rid):
+                    continue
+                self.seen_earnings.add(rid)
                 out.append(RawSignal(
                     source="finnhub_earnings", weight=self.weight("finnhub_earnings"), ts=now_ts(),
                     tickers=[sym], headline=f"{sym} earnings beat: EPS {act} vs {est} est (+{surprise*100:.0f}%)",

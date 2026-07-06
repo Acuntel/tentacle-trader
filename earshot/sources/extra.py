@@ -8,7 +8,7 @@ import re
 import requests
 
 from ..models import RawSignal, now_ts
-from .base import Source, extract_tickers, NAME_TICKER
+from .base import Source, extract_tickers, NAME_TICKER, SeenSet
 
 TIMEOUT = 15
 
@@ -67,14 +67,24 @@ class PolymarketSource(Source):
 
 
 class UsaSpendingSource(Source):
-    """Federal contract awards — a public company landing a big award is a real catalyst."""
+    """Federal contract awards — a public company landing a big award is a real catalyst.
+    AUDIT FIX: the query used to ask for the ALL-TIME (2020-2030) top-40 by amount — the same
+    mega-awards from years past, re-emitted as 'news' every hour forever. Now: awards ACTED ON in
+    the last 7 days (a real catalyst window), each emitted once via a persisted Award-ID seen-set."""
     key = "gov_contract"
     min_interval = 3600.0        # contract data updates ~daily
 
+    def __init__(self, weights: dict):
+        super().__init__(weights)
+        self.seen = SeenSet("usaspending")
+
     def fetch(self) -> list[RawSignal]:
+        today = datetime.date.today()
         body = {
             "filters": {"award_type_codes": ["A", "B", "C", "D"],
-                        "time_period": [{"start_date": "2020-01-01", "end_date": "2030-01-01"}]},
+                        "time_period": [{"start_date": (today - datetime.timedelta(days=7)).isoformat(),
+                                         "end_date": today.isoformat(),
+                                         "date_type": "action_date"}]},
             "fields": ["Award Amount", "Recipient Name", "Award ID"],
             "sort": "Award Amount", "order": "desc", "limit": 40,
         }
@@ -85,7 +95,9 @@ class UsaSpendingSource(Source):
             name = a.get("Recipient Name", "")
             tk = _map(name, CONTRACTOR_TICKER)
             amt = a.get("Award Amount", 0) or 0
-            if tk and amt >= 50_000_000:
+            aid = a.get("Award ID") or f"{name}|{amt}"
+            if tk and amt >= 50_000_000 and not self.seen.seen(aid):
+                self.seen.add(aid)
                 out.append(RawSignal(
                     source=self.key, weight=self.weight(), ts=now_ts(), tickers=[tk],
                     headline=f"{name} federal award ${amt/1e6:.0f}M", url="https://usaspending.gov",

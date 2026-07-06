@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import os
 import re
 import time
 from ..models import RawSignal
@@ -44,6 +46,45 @@ def extract_tickers(text: str) -> list[str]:
         if re.search(r"\b" + re.escape(name) + r"\b", low):   # word-boundary -> few false positives
             found.add(tk)
     return sorted(found)
+
+
+class SeenSet:
+    """Persisted emit-once memory for a tentacle. A discrete event (a filing, an award, an insider
+    row, an earnings report) should enter the brain ONCE, at first observation — not on every poll
+    with a fresh timestamp. Re-emission defeats the buffer dedup + the slow-family TTL, makes stale
+    events look eternally new, and turns one 8-K into an all-day drumbeat of fake confirmation
+    (AUDIT: sec_fulltext, openinsider, finnhub_earnings and usaspending all had this). Capped FIFO,
+    persisted on the volume so restarts don't re-emit history."""
+
+    def __init__(self, name: str, cap: int = 4000):
+        self.path = os.path.join("state", f"seen_{name}.json")
+        self.cap = cap
+        try:
+            with open(self.path) as f:
+                self._items = [str(x) for x in json.load(f)]
+        except Exception:
+            self._items = []
+        self._set = set(self._items)
+
+    def seen(self, key) -> bool:
+        return str(key) in self._set
+
+    def add(self, key):
+        k = str(key)
+        if k in self._set:
+            return
+        self._set.add(k)
+        self._items.append(k)
+        if len(self._items) > self.cap:
+            drop = self._items[: len(self._items) - self.cap]
+            self._items = self._items[len(drop):]
+            self._set.difference_update(drop)
+        try:
+            os.makedirs("state", exist_ok=True)
+            with open(self.path, "w") as f:
+                json.dump(self._items, f)
+        except Exception:
+            pass
 
 
 class Source:

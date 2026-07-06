@@ -16,7 +16,7 @@ from datetime import date, timedelta
 import requests
 
 from ..models import RawSignal, now_ts
-from .base import Source
+from .base import Source, SeenSet
 
 TIMEOUT = 12
 TICKER_IN_PARENS = re.compile(r"\(([A-Z]{1,5})\)")
@@ -51,14 +51,16 @@ class SecFullTextSource(Source):
         ('"breakthrough therapy designation"', "fda_approval", 1.0),
         ('"receipt of FDA approval"', "fda_approval", 1.0),
         ('"awarded a contract"', "gov_contract", 0.7),
-        ('"going concern"', None, 0.5),                  # risk flag (we're long-only -> a filter signal)
-        ('"chief executive officer" "resignation"', None, 0.5),
+        # AUDIT FIX: the "going concern" / "CEO resignation" queries were DROPPED — they emitted
+        # positive-strength signals into a long-only scorer with no bearish consumer anywhere, so a
+        # going-concern warning literally scored as a BUY confirmation.
     ]
 
     def __init__(self, weights: dict, ua: str):
         super().__init__(weights)
         self.ua = ua
         self.i = 0
+        self.seen = SeenSet("sec_fulltext")
 
     def fetch(self) -> list[RawSignal]:
         out: list[RawSignal] = []
@@ -81,6 +83,11 @@ class SecFullTextSource(Source):
                 tickers = [t for t in TICKER_IN_PARENS.findall(names) if t != "CIK"]
                 if not tickers:
                     continue
+                # emit each filing ONCE (it used to re-emit hourly with a fresh ts for 5 days)
+                hid = h.get("_id") or f"{src.get('file_date', '')}|{q}|{names[:60]}"
+                if self.seen.seen(hid):
+                    continue
+                self.seen.add(hid)
                 out.append(RawSignal(
                     source=self.key, weight=self.weight(), ts=now_ts(), tickers=tickers[:1],
                     headline=f"SEC 8-K full-text match {q}: {names[:90]}",
