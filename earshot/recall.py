@@ -45,6 +45,9 @@ def backlog(know, k: int = 6):
     for s in (know.get("hive", {}).get("strategies") or [])[-25:]:
         if s.get("name"):
             items.append({"kind": "strategy", "what": s.get("name"), "why": s.get("rationale")})
+    for rev in reverted(10):
+        if rev.get("file"):
+            items.append({"kind": "reverted", "file": rev["file"], "what": rev.get("why")})
     for src in (know.get("proposed_sources") or [])[-25:]:
         items.append({"kind": "source", "what": src})
     # dedupe + drop anything already denied
