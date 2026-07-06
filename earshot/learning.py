@@ -299,6 +299,16 @@ class Learner:
                 self._credit_sources(o["sources"], win, alpha, rate=rate)  # horizon-scaled, < a real trade
                 if self.lgate is not None and o.get("feat"):
                     self.lgate.update(o["feat"], win)                    # train P(win) from observations
+                    self.know.setdefault("diag", {})["obs_updates"] = \
+                        self.know.get("diag", {}).get("obs_updates", 0) + 1
+                elif o.get("feat"):
+                    # DIAGNOSTIC (2026-07-06): ledger rows advanced while model.n froze — if this ever
+                    # fires, labels are flowing but NOT training P(win); scream so the watch sees it.
+                    self.know.setdefault("diag", {})["obs_skipped_no_lgate"] = \
+                        self.know.get("diag", {}).get("obs_skipped_no_lgate", 0) + 1
+                    if not getattr(self, "_lgate_warned", False):
+                        self._lgate_warned = True
+                        print("  ⚠ resolve_observations: learner.lgate is None — labels NOT training P(win)!")
                 self._ledger_resolved(o, h, alpha, win)
                 for hh, _ in matured:                                    # shorter ones: done, no credit
                     done.add(hh)
