@@ -84,6 +84,16 @@ def _ema(xs, n):
     return e
 
 
+def _ema_series(xs, n):
+    k = 2 / (n + 1)
+    e = sum(xs[:n]) / n
+    out = [e]
+    for x in xs[n:]:
+        e = x * k + e * (1 - k)
+        out.append(e)
+    return out
+
+
 def macd_line(c):
     return (_ema(c, 12) - _ema(c, 26)) if len(c) >= 26 else None
 
