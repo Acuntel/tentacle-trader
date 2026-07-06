@@ -29,16 +29,19 @@ class EdgarSource(Source):
         self._cik_map: dict[int, str] | None = None
 
     def _ciks(self) -> dict[int, str]:
-        if self._cik_map is None:
-            self._cik_map = {}
+        # AUDIT FIX: retry when the map is EMPTY, not only when None — one failed fetch at boot used to
+        # cache {} forever, permanently degrading EDGAR ticker extraction (the bot's top-trust source).
+        if not self._cik_map:
+            m: dict[int, str] = {}
             try:
                 r = requests.get("https://www.sec.gov/files/company_tickers.json",
                                  headers={"User-Agent": self.ua}, timeout=TIMEOUT)
                 for row in r.json().values():
-                    self._cik_map[int(row["cik_str"])] = row["ticker"]
+                    m[int(row["cik_str"])] = row["ticker"]
             except Exception as e:
-                print(f"  [tentacle:edgar] cik map failed: {e}")
-        return self._cik_map
+                print(f"  [tentacle:edgar] cik map failed (will retry next poll): {e}")
+            self._cik_map = m or None                    # None -> retried on the next fetch()
+        return self._cik_map or {}
 
     def fetch(self) -> list[RawSignal]:
         out: list[RawSignal] = []

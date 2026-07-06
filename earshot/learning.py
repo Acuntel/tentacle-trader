@@ -237,10 +237,12 @@ class Learner:
         for c in candidates:
             if not (getattr(c, "_qualified_learn", False) or getattr(c, "_families", 1) >= 2):
                 continue
-            if self.core is not None:
-                self.core.record_leadtime(c)          # which source got here FIRST (lead-time learning)
             if (c.ticker, today) in have or len(self.obs) >= max_pending:
                 continue
+            # AUDIT FIX: lead-time recorded AFTER the per-ticker/day dedup — it used to fire on every
+            # 10s tick for a persistent candidate, double-counting the same setup hundreds of times.
+            if self.core is not None:
+                self.core.record_leadtime(c)          # which source got here FIRST (lead-time learning)
             px = prices.last_price(c.ticker)
             if not px:
                 continue
@@ -276,14 +278,19 @@ class Learner:
         for o in self.obs:
             done = set(o.get("done", []))
             age_h = (time.time() - o["ts"]) / 3600.0
-            px = None
-            for h, rate in self._horizons:
-                if h in done or age_h < h or learned >= max_per_cycle:
-                    continue
-                if px is None:
-                    px = prices.last_price(o["ticker"])
-                if not px or not o.get("entry"):
-                    break
+            # AUDIT FIX: when SEVERAL horizons matured at once (weekend backlog, resolution gaps), the
+            # old loop credited each of them AT THE SAME PRICE — one observation became 3 identical
+            # labels (triple-training the model/patterns/weights on one fact). Now: credit only the
+            # LONGEST matured horizon; the shorter ones are marked done without credit.
+            matured = [(h, r) for h, r in self._horizons if h not in done and age_h >= h]
+            if not matured or learned >= max_per_cycle:
+                o["done"] = sorted(done)
+                if len(done) < len(self._horizons):
+                    still.append(o)
+                continue
+            px = prices.last_price(o["ticker"])
+            if px and o.get("entry"):
+                h, rate = matured[-1]                                   # the longest matured horizon
                 ret = (px / o["entry"] - 1) * 100
                 mkt = prices.market_return_since(o["ts"])               # ALPHA-label observations too
                 alpha = ret - mkt if mkt is not None else ret
@@ -293,7 +300,9 @@ class Learner:
                 if self.lgate is not None and o.get("feat"):
                     self.lgate.update(o["feat"], win)                    # train P(win) from observations
                 self._ledger_resolved(o, h, alpha, win)
-                done.add(h); learned += 1
+                for hh, _ in matured:                                    # shorter ones: done, no credit
+                    done.add(hh)
+                learned += 1
             o["done"] = sorted(done)
             if len(done) < len(self._horizons):
                 still.append(o)                                          # keep until the last horizon lands

@@ -127,8 +127,10 @@ def _mission() -> str:
 
 
 def _modules() -> list[str]:
+    # AUDIT FIX: exclude the LOCKED rails from target selection — the harness used to hand the coder
+    # risk.py/executor.py/etc, then refuse its patch AND grade the model down for a target IT never chose.
     return sorted(f for f in os.listdir(PKG) if f.endswith(".py")
-                  and f not in {"__init__.py", "selfcode.py"})
+                  and f not in (LOCKED | {"__init__.py"}))
 
 
 def _phantom_calls() -> list[str]:
