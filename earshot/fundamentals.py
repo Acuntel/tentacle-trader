@@ -78,6 +78,11 @@ def read(ticker: str):
     return prices._cached(("fund", ticker), 21600, lambda: _read(ticker))
 
 
+def _read_cached(ticker: str, max_age: int = 21600):
+    """Allow callers to request fresher data when learning velocity matters."""
+    return prices._cached(("fund", ticker), max_age, lambda: _read(ticker))
+
+
 def features(ticker: str) -> dict:
     """Compact feature dict for the learned pattern model (Sprint 4). Always returns a dict."""
     r = read(ticker)
