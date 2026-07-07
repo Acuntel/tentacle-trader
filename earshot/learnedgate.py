@@ -82,6 +82,11 @@ class LearnedGate:
                     continue
                 if fv == fv and abs(fv) > 1e-9:                 # finite, non-zero (NaN-safe)
                     feat[prefix + str(k)] = round(math.tanh(fv), 4)
+        # Forge-found features: t_bias, o_skew, f_squeeze are the strongest predictors.
+        # Expose them explicitly so the online learner gets stable, named weights.
+        feat["t_bias"] = feat.get("t_bias", 0.0)
+        feat["o_skew"] = feat.get("o_skew", 0.0)
+        feat["f_squeeze"] = feat.get("f_squeeze", 0.0)
         return feat
 
     def predict(self, feats: dict) -> float:
