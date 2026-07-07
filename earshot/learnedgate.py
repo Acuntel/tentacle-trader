@@ -90,7 +90,9 @@ class LearnedGate:
         return feat
 
     def predict(self, feats: dict) -> float:
-        z = self.b + sum(self.w.get(k, 0.0) * v for k, v in feats.items())
+        # Only use features that have weights (avoids bloating the dot-product with
+        # never-seen keys and keeps the model compact in knowledge.json).
+        z = self.b + sum(self.w.get(k, 0.0) * v for k, v in feats.items() if k in self.w)
         return 1.0 / (1.0 + math.exp(-max(-20.0, min(20.0, z))))
 
     def update(self, feats: dict, win: bool):
