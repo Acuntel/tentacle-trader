@@ -58,6 +58,8 @@ class HistoricalTrainer:
             return {"trained": 0}
         n, tries = 0, 0
         while n < self.per_pass and tries < self.per_pass * 8:
+            if self.gate.brier < 0.20 and random.random() < 0.5:
+                break  # early-exit: model already strong; save CPU for live path
             tries += 1
             bars = history.load(random.choice(tickers))
             if len(bars) < self.hold + 60:
