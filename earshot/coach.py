@@ -155,12 +155,81 @@ class Coach:
             pass
         return "\n".join(lines)
 
+    # verdicts stamped before this went live measured the METRIC-ERA TRANSITION (the 7/5 label-quality
+    # fix made the fake-good weekend Brier recover), not the changes themselves — unattributable.
+    ERA_BOUNDARY_TS = 1751743800.0                        # 2026-07-05T19:30Z, label-gate deploy
+
+    def _migrate_verdicts(self):
+        """ONE-TIME cleanup (Brady's 'study the verdicts' pass, 2026-07-08): 41 of the first 54
+        verdicts were fake — 19 measured the era transition, 22 were burst clones (changes applied
+        in a burst share one 24h window, so one global metric wiggle got stamped on every one:
+        Δbrier identical to 4 decimals across 20+ 'hurt' rows). Leaving them as 'hurt' actively
+        taught the proposer to avoid innocent files. Re-mark as unattributable; keep the deltas."""
+        sc = self.know.get("self_changes") or []
+        if not sc or self.know.get("verdict_migration_done"):
+            return
+        from collections import Counter
+        sig_counts = Counter()
+        for c in sc:
+            a = c.get("after") or {}
+            if c.get("verdict"):
+                sig_counts[(a.get("d_brier"), a.get("dir_hit_since"))] += 1
+        fixed = 0
+        for c in sc:
+            v, a = c.get("verdict"), c.get("after") or {}
+            if v not in ("helped", "hurt", "no measurable effect"):
+                continue
+            if (c.get("ts") or 0) < self.ERA_BOUNDARY_TS:
+                c["verdict"] = "unattributable (era transition)"
+                fixed += 1
+            elif sig_counts[(a.get("d_brier"), a.get("dir_hit_since"))] >= 3:
+                c["verdict"] = "unattributable (burst window)"
+                fixed += 1
+        self.know["verdict_migration_done"] = True
+        if fixed:
+            _append(PROPOSALS, {"ts": iso(time.time()), "status": "VERDICT MIGRATION",
+                                "file": "self_changes", "change": f"re-marked {fixed} fake verdicts",
+                                "why": "era-transition + burst-window verdicts are unattributable"})
+
+    def _change_lessons(self) -> dict:
+        """Distill the SCORED history into lessons the idea-generators actually read: per-target
+        clean-era outcomes + the standing conclusions. This is the study loop closing — what helped,
+        what didn't, and WHY, feeding the next round of proposals (Brady, 2026-07-08)."""
+        sc = self.know.get("self_changes") or []
+        import re
+        from collections import Counter
+        per: dict[str, Counter] = {}
+        for c in sc:
+            v = c.get("verdict")
+            if v not in ("helped", "hurt", "no measurable effect"):
+                continue                                   # only distinct-window, clean-era verdicts count
+            m = re.search(r"in (\w+\.py)|config: (\w+)", c.get("title", ""))
+            tgt = (m.group(1) or "config:" + m.group(2)) if m else "other"
+            per.setdefault(tgt, Counter())[v] += 1
+        lessons = []
+        for tgt, cnt in sorted(per.items(), key=lambda kv: -sum(kv[1].values())):
+            tried = sum(cnt.values())
+            if tried >= 3 and cnt.get("helped", 0) == 0:
+                lessons.append(f"{tgt}: {tried} tried, 0 helped — stop proposing this shape of change")
+            elif cnt.get("helped", 0) >= 1:
+                lessons.append(f"{tgt}: {cnt['helped']}/{tried} helped")
+        summary = {"per_target": {k: dict(v) for k, v in per.items()}, "lessons": lessons,
+                   "standing": ["Coefficient/constant nudges to the online model (learnedgate) never "
+                                "help — it retunes its own weights within hours; propose STRUCTURAL "
+                                "changes to data flow (caching, label mechanics, sampling) instead — "
+                                "all clean-era HELPED verdicts were that shape.",
+                                "Changes applied in bursts can't be attributed; fewer, more distinct "
+                                "ideas score better than many small ones."]}
+        self.know["change_lessons"] = summary
+        return summary
+
     def _score_self_changes(self) -> list[str]:
         """The self-change SCOREBOARD: ~24h after each auto-applied change, compare the loop's vitals
         (labels gained, Brier, explore dir-hit on the trades SINCE) to the snapshot stamped at apply
-        time. Attribution is approximate (several changes can overlap a day), but it ends the illusion
-        that 'survived the gate' = 'helped': a change that moves nothing gets called out as such, and
-        the verdicts steer the next proposals. Verdicts persist on the change record + the journal."""
+        time. BURST-AWARE: changes whose windows resolve together share one metric move — scoring
+        each ≥3-sized group 'unattributable (burst window)' instead of pretending per-change signal.
+        Verdicts persist on the change record + the journal and steer the next proposals."""
+        self._migrate_verdicts()
         out = []
         changes = self.know.get("self_changes") or []
         if not changes:
@@ -168,6 +237,7 @@ class Coach:
         m = self.know.get("model", {})
         ex = self.know.get("explore", {})
         now = time.time()
+        due = []
         for c in changes:
             if c.get("verdict") or now - c.get("ts", 0) < 24 * 3600:
                 continue
@@ -176,15 +246,20 @@ class Coach:
             db = round(float(m.get("brier", 0.25) or 0.25) - float(a.get("brier", 0.25) or 0.25), 4)
             tr0, tr1 = int(a.get("explore", 0) or 0), int(ex.get("trades", 0) or 0)
             h0, h1 = int(a.get("dir_hits", 0) or 0), int(ex.get("dir_hits", 0) or 0)
-            # AUDIT FIX: dir-hit needs a MINIMUM SAMPLE — one lucky trade (1/1 = 1.0 > 0.5) was enough
-            # to stamp a permanent "helped" verdict that then steered the proposer LLM. And when there
-            # is no evidence either way yet, DEFER (up to 72h) instead of guessing.
+            # dir-hit needs a MINIMUM SAMPLE (one lucky 1/1 trade stamped permanent 'helped' verdicts);
+            # with no evidence either way yet, DEFER (up to 72h) instead of guessing.
             dh = round((h1 - h0) / (tr1 - tr0), 2) if (tr1 - tr0) >= 5 else None
             if dn < 20 and dh is None and now - c.get("ts", 0) < 72 * 3600:
                 continue                                 # too little new data — wait, don't guess
-            good = (db < -0.003) or (dh is not None and dh > 0.5)
-            bad = db > 0.005
-            c["verdict"] = "helped" if good and not bad else ("hurt" if bad else "no measurable effect")
+            due.append((c, dn, db, dh))
+        burst = len(due) >= 3                             # same pass = same window = one shared move
+        for c, dn, db, dh in due:
+            if burst:
+                c["verdict"] = "unattributable (burst window)"
+            else:
+                good = (db < -0.003) or (dh is not None and dh > 0.5)
+                bad = db > 0.005
+                c["verdict"] = "helped" if good and not bad else ("hurt" if bad else "no measurable effect")
             c["after"] = {"labels_gained": dn, "d_brier": db, "dir_hit_since": dh}
             line = (f"{c['id']} \"{c.get('title', '')[:60]}\" -> {c['verdict']} "
                     f"(Δbrier {db:+.4f}, +{dn} labels"
@@ -193,6 +268,8 @@ class Coach:
                                 "file": "self-change " + c["id"], "change": c.get("title", ""),
                                 "why": line})
             out.append(line)
+        if out:
+            self._change_lessons()                        # keep the distilled study current
         return out
 
     def run(self, news_signals=None, macro_ctx="") -> dict:
@@ -249,6 +326,8 @@ class Coach:
         rep = self._report(news_signals, macro_ctx)
         if sc_verdicts:                                    # measured self-change verdicts = evidence
             rep["self_change_scoreboard"] = sc_verdicts[-8:]
+        cl = self.know.get("change_lessons") or self._change_lessons()
+        rep["change_lessons"] = {"lessons": cl.get("lessons", [])[:6], "standing": cl.get("standing", [])}
         try:                                               # AUDIT FIX: sim.findings() had zero callers —
             rep["sim_findings"] = self.sim.findings()      # the decade's best/worst patterns now reach the LLM
         except Exception:

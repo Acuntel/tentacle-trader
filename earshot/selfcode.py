@@ -114,6 +114,8 @@ def _mission() -> str:
         ex = k.get("explore", {})
         fld = k.get("base_rate", {}).get("ema")
         tr = ex.get("trades", 0)
+        cl = k.get("change_lessons") or {}
+        lessons = "; ".join((cl.get("standing") or [])[:1] + (cl.get("lessons") or [])[:3])
         return ("MISSION, in priority order: (1) FIX anything actually broken; (2) raise the bot's "
                 "LEARNING VELOCITY — more labeled samples/day, better calibration, tighter feedback "
                 "loops; (3) only then anything else. Current state: P(win) model "
@@ -121,7 +123,9 @@ def _mission() -> str:
                 f"explore trades={tr}"
                 + (f" dir-hit={ex.get('dir_hits', 0)}/{tr}" if tr else "")
                 + (f", field alpha-win base rate={fld}" if fld else "") +
-                ". Avoid cosmetic refactors.\n\n")
+                ". Avoid cosmetic refactors."
+                + (f"\nMEASURED LESSONS from past self-changes (24h scoreboard): {lessons}" if lessons else "")
+                + "\n\n")
     except Exception:
         return ""
 
