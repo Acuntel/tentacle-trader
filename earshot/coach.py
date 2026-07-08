@@ -63,7 +63,7 @@ class Coach:
         self.last = 0.0
         self.last_backup_day = None
         self.know = learner.know
-        self.know.setdefault("lessons", [])
+        self.know.setdefault("lessons", []); self.know.setdefault("lesson_stats", {"helped": 0, "hurt": 0, "neutral": 0})
         self.know.setdefault("coach_notes", {})
         self.last_summary = "coach has not run yet"
 
