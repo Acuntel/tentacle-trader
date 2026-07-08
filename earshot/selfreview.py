@@ -100,6 +100,49 @@ class SelfReview:
                 "fix": "consider lowering conviction.max_runup_pct or weighting earlier tentacles higher",
                 "auto_applied": False})
 
+        # 4b) FAILING PARTS — Brady's law: "if a part is failing, honesty should know and then fix
+        # it." A broken piece must never fail in silence: erroring tentacles, tentacles that produce
+        # nothing, and dead LLM providers (which burn failover latency on every call) all get named.
+        failing = []
+        for src, hd in (know.get("tentacle_health") or {}).items():
+            polls = hd.get("polls", 0)
+            if polls >= 20 and hd.get("errors", 0) / max(1, polls) > 0.5:
+                failing.append(f"tentacle {src}: {hd['errors']} errors/{polls} polls")
+                findings.append({
+                    "issue": f"tentacle '{src}' is FAILING (majority of polls error)",
+                    "evidence": f"{hd['errors']} errors over {polls} polls this session",
+                    "severity": "high", "status": "FLAGGED",
+                    "fix": "fix the endpoint/key/parser or disable the tentacle in config",
+                    "auto_applied": False})
+            elif polls >= 300 and hd.get("signals", 0) == 0:
+                failing.append(f"tentacle {src}: 0 signals in {polls} polls")
+                findings.append({
+                    "issue": f"tentacle '{src}' produces NOTHING (may be quietly broken)",
+                    "evidence": f"0 signals over {polls} polls this session",
+                    "severity": "medium", "status": "FLAGGED",
+                    "fix": "verify the source still publishes and the parser still matches its format",
+                    "auto_applied": False})
+        try:
+            stats = json.load(open("state/llm_stats.json"))
+            agg: dict = {}
+            for key, v in stats.items():
+                name = key.split("|")[0]
+                a = agg.setdefault(name, {"calls": 0, "ok": 0})
+                a["calls"] += v.get("calls", 0)
+                a["ok"] += v.get("ok", 0)
+            for name, a in agg.items():
+                if a["calls"] >= 50 and a["ok"] == 0:
+                    failing.append(f"LLM {name}: 0/{a['calls']} usable answers")
+                    findings.append({
+                        "issue": f"LLM provider '{name}' is DEAD (never answers)",
+                        "evidence": f"0 usable answers in {a['calls']} attempts",
+                        "severity": "medium", "status": "FLAGGED",
+                        "fix": "fix/rotate its key or remove it from llm.ROUTING — it burns failover latency",
+                        "auto_applied": False})
+        except Exception:
+            pass
+        know["failing_parts"] = failing                     # the daily digest names them to Brady
+
         # 5) Honest progress check — distance to the next rung (no inflation).
         stt = self.instinct.status()
         findings.append({

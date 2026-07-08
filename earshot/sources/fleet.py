@@ -11,6 +11,7 @@ signal. Adding tentacles = extending these lists.
 from __future__ import annotations
 
 import concurrent.futures as cf
+import time
 import urllib.parse
 import requests
 import feedparser
@@ -185,6 +186,7 @@ class MegaFleetSource(Source):
         self.fast, self.wide = build_feed_list(universe, wide_cap)
         self.fb, self.wb = fast_batch, wide_batch
         self.fi = self.wi = 0
+        self._dom_cool: dict[str, float] = {}             # domain -> cool-until (429 backoff)
         total = len(self.fast) + len(self.wide)
         fsweep = len(self.fast) * self.min_interval / max(1, fast_batch) / 60
         wsweep = len(self.wide) * self.min_interval / max(1, wide_batch) / 60
@@ -195,7 +197,20 @@ class MegaFleetSource(Source):
         url, skey, strength = feed[:3]
         own = feed[3] if len(feed) > 3 else None          # the ticker a per-ticker feed was BUILT for
         try:
+            # AUDIT FIX (verified i16): HTTP failures were swallowed — a rate-limit ban across the
+            # whole fleet was INVISIBLE (errors never counted, no backoff, sweep kept hammering).
+            # Failing parts must be seen: count errors, and rest a 429'ing domain for 15 minutes.
+            dom = url.split("/")[2] if "://" in url else url
+            if self._dom_cool.get(dom, 0) > time.time():
+                return []
             r = requests.get(url, headers={"User-Agent": UA}, timeout=8)
+            if r.status_code == 429:
+                self.errors += 1
+                self._dom_cool[dom] = time.time() + 900   # polite backoff — anti-ban
+                return []
+            if r.status_code != 200:
+                self.errors += 1
+                return []
             fp = feedparser.parse(r.content)
             out = []
             for e in fp.entries[:15]:

@@ -104,6 +104,9 @@ class Earshot:
         lc = cfg.get("learning", {})
         self.learner.set_horizons(lc.get("horizons_hours", [24]), lc.get("horizon_credit", [0.05]))
         self.observe_cap = int(lc.get("observe_cap", 800))     # pending-observation ceiling (label funnel)
+        # live per-tentacle health (polls/signals/errors THIS process) — reset each boot so it gauges
+        # the running system, not history; selfreview's failing-parts sweep reads it (honesty must KNOW)
+        self.learner.know["tentacle_health"] = {}
         # warm-start the P(win) model so a fresh volume isn't a cold start (mastery is NOT warm-started)
         try:
             ws = warmstart.run(self.lgate, self.learner, self.sim, cfg)
@@ -197,11 +200,16 @@ class Earshot:
         # 1) scour — only poll tentacles that are DUE (each at its own rate-limit-safe cadence)
         now = time.time()
         polled = []
+        th = self.learner.know.setdefault("tentacle_health", {})
         for s in self.sources:
             if not s.due():
                 continue
             got = s.safe_fetch()
             polled.append(f"{s.key}:{len(got)}")
+            hd = th.setdefault(s.key, {"polls": 0, "signals": 0, "errors": 0})
+            hd["polls"] += 1
+            hd["signals"] += len(got)
+            hd["errors"] = s.errors                        # cumulative this process (safe_fetch counts)
             self.buffer.extend(got)
         # rolling memory: keep the recent window so async polls still confirm each other.
         # Per-FAMILY TTL: slow/one-shot families (filing/regulatory/demand/...) linger hours so a fast

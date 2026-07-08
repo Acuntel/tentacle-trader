@@ -153,6 +153,9 @@ class Coach:
                 lines.append(f"• ⚠️ Brain backup {bs.get('status')}: {', '.join(bs.get('failed', []))[:120]}")
         except Exception:
             pass
+        fp = self.know.get("failing_parts") or []
+        if fp:                                             # Brady's law: a failing part is NAMED, never silent
+            lines.append(f"• ⚠️ FAILING PARTS ({len(fp)}): " + "; ".join(fp[:4])[:200])
         return "\n".join(lines)
 
     # verdicts stamped before this went live measured the METRIC-ERA TRANSITION (the 7/5 label-quality
