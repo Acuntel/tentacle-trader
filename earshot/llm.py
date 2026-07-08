@@ -181,7 +181,7 @@ def _budget_today() -> dict:
 def _budget_ok(name: str, priority: str, est: int) -> bool:
     b = _budget_today()
     cap = PROVIDERS[name]["daily"] * RESERVE.get(priority, 0.80)
-    return b["used"].get(name, 0) + est <= cap
+    return (b["used"].get(name, 0) or 0) + est <= cap
 
 
 def _spend(name: str, tokens: int):
