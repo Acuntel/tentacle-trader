@@ -375,3 +375,7 @@ approvals:
   auto_deploy: true            # approve -> commit to main + railway up (real-money gate stays locked regardless)
   autonomous: true             # FULL internal autonomy: apply self-changes + TEXT Brady (no ✅/❌ questions)
   knob_cooldown_min: 2880      # 6h -> 48h: don't re-tune the SAME knob for 2 days (kills the fast oscillation)
+  max_unscored_in_flight: 2    # ATTRIBUTION PACING: at most N self-changes awaiting their 24h verdict —
+                               #   burst-applied changes share one metric window and can't be attributed
+                               #   (22 wasted verdicts proved it); serialized changes each earn a REAL
+                               #   verdict, so measure -> lesson -> better next idea actually compounds

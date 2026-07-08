@@ -51,6 +51,7 @@ class ApprovalQueue:
         self.digest_on = bool(t.get("daily_digest", True))
         self.autonomous = bool(a.get("autonomous", False))            # apply + NOTIFY (no ✅/❌ questions)
         self.knob_cooldown = int(a.get("knob_cooldown_min", 360)) * 60  # don't re-tune the same knob this often
+        self.max_inflight = int(a.get("max_unscored_in_flight", 2))     # attribution pacing (see propose())
         self.know = know
         self.persist = persist or (lambda: None)
         self.st = know.setdefault("approvals", {})
@@ -137,6 +138,14 @@ class ApprovalQueue:
                 tv = self.st.setdefault("tuned_values", {}).setdefault(knob, [])
                 tv.append(val)
                 self.st["tuned_values"][knob] = tv[-6:]
+        # ATTRIBUTION PACING (verdict-study lesson, 2026-07-08): changes applied in bursts share one
+        # measurement window and can never be attributed (22 verdicts were identical clones). Cap the
+        # UNSCORED changes in flight — each change earns its 24h verdict before the next lands, so the
+        # scoreboard->lessons->proposals loop compounds. Blocked ideas stay pooled (emit_due retries).
+        if self.autonomous and patches:
+            unscored = [c for c in self.know.get("self_changes", []) if not c.get("verdict")]
+            if len(unscored) >= self.max_inflight:
+                return None
         # AUTONOMOUS: just DO it and TEXT Brady — no ✅/❌ question. The money gate is still enforced by the
         # apply Action (gate + locked rails + money-token guard); this only removes the human-approval step.
         if self.autonomous and patches:
