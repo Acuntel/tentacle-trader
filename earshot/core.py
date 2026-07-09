@@ -86,7 +86,7 @@ class BrainCore:
             base = self.weights.get(src, 0.5)
             # FIELD-RELATIVE + PRIOR-ANCHORED (see learning._credit_sources): neutral = winning at the
             # field rate; the target orbits the config prior so a wrongly-floored weight self-heals.
-            slope = 1.2 if precision >= fld else 2.5          # loss-averse: below-field cuts harder
+            slope = 1.5 if precision >= fld else 3.0          # loss-averse: below-field cuts harder
             target = priors.get(src, 0.5) * (1.0 + slope * (precision - fld)) * (0.95 + 0.1 * lead)
             new = round(max(WMIN, min(WMAX, 0.85 * base + 0.15 * target)), 3)
             if abs(new - base) >= 0.005:
