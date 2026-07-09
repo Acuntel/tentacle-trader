@@ -51,7 +51,7 @@ class LearnedGate:
         tech_b = float(t.get("bias", 0) or 0)
         sqz = float(f.get("squeeze", 0) or 0)
         qual = float(f.get("quality", 0.5) or 0.5)
-        conv = float(verdict.get("conviction", 50)) / 100.0
+        conv = min(max(float(verdict.get("conviction", 50)), 0), 100) / 100.0
         is_filing = 1.0 if "filing" in p else 0.0
         is_options = 1.0 if "options" in p else 0.0
         is_price = 1.0 if "price" in p else 0.0
