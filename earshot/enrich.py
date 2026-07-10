@@ -72,7 +72,7 @@ class EnrichmentEngine:
                 break
             # NOTE: _families is an INT (brain sets cand._families = eff_families) — a self-patch
             # assumed it was a set and called len() on it, crashing every cycle (2026-07-05).
-            if getattr(c, "_families", 1) >= 2:                   # already confirmed -> skip
+            if getattr(c, "_families", 0) >= 2:                   # already confirmed -> skip
                 continue
             if now - self._probed.get(c.ticker, 0) < self.cooldown:
                 continue
