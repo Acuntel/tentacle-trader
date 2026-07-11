@@ -22,7 +22,7 @@ def save_json(path: str, obj) -> None:
         try:
             os.replace(path, path + ".bak")        # preserve the previous good copy
         except OSError:
-            pass
+            pass  # ignore if .bak already gone or unwritable
     os.replace(tmp, path)                            # atomic swap-in — readers never see a half file
 
 
