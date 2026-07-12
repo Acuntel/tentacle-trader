@@ -157,7 +157,7 @@ class Brain:
                     and len(per_source) >= self.conv["min_independent_sources"]):
                 learn_scope = True                          # full workup for learning, not for conviction
                 nearmiss_used += 1
-            runup = prices.runup_pct_today(tk) if learn_scope else None
+            runup = prices.runup_pct_today(tk) if (learn_scope and tk) else None
             earliness = 0.9 if runup is None else (0.5 if runup > self.conv["max_runup_pct"] else 1.0)
             score = self._score(per_source, ccfg["prior"], earliness, len(families))
 
