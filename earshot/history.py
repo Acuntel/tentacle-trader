@@ -168,6 +168,6 @@ def load(ticker: str) -> list[tuple[str, float]]:
 def cached_tickers() -> list[str]:
     """Tickers that already have a decade on disk — what the sim can replay right now."""
     try:
-        return [f[:-4] for f in os.listdir(HIST_DIR) if f.endswith(".csv")]
+        return [f.replace("-", "/")[:-4] for f in os.listdir(HIST_DIR) if f.endswith(".csv")]
     except OSError:
         return []
