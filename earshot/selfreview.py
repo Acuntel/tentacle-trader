@@ -18,6 +18,12 @@ from . import market
 
 REVIEW_PATH = "state/self_review.jsonl"
 
+# market.can_open() began hard-refusing off-hours entries at this moment (commit 0f1a244,
+# 2026-06-20 15:48 ET). Ledger rows from BEFORE the gate existed (the three 2026-06-19 Juneteenth
+# entries) are immutable history, not a live regression — rescanning the whole ledger re-raised
+# them as a fresh sev-high alarm on every run, forever. Only post-fix entries can re-fire it.
+MARKET_CLOCK_FIX_TS = 1781988537.0
+
 
 def _read_jsonl(path, cap=2000):
     out = []
@@ -46,8 +52,11 @@ class SelfReview:
         outcomes = _read_jsonl("state/outcomes.jsonl")
 
         # 1) PROCESS ERROR — positions opened while the market was closed (the Juneteenth bug).
+        # Currently-open positions are always checked; historical ledger rows only count if they
+        # were entered AFTER the market-clock fix shipped (a re-fire here means a REAL regression).
         closed_open = [p for p in self.learner.open if market.was_closed(p.get("entry_ts", time.time()))]
-        closed_hist = [o for o in outcomes if market.was_closed(o.get("entry_ts", 0))]
+        closed_hist = [o for o in outcomes if o.get("entry_ts", 0) >= MARKET_CLOCK_FIX_TS
+                       and market.was_closed(o["entry_ts"])]
         if closed_open or closed_hist:
             findings.append({
                 "issue": "entries placed while the market was closed",

@@ -44,6 +44,21 @@ SLOW_FAMILIES = {"filing", "regulatory", "surprise", "alt", "demand", "onchain",
                  "attention", "crowd"}
 
 
+class ClosedMarketExits:
+    """Off-hours exit shim for the REAL book. When the market is closed the 'live' price is frozen
+    at the prior close, so a discretionary exit (target/trailing/technicals/decay/time) would book
+    a stale, untradeable price into the immutable ledger AND mastery. Only the hard STOP stays
+    armed off-hours (protect the child); every other exit simply resolves at the next open, where
+    the price actually carries the news — same rationale as the observation guard below."""
+
+    def __init__(self, exits):
+        self._exits = exits
+
+    def evaluate(self, pos, price, bearish_tickers=None, now=None):
+        reason, chg = self._exits.evaluate(pos, price, bearish_tickers, now)
+        return (reason if reason == "stop" else None), chg
+
+
 def load_config(path: str) -> dict:
     with open(path) as f:
         cfg = yaml.safe_load(f)
@@ -240,8 +255,11 @@ class Earshot:
             print(f"  histtrain: +{ht['trained']} decade alpha-events -> P(win) prior "
                   f"(n={ht['total']}, brier {ht.get('brier', '?')})")
 
-        # 2) MANAGE open positions against the live price FIRST (exit engine decides sells)
-        for r in self.learner.resolve_due(self.instinct, self.exits):
+        # 2) MANAGE open positions against the live price FIRST (exit engine decides sells).
+        # Closed market -> only the hard stop may fire (ClosedMarketExits): everything else would
+        # resolve the REAL book at a weekend/evening frozen price and feed mastery a fake label.
+        live_exits = self.exits if mkt_open else ClosedMarketExits(self.exits)
+        for r in self.learner.resolve_due(self.instinct, live_exits):
             o, m = r["outcome"], r["mind"]
             tag = "WIN " if o["win"] else "LOSS"
             print(f"  [SELL/{r['exit']}] {tag} {o['ticker']} {o['pnl_pct']:+.1f}% "
@@ -306,7 +324,11 @@ class Earshot:
         for c in cands[:5]:
             print(f"    {c.ticker:<6} score {c.confidence:5.1f}  {c.catalyst.value:<18} "
                   f"{getattr(c, '_families', 1)} fam  ~${c.size_usd:.0f}")
-        self.learner.observe(cands, max_pending=self.observe_cap)  # every worked-up setup -> a labeled example
+        # Market-open ONLY (same guard as the resolve calls above): off-hours the recorded entry is
+        # the FROZEN prior close, so the overnight gap gets credited to the label as "alpha" the bot
+        # could never have traded (lookahead). Setups seen off-hours are simply not recorded.
+        if mkt_open:
+            self.learner.observe(cands, max_pending=self.observe_cap)  # every worked-up setup -> a labeled example
 
         # 5) act — but NOT if the day is halted, and NEVER when the market is closed (can't trade it)
         if self.daily.halted():
