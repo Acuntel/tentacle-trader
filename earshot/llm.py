@@ -9,7 +9,6 @@ being starved by the high-volume analyst.
 
 All FREE (activate by setting the env key); paid ones (deepseek-direct, moonshot, xai) stay off unless set:
   GROQ_API_KEY        Groq — fast Llama, free 100k tok/day                  (US)
-  GEMINI_API_KEY      Google Gemini Flash — smart, big free budget          (US)
   CEREBRAS_API_KEY    Cerebras — fastest inference, free                    (US)
   SAMBANOVA_API_KEY   SambaNova — fast Llama-3.3-70B, free tier             (US)
   NVIDIA_API_KEY      Nvidia NIM — many models incl DeepSeek-R1, free tier  (US)
@@ -39,9 +38,8 @@ PROVIDERS = {
     "groq":       {"url": "https://api.groq.com/openai/v1/chat/completions",
                    "key": "GROQ_API_KEY", "model_env": "GROQ_MODEL",
                    "model": "llama-3.3-70b-versatile", "free": True, "daily": 95_000},
-    "gemini":     {"url": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
-                   "key": "GEMINI_API_KEY", "model_env": "GEMINI_MODEL",
-                   "model": "gemini-2.0-flash", "free": True, "daily": 3_000_000},
+    # gemini REMOVED 2026-07-13: 0/2035 usable answers live (quota-dead key) — it was burning a
+    # failover slot every cycle. To re-add, restore this block + its ROUTING entries once a real key works.
     "cerebras":   {"url": "https://api.cerebras.ai/v1/chat/completions",
                    "key": "CEREBRAS_API_KEY", "model_env": "CEREBRAS_MODEL",
                    "model": "gpt-oss-120b", "free": True, "daily": 1_000_000},        # ultra-fast, verified
@@ -94,16 +92,17 @@ PROVIDERS = {
 # task -> preferred provider order. FAST models lead the loop-inline lanes (judge/reason/propose) so a slow
 # reasoner is only reached on failover and never stalls the trading loop. Every model serves multiple tasks.
 # FAST/FREE models lead high-volume lanes; OpenRouter→DeepSeek (paid, capped) sits in QUALITY lanes
-# (code/reason/quant) not volume lanes (judge). Gemini is demoted to last everywhere (AQ key is quota-dead;
-# stays as a no-op until a real key is set). Every model still serves multiple tasks.
+# (code/reason/quant) not volume lanes (judge). Every model still serves multiple tasks.
+# NOTE: a provider that goes fully dead (0 usable answers over a long window, per failing_parts) should be
+# REMOVED from these lanes, not just demoted — a dead tail still costs a failover attempt each cycle.
 ROUTING = {
-    "judge":   ["cerebras", "groq", "sambanova", "nv_bytedance", "nvidia", "gemini"],                          # fast, high-volume — NO paid
-    "reason":  ["cerebras", "openrouter", "nv_mistral", "nvidia", "groq", "nv_nemotron", "nv_stepfun", "gemini"],  # deep reasoning
-    "code":    ["nv_kimi", "openrouter", "cerebras_glm", "nv_stepfun", "nv_nemotron", "glm", "qwen", "nvidia", "gemini"],  # code-strong (Kimi/DeepSeek/GLM)
-    "propose": ["cerebras", "openrouter", "groq", "nv_mistral", "sambanova", "gemini"],                        # quality + evidence
-    "quant":   ["nv_sarvam", "openrouter", "nv_nemotron", "nv_kimi", "cerebras_glm", "nv_mistral", "gemini"],  # math / strategy synthesis
-    "agentic": ["nv_mistral", "nv_kimi", "openrouter", "cerebras", "nvidia", "gemini"],                        # tool-use / multi-step
-    "default": ["cerebras", "groq", "sambanova", "nvidia", "nv_mistral", "openrouter", "gemini"],
+    "judge":   ["cerebras", "groq", "sambanova", "nv_bytedance", "nvidia"],                          # fast, high-volume — NO paid
+    "reason":  ["cerebras", "openrouter", "nv_mistral", "nvidia", "groq", "nv_nemotron", "nv_stepfun"],  # deep reasoning
+    "code":    ["nv_kimi", "openrouter", "cerebras_glm", "nv_stepfun", "nv_nemotron", "glm", "qwen", "nvidia"],  # code-strong (Kimi/DeepSeek/GLM)
+    "propose": ["cerebras", "openrouter", "groq", "nv_mistral", "sambanova"],                        # quality + evidence
+    "quant":   ["nv_sarvam", "openrouter", "nv_nemotron", "nv_kimi", "cerebras_glm", "nv_mistral"],  # math / strategy synthesis
+    "agentic": ["nv_mistral", "nv_kimi", "openrouter", "cerebras", "nvidia"],                        # tool-use / multi-step
+    "default": ["cerebras", "groq", "sambanova", "nvidia", "nv_mistral", "openrouter"],
 }
 RESERVE = {"low": 0.50, "normal": 0.80, "high": 0.95}     # per-provider daily fraction a priority may use
 _BUDGET_PATH = "state/llm_budget.json"
