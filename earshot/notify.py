@@ -82,7 +82,7 @@ def poll(timeout: int = 0) -> list[dict]:
         return []
     off = _load(OFFSET_PATH, {"offset": 0}).get("offset", 0)
     r = _call("getUpdates", {"offset": off, "timeout": timeout,
-                             "allowed_updates": ["callback_query"]}, timeout=timeout + 12)
+                             "allowed_updates": ["callback_query"]}, timeout=timeout + 15)
     out: list[dict] = []
     if not (r and r.get("ok")):
         return out
