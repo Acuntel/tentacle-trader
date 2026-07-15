@@ -5,6 +5,7 @@ import os
 import re
 import time
 from ..models import RawSignal
+from .resolver import resolve_name
 
 TICKER_RE = re.compile(r"\$([A-Z]{1,5})\b")
 # High-precision: press releases say "(NASDAQ: XYZ)" / "(NYSE: ABC)" right in the text.
@@ -44,6 +45,10 @@ def extract_tickers(text: str) -> list[str]:
     low = text.lower()
     for name, tk in NAME_TICKER.items():
         if re.search(r"\b" + re.escape(name) + r"\b", low):   # word-boundary -> few false positives
+            found.add(tk)
+    if not found:
+        tk = resolve_name(text)   # SEC 12k-issuer map — only fires when the WHOLE text is a legal name
+        if tk:
             found.add(tk)
     return sorted(found)
 
