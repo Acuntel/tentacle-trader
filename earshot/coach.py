@@ -40,6 +40,20 @@ def _append(path, obj):
         f.write(json.dumps(obj) + "\n")
 
 
+def _change_target(c: dict) -> str:
+    """W3.1: resolve WHAT a self-change touched. The structured fields stamped at apply time
+    (approvals: target_file/knob/patch_hash) are the truth; the title regex survives ONLY as a
+    fallback for legacy rows recorded before those fields existed."""
+    if c.get("knob"):
+        return "config:" + str(c["knob"])
+    tf = str(c.get("target_file") or "")
+    if tf and os.path.basename(tf) != "config.yaml":
+        return os.path.basename(tf)
+    import re
+    m = re.search(r"in (\w+\.py)|config: (\w+)", c.get("title", ""))
+    return (m.group(1) or "config:" + m.group(2)) if m else "other"
+
+
 def _nudge_weight(weights: dict, src: str, dirn, know: dict, priors: dict, min_n: int):
     """W1.6: apply ONE LLM reweight nudge — but TRUST IS EARNED. The blind ×1.06/day up-nudges were
     compounding zombie sources (0 resolved trades ever) to the WMAX ceiling, above the best proven
@@ -212,16 +226,13 @@ class Coach:
         clean-era outcomes + the standing conclusions. This is the study loop closing — what helped,
         what didn't, and WHY, feeding the next round of proposals (Brady, 2026-07-08)."""
         sc = self.know.get("self_changes") or []
-        import re
         from collections import Counter
         per: dict[str, Counter] = {}
         for c in sc:
             v = c.get("verdict")
             if v not in ("helped", "hurt", "no measurable effect"):
                 continue                                   # only distinct-window, clean-era verdicts count
-            m = re.search(r"in (\w+\.py)|config: (\w+)", c.get("title", ""))
-            tgt = (m.group(1) or "config:" + m.group(2)) if m else "other"
-            per.setdefault(tgt, Counter())[v] += 1
+            per.setdefault(_change_target(c), Counter())[v] += 1
         lessons = []
         for tgt, cnt in sorted(per.items(), key=lambda kv: -sum(kv[1].values())):
             tried = sum(cnt.values())
@@ -270,15 +281,30 @@ class Coach:
             due.append((c, dn, db, dh))
         burst = len(due) >= 3                             # same pass = same window = one shared move
         for c, dn, db, dh in due:
+            fd = None
             if burst:
                 c["verdict"] = "unattributable (burst window)"
             else:
-                good = (db < -0.003) or (dh is not None and dh > 0.5)
-                bad = db > 0.005
+                # W3.1: kind=="code" is judged on the DETERMINISTIC ledger replay first — approvals
+                # stamped selfcode._fitness() at apply time; re-running the SAME replay isolates what
+                # the patch did to real-outcome prediction. The 24h wall-clock diff below is demoted
+                # to a corroborating signal (it's a global-metric diff that carried no causal signal:
+                # 24 hurt / 23 unattributable in the live tally).
+                if c.get("kind") == "code" and (c.get("at") or {}).get("fitness") is not None:
+                    post = selfcode._fitness()
+                    if post:
+                        fd = round(float(post["brier"]) - float(c["at"]["fitness"]), 5)
+                if fd is not None:
+                    good, bad = fd < -0.003, fd > selfcode.FITNESS_TOL
+                else:
+                    good = (db < -0.003) or (dh is not None and dh > 0.5)
+                    bad = db > 0.005
                 c["verdict"] = "helped" if good and not bad else ("hurt" if bad else "no measurable effect")
             c["after"] = {"labels_gained": dn, "d_brier": db, "dir_hit_since": dh}
+            if fd is not None:
+                c["after"]["fitness_delta"] = fd          # the PRIMARY verdict signal for code changes
             line = (f"{c['id']} \"{c.get('title', '')[:60]}\" -> {c['verdict']} "
-                    f"(Δbrier {db:+.4f}, +{dn} labels"
+                    f"({f'Δfitness {fd:+.5f}, ' if fd is not None else ''}Δbrier {db:+.4f}, +{dn} labels"
                     f"{f', dir-hit since {dh}' if dh is not None else ''})")
             _append(PROPOSALS, {"ts": iso(time.time()), "status": "SCORED (24h loop-metric verdict)",
                                 "file": "self-change " + c["id"], "change": c.get("title", ""),
