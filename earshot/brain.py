@@ -16,12 +16,16 @@ RAW_SCALE = 2.0  # raw≈2 -> ~63, raw≈3 -> ~78, raw≈4 -> ~86
 # Signal "families" — convergence ACROSS families (filing + surprise + flow) is where edge lives,
 # not two of the same kind (two Reddit posts). The brain rewards cross-family agreement.
 FAMILY = {
-    "edgar_8k": "filing", "edgar_form4": "filing", "edgar_13d": "filing", "newswire": "filing",
+    "edgar_8k": "filing", "edgar_form4": "filing", "edgar_13d": "filing",
     "sec_fulltext": "filing", "hiring": "alt", "hiring_ats": "alt",
     "appstore": "demand", "steam": "demand", "github": "demand",
     "pypi": "demand", "npm": "demand", "docker": "demand", "appreviews": "demand",
     "web_traffic": "demand", "onchain": "onchain", "jets": "flow", "congress": "flow",
     "finnhub_earnings": "surprise",
+    # W1.7: "newswire" = the PR wires (GlobeNewswire/PRNewswire/BusinessWire) that Google/Yahoo
+    # REPUBLISH — news-like, NOT a filing. As "filing" a press release + its own news echo counted
+    # as 2 independent families (fake convergence) and escaped the dossier's news dedup.
+    "newswire": "news",
     "alpaca_news": "news", "finnhub": "news", "google_news": "news", "hackernews": "news",
     "fda": "regulatory", "gov_contract": "regulatory", "index_inclusion": "regulatory",
     "nasdaq_halts": "regulatory",
@@ -129,10 +133,18 @@ class Brain:
             if self.explore else 0
         nearmiss_used = 0
         for tk, sigs in by_ticker.items():
-            # best strength per distinct source (don't let one source double-count)
+            # best strength per distinct source (don't let one source double-count).
+            # W1.8: LEAD-TIME weighting — a source that historically fires FIRST on confirmed setups
+            # counts more than a follower echoing it (early is the main edge free data offers).
+            # Weighting only: gate thresholds are untouched; no core/lead data -> neutral 1.0.
             per_source: dict[str, float] = {}
+            lead_f: dict[str, float] = {}
             for s in sigs:
-                per_source[s.source] = max(per_source.get(s.source, 0.0), s.weight * s.strength)
+                if s.source not in lead_f:
+                    lead_f[s.source] = (self.core.lead_factor(s.source)
+                                        if self.core is not None else 1.0)
+                per_source[s.source] = max(per_source.get(s.source, 0.0),
+                                           s.weight * s.strength * lead_f[s.source])
 
             # dominant catalyst among the signals
             votes: dict[Catalyst, float] = defaultdict(float)

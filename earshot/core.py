@@ -59,6 +59,15 @@ class BrainCore:
         d = self.know["leadtime"].get(src)
         return d["first"] / d["seen"] if d and d["seen"] >= 5 else 0.5
 
+    def lead_factor(self, src: str) -> float:
+        """W1.8: per-signal earliness multiplier for scoring — (0.5 + lead_score), bounded, so a
+        proven first-striker counts up to ~1.5x and a chronic echo ~0.5x. lead_score() is neutral
+        (0.5) below 5 observations, so no data -> exactly 1.0; any failure fails open to neutral."""
+        try:
+            return max(0.5, min(1.5, 0.5 + float(self.lead_score(src))))
+        except Exception:
+            return 1.0
+
     # ---- learned per-catalyst trading rules (#1) merged over the config defaults ----
     def rule(self, catalyst: str, default: dict) -> dict:
         r = dict(default)

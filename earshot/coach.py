@@ -40,6 +40,19 @@ def _append(path, obj):
         f.write(json.dumps(obj) + "\n")
 
 
+def _nudge_weight(weights: dict, src: str, dirn, know: dict, priors: dict, min_n: int):
+    """W1.6: apply ONE LLM reweight nudge — but TRUST IS EARNED. The blind ×1.06/day up-nudges were
+    compounding zombie sources (0 resolved trades ever) to the WMAX ceiling, above the best proven
+    earner. A source with fewer than min_n resolved trades stays CLAMPED to ±10% of its config
+    prior; only real resolved-trade outcomes may lift its weight above that."""
+    f = 1.06 if str(dirn).lower().startswith("up") else 0.94
+    nw = max(WMIN, min(WMAX, weights[src] * f))
+    if (know.get("sources") or {}).get(src, {}).get("trades", 0) < min_n:
+        pr = float(priors.get(src, 0.5))
+        nw = max(0.9 * pr, min(1.1 * pr, nw))
+    weights[src] = round(max(WMIN, min(WMAX, nw)), 3)
+
+
 class Coach:
     def __init__(self, cfg, learner, instinct, sim, scout=None, core=None, approvals=None):
         c = cfg.get("coach", {})
@@ -352,11 +365,13 @@ class Coach:
                          "Evidence:\n" + json.dumps(rep, default=str)[:4000],
                          max_tokens=800, priority="normal", task="reason")
         if v:
+            # W1.6: unproven sources (< min_source_samples resolved trades) are clamped to their
+            # config prior ±10% — an LLM hunch is not trade evidence (see _nudge_weight).
+            priors = self.cfg.get("source_weights", {})
             for s, dirn in (v.get("reweight") or {}).items():
                 if s in self.learner.weights:
-                    f = 1.06 if str(dirn).lower().startswith("up") else 0.94
-                    nw = round(max(WMIN, min(WMAX, self.learner.weights[s] * f)), 3)
-                    self.learner.weights[s] = nw
+                    _nudge_weight(self.learner.weights, s, dirn, self.know, priors,
+                                  self.core.min_samples)
             lessons = [str(x) for x in (v.get("lessons") or [])][:6]
             watch = [str(x) for x in (v.get("watchlist") or [])][:20]
             code_props = [p for p in (v.get("code_proposals") or []) if isinstance(p, dict)][:6]
