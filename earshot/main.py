@@ -13,6 +13,7 @@ import time
 import yaml
 
 from . import prices, market, history, warmstart
+from .persist import load_json, save_json
 from .sources import build_sources
 from .approvals import ApprovalQueue
 from .brain import Brain, FAMILY
@@ -42,6 +43,8 @@ from .core import BrainCore
 # noisy high-volume families keep the short window. Lateness is still priced by the earliness/runup gate.
 SLOW_FAMILIES = {"filing", "regulatory", "surprise", "alt", "demand", "onchain", "flow",
                  "attention", "crowd"}
+
+EXIT_COOLDOWN_PATH = "state/recent_exits.json"   # {ticker: ET date} of same-day re-entry cooldowns
 
 
 class ClosedMarketExits:
@@ -89,6 +92,10 @@ class Earshot:
         self.scout = SourceScout(self.learner.know, self.weights)
         self.daily = DailyGuard(cfg)
         self.exits = ExitEngine(cfg)
+        # W2.2: after a NON-stop exit a ticker is barred from re-entry for the rest of the ET trading
+        # day — the daily-candle technicals that closed it are static all day, so an instant re-buy
+        # just replays the same exit (VRTX churned buy+exit 8x in one hour). Persisted across restarts.
+        self.recent_exits = load_json(EXIT_COOLDOWN_PATH, {})
         self.explore_cfg = cfg.get("exploration", {})          # WS1: off-book learning-trade flood
         self.base_min = cfg["conviction"]["min_score_to_trade"]
         self.buffer: list = []                                  # rolling signal memory
@@ -147,6 +154,19 @@ class Earshot:
                 seen.add(k)
                 out.append(sg)
         return out
+
+    def _note_exit(self, ticker: str):
+        """Start the same-day re-entry cooldown for a ticker that just exited (non-stop)."""
+        self.recent_exits[ticker] = market.now_et().date().isoformat()
+        save_json(EXIT_COOLDOWN_PATH, self.recent_exits)
+
+    def _cooldown_tickers(self) -> set:
+        """Tickers exited (non-stop) THIS ET trading day — no re-entry until tomorrow."""
+        today = market.now_et().date().isoformat()
+        if any(d != today for d in self.recent_exits.values()):     # prune yesterday's cooldowns
+            self.recent_exits = {t: d for t, d in self.recent_exits.items() if d == today}
+            save_json(EXIT_COOLDOWN_PATH, self.recent_exits)
+        return set(self.recent_exits)
 
     def _equity_now(self) -> float:
         """Realized paper equity + unrealized mark-to-market of open positions (today's true damage)."""
@@ -261,6 +281,8 @@ class Earshot:
         live_exits = self.exits if mkt_open else ClosedMarketExits(self.exits)
         for r in self.learner.resolve_due(self.instinct, live_exits):
             o, m = r["outcome"], r["mind"]
+            if r["exit"] != "stop":                  # W2.2: non-stop exit -> same-day re-entry cooldown
+                self._note_exit(o["ticker"])
             tag = "WIN " if o["win"] else "LOSS"
             print(f"  [SELL/{r['exit']}] {tag} {o['ticker']} {o['pnl_pct']:+.1f}% "
                   f"(${o['pnl_usd']:+.2f}) | felt {m['felt']:+.1f} | {m['note']}")
@@ -340,7 +362,10 @@ class Earshot:
         else:
             chosen, why = None, "nothing cleared the bar — staying patient protects the child"
             blocks = []                       # (ticker, reason) for names that didn't clear, BEST-first
+            cooled = self._cooldown_tickers()  # W2.2: exited (non-stop) today -> no same-day re-buy
             for c in cands:                   # cands is sorted by confidence desc -> blocks[0] is the top pick
+                if c.ticker in cooled:
+                    blocks.append((c.ticker, "re-entry cooldown — exited this name earlier today")); continue
                 ok, reason = self.brain.passes_gate(c)
                 if not ok:
                     blocks.append((c.ticker, reason)); continue
