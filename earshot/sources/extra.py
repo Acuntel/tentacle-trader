@@ -9,6 +9,7 @@ import requests
 
 from ..models import RawSignal, now_ts
 from .base import Source, extract_tickers, NAME_TICKER, SeenSet
+from .resolver import resolve_name
 
 TIMEOUT = 15
 
@@ -18,6 +19,8 @@ CONTRACTOR_TICKER = {
     "northrop": "NOC", "general dynamics": "GD", "l3harris": "LHX", "palantir": "PLTR",
     "leidos": "LDOS", "booz allen": "BAH", "saic": "SAIC", "kbr": "KBR",
     "huntington ingalls": "HII", "axon": "AXON", "honeywell": "HON",
+    # federal-only subsidiaries whose legal names the SEC resolver can't see (parent is public):
+    "accenture": "ACN", "caci": "CACI", "hii mission": "HII", "maximus": "MMS",
 }
 PHARMA_TICKER = {
     "pfizer": "PFE", "moderna": "MRNA", "merck": "MRK", "eli lilly": "LLY", "lilly": "LLY",
@@ -29,6 +32,8 @@ BERKSHIRE_CIK = "0001067983"
 
 
 def _map(name: str, table: dict) -> str | None:
+    """Hand-table lookup (aliases/substrings). Callers fall back to resolver.resolve_name —
+    the SEC 12k-issuer map — AFTER every hand table misses, so the curated aliases stay first."""
     low = (name or "").lower()
     for k, tk in table.items():
         if k in low:
@@ -47,7 +52,8 @@ class PolymarketSource(Source):
         out: list[RawSignal] = []
         for m in r.json():
             q = m.get("question", "")
-            tickers = extract_tickers(q) or ([_map(q, NAME_TICKER)] if _map(q, NAME_TICKER) else [])
+            tk = _map(q, NAME_TICKER) or resolve_name(q)
+            tickers = extract_tickers(q) or ([tk] if tk else [])
             tickers = [t for t in tickers if t]
             if not tickers:
                 continue
@@ -93,7 +99,7 @@ class UsaSpendingSource(Source):
         out: list[RawSignal] = []
         for a in r.json().get("results", []):
             name = a.get("Recipient Name", "")
-            tk = _map(name, CONTRACTOR_TICKER)
+            tk = _map(name, CONTRACTOR_TICKER) or resolve_name(name)
             amt = a.get("Award Amount", 0) or 0
             aid = a.get("Award ID") or f"{name}|{amt}"
             if tk and amt >= 50_000_000 and not self.seen.seen(aid):
@@ -121,7 +127,7 @@ class ClinicalTrialsSource(Source):
             ps = s.get("protocolSection", {})
             sponsor = ps.get("sponsorCollaboratorsModule", {}).get("leadSponsor", {}).get("name", "")
             status = ps.get("statusModule", {}).get("overallStatus", "")
-            tk = _map(sponsor, PHARMA_TICKER)
+            tk = _map(sponsor, PHARMA_TICKER) or resolve_name(sponsor)
             if tk and status in ("COMPLETED", "ACTIVE_NOT_RECRUITING"):
                 title = ps.get("identificationModule", {}).get("briefTitle", "")
                 out.append(RawSignal(
@@ -170,7 +176,8 @@ class Berkshire13FSource(Source):
             names = re.findall(r"<nameOfIssuer>(.*?)</nameOfIssuer>", xml, re.I)
             seen = set()
             for nm in names:
-                tk = _map(nm, NAME_TICKER) or _map(nm, PHARMA_TICKER) or _map(nm, CONTRACTOR_TICKER)
+                tk = (_map(nm, NAME_TICKER) or _map(nm, PHARMA_TICKER)
+                      or _map(nm, CONTRACTOR_TICKER) or resolve_name(nm))
                 if tk and tk not in seen:
                     seen.add(tk)
                     out.append(RawSignal(
