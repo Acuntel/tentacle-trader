@@ -19,6 +19,7 @@ RESOLVED_OBS_PATH = "state/resolved_obs.jsonl"     # ledger of labeled setups ->
 LEARN_OPEN_PATH = "state/learning_positions.json"  # WS1: off-book exploration trades (never touch mastery/$)
 LEARN_OUT_PATH = "state/learning_outcomes.jsonl"   # WS1: ledger of resolved learning trades
 WMIN, WMAX = 0.1, 1.2
+OBS_GRACE_H = 144.0   # hours past the LONGEST horizon before an unresolvable obs is dropped for good
 
 
 from .persist import load_json as _load, save_json as _save   # atomic + .bak — never lose progress
@@ -237,7 +238,7 @@ class Learner:
         for c in candidates:
             if not (getattr(c, "_qualified_learn", False) or getattr(c, "_families", 1) >= 2):
                 continue
-            if (c.ticker, today) in have or len(self.obs) >= max_pending:
+            if (c.ticker, today) in have:
                 continue
             # AUDIT FIX: lead-time recorded AFTER the per-ticker/day dedup — it used to fire on every
             # 10s tick for a persistent candidate, double-counting the same setup hundreds of times.
@@ -246,6 +247,13 @@ class Learner:
             px = prices.last_price(c.ticker)
             if not px:
                 continue
+            # AT-CAP EVICTION (W1.1): the buffer used to REJECT the incoming setup when full, so a
+            # clog of stale obs silently starved learning of every NEW setup. Evict the oldest obs
+            # that already yielded a label (its short horizons resolved — the cheapest to lose),
+            # else the oldest outright; obs are appended in ts order, so index 0 is oldest.
+            while len(self.obs) >= max_pending:
+                idx = next((i for i, o in enumerate(self.obs) if o.get("done")), 0)
+                self.obs.pop(idx)
             self.obs.append({"ticker": c.ticker, "day": today, "ts": time.time(),
                              "entry": px, "sig": getattr(c, "_signature", ""),
                              "sources": sorted({s.source for s in c.signals}),
@@ -274,7 +282,7 @@ class Learner:
         from a setup within HOURS instead of waiting a full hold. An obs is dropped once its longest
         horizon resolves. This is the main lever that gets mastery off zero faster."""
         from . import prices
-        still, learned = [], 0
+        still, learned, dropped = [], 0, 0
         for o in self.obs:
             done = set(o.get("done", []))
             age_h = (time.time() - o["ts"]) / 3600.0
@@ -313,11 +321,19 @@ class Learner:
                 for hh, _ in matured:                                    # shorter ones: done, no credit
                     done.add(hh)
                 learned += 1
+            elif age_h >= self._horizons[-1][0] + OBS_GRACE_H:
+                # TERMINAL STATE (W1.1): past every horizon + grace and STILL no price/entry (delisted,
+                # bad symbol, feed gap) -> DROP for good instead of re-queueing forever. These stuck
+                # unresolvables once pinned the buffer at cap so every new setup was rejected.
+                dg = self.know.setdefault("diag", {})
+                dg["obs_unresolvable"] = dg.get("obs_unresolvable", 0) + 1
+                dropped += 1
+                continue
             o["done"] = sorted(done)
             if len(done) < len(self._horizons):
                 still.append(o)                                          # keep until the last horizon lands
         self.obs = still
-        if learned:
+        if learned or dropped:
             _save(OBS_PATH, self.obs)
             self._persist_know()
         return learned
