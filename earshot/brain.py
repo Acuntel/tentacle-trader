@@ -255,7 +255,16 @@ class Brain:
                     cand._analyst_veto = "analyst: " + (verdict.get("bear_case") or "not a clean up-catalyst")
                 if self.lgate is not None:
                     cand._lgate_features = self.lgate.featurize(dos, verdict)
-                    p_live = self.lgate.predict(cand._lgate_features)
+                    # W2.1: route the prediction to the head that owns this trade's HOLD horizon.
+                    # A multi-day hold (>=3d) is judged by the ~120h head once it has real samples;
+                    # shorter holds (and a cold h120 head) fall back to the legacy 24h "model".
+                    _gate = self.lgate
+                    if ccfg.get("hold_days", 5) >= 3:
+                        from .learnedgate import head as _lg_head
+                        _h120 = _lg_head(self.lgate.know, "model_h120")
+                        if _h120.ready(50):
+                            _gate = _h120
+                    p_live = _gate.predict(cand._lgate_features)
                     # TRANSFER GAP: blend in the decade-trained historical ALPHA prior at a low weight,
                     # so the whole decade informs the call while the live model still owns it.
                     if self.hist_gate is not None and self.hist_gate.ready(50):
@@ -325,6 +334,16 @@ class Brain:
             elig.append(c)
         # most informative first: uncertainty closest to a coin-flip teaches the most
         elig.sort(key=lambda c: getattr(c, "_uncertainty", 0.5), reverse=True)
+        # W2.3: the DIRECTIONAL head — trained on whether the side WE CHOSE beat the market
+        # (learning.resolve_learning). Once it has real samples it picks the side; before that,
+        # the legacy threshold/verdict heuristic decides (a 40% dir-hit was measurable, exploitable
+        # signal the loop recorded but structurally could not correct).
+        dhead = None
+        if self.lgate is not None:
+            from .learnedgate import head as _lg_head
+            _dh = _lg_head(self.lgate.know, "model_dir")
+            if _dh.ready(50):
+                dhead = _dh
         # WS2 DIVERSITY: cap picks per catalyst so the budget spreads across setup types — every pattern
         # reaches statistical significance, instead of 20 samples of the loudest catalyst.
         max_per_cat = int(self.cfg.get("exploration", {}).get("max_per_catalyst", 4))
@@ -335,10 +354,22 @@ class Brain:
             cat = c.catalyst.value
             if per_cat.get(cat, 0) >= max_per_cat:
                 continue
-            pw = getattr(c, "_pwin", None)
-            verdict = getattr(c, "_verdict", None)
-            bearish = (pw is not None and pw < short_pwin) or (
-                verdict is not None and verdict.get("direction") != "up")
+            if dhead is not None:
+                base = getattr(c, "_lgate_features", {}) or {}
+                p_side = {}
+                for d in (1, -1):
+                    fd = dict(base)
+                    fd["dir_long"] = float(d)                     # mirror learning.resolve_learning
+                    fd["dirx_tech"] = d * fd.get("t_bias", 0.0)
+                    fd["dirx_opt"] = d * fd.get("opt_bias", 0.0)
+                    fd["dirx_down"] = d * fd.get("downtrend", 0.0)
+                    p_side[d] = dhead.predict(fd)
+                bearish = p_side[-1] > p_side[1]
+            else:
+                pw = getattr(c, "_pwin", None)
+                verdict = getattr(c, "_verdict", None)
+                bearish = (pw is not None and pw < short_pwin) or (
+                    verdict is not None and verdict.get("direction") != "up")
             picks.append((c, -1 if (allow_short and bearish) else 1))
             per_cat[cat] = per_cat.get(cat, 0) + 1
         return picks

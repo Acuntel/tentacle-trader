@@ -25,6 +25,22 @@ FEATURES = ["independence", "news_events", "opt_bias", "tech_bias", "squeeze", "
 _RAW_STATS: dict = {}
 
 
+def head(know: dict, key: str, **kw) -> "LearnedGate":
+    """W2.1/W2.3: shared per-horizon / directional model heads. One PROCESS-WIDE instance per
+    (know, key) so the Learner (which trains a head) and the Brain (which predicts from it) see the
+    SAME in-memory weights — two separate LearnedGate(know, key=...) instances would silently read
+    stale weights. Keys in use: "model" (the legacy 24h head), "model_h120" (the ~5-day hold head),
+    "model_dir" (did the CHOSEN side beat the market — trains the direction call)."""
+    k = (id(know), key)
+    g = _HEADS.get(k)
+    if g is None:
+        g = _HEADS[k] = LearnedGate(know, key=key, **kw)
+    return g
+
+
+_HEADS: dict[tuple[int, str], "LearnedGate"] = {}
+
+
 def _znorm(key: str, fv: float) -> float:
     """Welford running z-score -> tanh squash on a ~2-sigma scale. Bounded (-1,1), NaN-safe,
     neutral (0.0) until a feature has enough spread to carry information."""
@@ -52,6 +68,9 @@ class LearnedGate:
         self.b = float(m.get("b", 0.0))
         self.n = int(m.get("n", 0))
         self.brier = float(m.get("brier", 0.22))      # running calibration quality (lower = better)
+        # W2.1: per-HEAD label base rate (EMA). The 1h/24h/120h horizons win at ~0.15/0.45/0.55 —
+        # one global field rate misprices every head's no-skill floor, so each head tracks its own.
+        self.base = float(m.get("base", 0.5))
         self.lr = lr
         # WS3 adaptive learning rate: large while the model is IGNORANT (few samples), annealing to a
         # FLOOR as n grows so a flood of WS1 samples can't thrash it — but never to zero, so it keeps
@@ -143,8 +162,9 @@ class LearnedGate:
         self.b += lr * err
         self.n += 1
         self.brier = 0.99 * self.brier + 0.01 * (pred - (1.0 if win else 0.0)) ** 2   # EMA Brier
+        self.base = 0.99 * self.base + 0.01 * (1.0 if win else 0.0)                    # per-head base rate
         self.know[self.key] = {"w": self.w, "b": round(self.b, 4), "n": self.n,
-                               "brier": round(self.brier, 4)}
+                               "brier": round(self.brier, 4), "base": round(self.base, 4)}
 
     def ready(self, min_n: int = 30) -> bool:
         return self.n >= min_n
@@ -157,10 +177,16 @@ class LearnedGate:
         which then drove Kelly-style sizing. Skill is measured RELATIVE to the field's floor."""
         if not self.ready():
             return 0.0
-        try:
-            from .patterns import field_rate
-            fld = field_rate(self.know)
-        except Exception:
-            fld = 0.5
+        # W2.1: judge each head against ITS OWN label distribution — the per-head base rate once the
+        # head has real samples (the global field rate blends horizons with 0.15..0.55 base rates,
+        # mispricing every head's no-skill floor).
+        if self.n >= 100:
+            fld = min(0.95, max(0.05, self.base))
+        else:
+            try:
+                from .patterns import field_rate
+                fld = field_rate(self.know)
+            except Exception:
+                fld = 0.5
         b0 = max(0.05, fld * (1 - fld))                # the no-skill Brier for this label distribution
         return max(0.0, min(1.0, (b0 - self.brier) / (b0 * 0.35)))

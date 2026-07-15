@@ -53,6 +53,12 @@ class Learner:
         self.know["weights"] = self.weights      # learned weights ride along, survive restarts
         _save(KNOW_PATH, self.know)
 
+    def _head(self, key: str):
+        """W2.1/W2.3: shared model heads (per-horizon + directional) over the SAME knowledge dict the
+        primary lgate persists to — see learnedgate.head() for why instances must be shared."""
+        from .learnedgate import head
+        return head(self.know, key)
+
     def open_position(self, c: Candidate, fill_price: float):
         self.open.append({
             "ticker": c.ticker, "catalyst": c.catalyst.value, "confidence": c.confidence,
@@ -117,6 +123,12 @@ class Learner:
         ladder, or the money gate. One per ticker at a time. In shadow, information is free."""
         if any(p["ticker"] == c.ticker for p in self.learn_open):
             return False
+        # W2.5: no REOPEN on the same ticker the same day. A persistent signal used to churn
+        # stop -> reopen -> stop (live: SABSW resolved 5x on 2026-07-07) — correlated duplicate
+        # labels of one event, over-representing volatile fast-exit names in the sample mix.
+        today = iso(time.time())[:10]
+        if self.know.get("learn_seen", {}).get(c.ticker) == today:
+            return False
         self.learn_open.append({
             "ticker": c.ticker, "catalyst": c.catalyst.value, "dir": int(direction),
             "entry_price": fill_price, "entry_ts": time.time(), "notional": notional,
@@ -153,12 +165,23 @@ class Learner:
                 still.append(p); continue
             mkt = prices.market_return_since(p["entry_ts"])
             stock_alpha = round(ret_raw - mkt, 3) if mkt is not None else round(ret_raw, 3)
-            long_win = stock_alpha > 0                          # LONG-perspective label (trains the model)
+            long_win = stock_alpha > 0                          # LONG-perspective label (bookkeeping)
             dir_alpha = round(d * stock_alpha, 3)                # did OUR side beat the market?
-            self.patterns.record(p.get("pattern", ""), long_win, stock_alpha)
-            self._credit_sources(p["sources"], long_win, stock_alpha, rate=credit_rate)
+            # W2.4: learning-trade labels are CENSORED at direction-dependent exit times (a short's
+            # stop fires at the long's max favorable excursion), so they no longer train the P(win)
+            # model, patterns, or source weights — the observation pipeline already labels the SAME
+            # ticker/day setups at fixed horizons (crediting them here double-counted one event with
+            # a biased measurement time). Learning trades keep what only THEY can teach:
+            # W2.3: the DIRECTIONAL head — did the side WE CHOSE beat the market? dir_alpha was
+            # ledgered and counted but trained nothing while direction came from a trust-0 threshold.
             if self.lgate is not None and p.get("lgate_features"):
-                self.lgate.update(p["lgate_features"], long_win)
+                fd = dict(p["lgate_features"])
+                df = float(d)
+                fd["dir_long"] = df                              # signed: +1 long / -1 short
+                fd["dirx_tech"] = df * fd.get("t_bias", 0.0)     # side x timing signals — lets the
+                fd["dirx_opt"] = df * fd.get("opt_bias", 0.0)    # model learn WHICH side the evidence
+                fd["dirx_down"] = df * fd.get("downtrend", 0.0)  # actually supports
+                self._head("model_dir").update(fd, dir_alpha > 0)
             ex = self.know.setdefault("explore", {"trades": 0, "dir_hits": 0, "sum_alpha": 0.0})
             ex["trades"] += 1
             ex["dir_hits"] += 1 if dir_alpha > 0 else 0
@@ -166,13 +189,21 @@ class Learner:
             _append(LEARN_OUT_PATH, {"ts": iso(time.time()), "ticker": p["ticker"], "dir": d,
                                      "exit": reason, "ret": round(dir_ret, 3), "alpha": dir_alpha,
                                      "long_win": long_win, "sig": p.get("pattern", "")})
+            seen = self.know.setdefault("learn_seen", {})       # W2.5: block same-day reopen churn
+            seen[p["ticker"]] = iso(time.time())[:10]
             n_res += 1
             dir_hits += 1 if dir_alpha > 0 else 0
-        if len(still) > max_open:                               # enforce concurrency cap, keep the newest
-            still = still[-max_open:]
+        if len(still) > max_open:
+            # W2.5: enforce the cap by evicting the NEWEST (just-opened, farthest from maturity) —
+            # the old [-max_open:] slice threw away the OLDEST entries, i.e. exactly the pending
+            # time-exits about to yield a label, skewing the sample mix toward fast movers.
+            still = still[:max_open]
         self.learn_open = still
         _save(LEARN_OPEN_PATH, self.learn_open)
         if n_res:
+            today = iso(time.time())[:10]                       # keep the reopen-guard map small
+            self.know["learn_seen"] = {t: dy for t, dy in self.know.get("learn_seen", {}).items()
+                                       if dy == today}
             self._persist_know()
         return {"resolved": n_res, "dir_hits": dir_hits, "open": len(self.learn_open)}
 
@@ -267,13 +298,16 @@ class Learner:
         if pairs:
             self._horizons = sorted(pairs)
 
-    def _ledger_resolved(self, o: dict, h: float, ret: float, win: bool):
+    def _ledger_resolved(self, o: dict, h: float, ret: float, win: bool, age_h: float | None = None):
         """Append every labeled observation to an immutable ledger so a fresh boot can WARM-START the
         P(win) model from real feature vectors instead of starting cold."""
         if not o.get("feat"):
             return
-        _append(RESOLVED_OBS_PATH, {"ts": iso(time.time()), "h": h, "ret": round(ret, 3),
-                                    "win": win, "feat": o["feat"], "sig": o.get("sig", "")})
+        row = {"ts": iso(time.time()), "h": h, "ret": round(ret, 3),
+               "win": win, "feat": o["feat"], "sig": o.get("sig", "")}
+        if age_h is not None:
+            row["age_h"] = round(age_h, 1)     # W2.1: the ACTUAL age at labeling, not the nominal horizon
+        _append(RESOLVED_OBS_PATH, row)
 
     def resolve_observations(self, max_per_cycle: int = 40) -> int:
         """PROGRESSIVE resolution: label each observation at MULTIPLE horizons (e.g. 1h / 1d / 5d) by
@@ -306,7 +340,16 @@ class Learner:
                 self.patterns.record(o.get("sig", ""), win, alpha)      # learn the ALPHA pattern from data
                 self._credit_sources(o["sources"], win, alpha, rate=rate)  # horizon-scaled, < a real trade
                 if self.lgate is not None and o.get("feat"):
-                    self.lgate.update(o["feat"], win)                    # train P(win) from observations
+                    # W2.1 PER-HORIZON HEADS — the root-cause fix for 12k-samples-zero-skill. One
+                    # blended label mixed horizons whose real base rates are ~0.15 (1h) / 0.45 (24h) /
+                    # 0.55 (120h): a horizon-blind model's best output is the blend, pinning Brier at
+                    # the no-skill floor. Route each label to the head that owns its horizon; the ~1h
+                    # probe NEVER trains a model (near-zero drift = label noise) — it still credits
+                    # patterns/sources above at its light rate.
+                    if h >= 100:
+                        self._head("model_h120").update(o["feat"], win)   # the real hold-horizon label
+                    elif h >= 12:
+                        self.lgate.update(o["feat"], win)                 # legacy "model" = the 24h head
                     self.know.setdefault("diag", {})["obs_updates"] = \
                         self.know.get("diag", {}).get("obs_updates", 0) + 1
                 elif o.get("feat"):
@@ -317,7 +360,7 @@ class Learner:
                     if not getattr(self, "_lgate_warned", False):
                         self._lgate_warned = True
                         print("  ⚠ resolve_observations: learner.lgate is None — labels NOT training P(win)!")
-                self._ledger_resolved(o, h, alpha, win)
+                self._ledger_resolved(o, h, alpha, win, age_h=age_h)
                 for hh, _ in matured:                                    # shorter ones: done, no credit
                     done.add(hh)
                 learned += 1
