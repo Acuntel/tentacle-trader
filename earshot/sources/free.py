@@ -13,7 +13,7 @@ AI_QUANTUM_KW = ("ai ", "a.i.", "gpt", "llm", "quantum", "chip", "gpu", "nvidia"
 
 
 class EdgarSource(Source):
-    """SEC EDGAR real-time filings: 8-K (material events), Form 4 (insider buys), SC 13D (activist)."""
+    """SEC EDGAR real-time filings: 8-K (material events), Form 4 (insider filings), SC 13D (activist)."""
     key = "edgar_8k"
     min_interval = 30.0          # filings can break anytime; ~12 req/30s is well under SEC's 10/s
     FEEDS = {
@@ -21,7 +21,11 @@ class EdgarSource(Source):
         "4": "edgar_form4",
         "SC 13D": "edgar_13d",
     }
-    HINTS = {"edgar_8k": None, "edgar_form4": "insider_cluster", "edgar_13d": "activist_stake"}
+    # AUDIT FIX: raw Form 4s are NOT bullish insider clusters — the majority are sells/option
+    # exercises, and stamping the whole firehose "insider_cluster" made it the worst-performing
+    # family (2566 trades, 40% win). Emit Form 4s unhinted (generic filing evidence -> keyword
+    # classify -> UNKNOWN); the real cluster-BUY signal is OpenInsider in scrape.py.
+    HINTS = {"edgar_8k": None, "edgar_form4": None, "edgar_13d": "activist_stake"}
 
     def __init__(self, weights: dict, user_agent: str):
         super().__init__(weights)
