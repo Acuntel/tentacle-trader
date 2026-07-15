@@ -146,9 +146,21 @@ class ApprovalQueue:
             unscored = [c for c in self.know.get("self_changes", []) if not c.get("verdict")]
             if len(unscored) >= self.max_inflight:
                 return None
+        # W3.5b QUARANTINE: an autonomous CODE patch whose target has no routed deterministic
+        # metric (selfcode.FIT_ROUTES) must NOT auto-ship — the apply gate could only prove it
+        # doesn't crash, never that it works. Fall through to the Telegram card below so a human
+        # decides. Pure deletions are exempt (the standing measured lesson: structural deletions
+        # are the proven-helpful shape, and the crash gate still covers them at apply time).
+        quarantined = False
+        if self.autonomous and patches and kind == "code":
+            try:
+                from . import selfcode
+                quarantined = selfcode.needs_human(patches)
+            except Exception:
+                quarantined = True                           # fail CLOSED — never auto-ship unrouted code
         # AUTONOMOUS: just DO it and TEXT Brady — no ✅/❌ question. The money gate is still enforced by the
         # apply Action (gate + locked rails + money-token guard); this only removes the human-approval step.
-        if self.autonomous and patches:
+        if self.autonomous and patches and not quarantined:
             res = self._apply(item)
             item["decision"] = "AUTO-APPLIED"
             item["decided_ts"] = iso(time.time())
@@ -179,6 +191,7 @@ class ApprovalQueue:
                 "target_file": next((str(pp.get("file")) for pp in (patches or []) if pp.get("file")), None),
                 "knob": knob if kind == "config" else None,
                 "patch_hash": hashlib.sha1(json.dumps(patches, sort_keys=True).encode()).hexdigest()[:12],
+                "channel": "live",                          # W3.4b: vs "ci" for ledger-ingested rows
                 "at": at})
             self.know["self_changes"] = self.know["self_changes"][-60:]
             m = item.get("meta") or {}
