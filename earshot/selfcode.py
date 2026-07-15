@@ -92,16 +92,54 @@ def _broken_module() -> str | None:
     return None
 
 
+def _per_target() -> dict:
+    """The coach's MEASURED per-target scoreboard (change_lessons.per_target) — which modules'
+    past self-changes actually helped vs hurt. Empty when no state exists (fresh CI checkout)."""
+    try:
+        from .persist import load_json
+        cl = load_json("state/knowledge.json", {}).get("change_lessons") or {}
+        return cl.get("per_target") or {}
+    except Exception:
+        return {}
+
+
+def _thompson_pick(cands: list[str], per: dict) -> str:
+    """W3.2: pick the target by Thompson sampling over the measured lessons instead of uniform
+    random.choice — 'learnedgate.py: 7 tried, 0 helped' kept the same sampling weight as embed.py
+    (1/1 helped). Each candidate draws Beta(helped+1, max(tried-helped,0)+1) (no record = the
+    uniform Beta(1,1) prior) and the max draw wins; a target with >=3 tries and 0 helps is
+    HARD-EXCLUDED until its per_target record resets."""
+    import random
+
+    def rec(m):
+        cnt = per.get(m) or {}
+        helped = int(cnt.get("helped", 0) or 0)
+        tried = sum(int(v or 0) for v in cnt.values())
+        return helped, tried
+
+    alive = [m for m in cands if not (rec(m)[1] >= 3 and rec(m)[0] == 0)]
+    if not alive:
+        return random.choice(cands)             # every candidate measured-hopeless — uniform fallback
+    best, best_draw = alive[0], -1.0
+    for m in alive:
+        helped, tried = rec(m)
+        d = random.betavariate(helped + 1, max(tried - helped, 0) + 1)
+        if d > best_draw:
+            best, best_draw = m, d
+    return best
+
+
 def _pick_target(mods: list[str]) -> str:
     import random
     broken = _broken_module()
-    if broken and broken in mods:
+    if broken and broken in mods:               # priority ladder unchanged: real breakage jumps the queue
         return broken
+    per = _per_target()
     core = [m for m in mods if m in LOOP_CORE]
     rest = [m for m in mods if m not in LOOP_CORE]
     if core and (not rest or random.random() < LOOP_SHARE):
-        return random.choice(core)
-    return random.choice(rest or core)
+        return _thompson_pick(core, per)        # the 75% loop-core share wraps the Thompson draw
+    return _thompson_pick(rest or core, per)
 
 
 def _mission() -> str:

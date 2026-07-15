@@ -183,7 +183,12 @@ class Proposer:
             title = ("⚠️ low-confidence — " + p["title"]) if low_conf else p["title"]
             plain = (("⚠️ Low confidence (this didn't clear my usual bar, but you asked to see my best idea "
                       "anyway): " + p["plain"]) if low_conf else p["plain"])
-            cid = self.ap.propose("config", title, p["why"], patches=p["patch"],
+            # W3.1: pass the REAL kind through — this used to hard-code "config" for EVERY pool item,
+            # so all recorded self_changes (code patches included) landed as kind:"config" and the
+            # coach's verdicts could never attribute them.
+            kind = ("code" if any(str(f.get("file", "")).endswith(".py") for f in (p.get("patch") or []))
+                    else "config")
+            cid = self.ap.propose(kind, title, p["why"], patches=p["patch"],
                                   meta={"plain": plain, "why": p["why"], "tech": p["tech"],
                                         "impact": imp, "low_conf": low_conf})
             # AUDIT FIX: propose() returns None for TEMPORARY blocks too (knob cooldown, pacing,
@@ -191,7 +196,7 @@ class Proposer:
             # Final states (accepted / true dup / previously denied) mark sent; temporary blocks
             # leave the idea queued for a later pass.
             from .approvals import _hash as _ap_hash
-            h = _ap_hash("config", title, p["patch"])
+            h = _ap_hash(kind, title, p["patch"])
             if cid is not None or h in self.ap.st.get("seen", {}) or h in self.ap.st.get("denied", {}):
                 p["sent"] = True
             self.know["proposal_pool"] = self.pool

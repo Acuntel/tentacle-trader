@@ -159,10 +159,27 @@ class ApprovalQueue:
             m0 = self.know.get("model", {})
             ex0 = self.know.get("explore", {})
             tr0 = int(ex0.get("trades", 0) or 0)
+            at = {"n": int(m0.get("n", 0) or 0), "brier": float(m0.get("brier", 0.25) or 0.25),
+                  "explore": tr0, "dir_hits": int(ex0.get("dir_hits", 0) or 0)}
+            # W3.1: a CODE change also gets a deterministic pre-patch baseline — the ledger-replay
+            # Brier (selfcode._fitness). The coach scores it on the post-deploy delta of that SAME
+            # replay, so the confounded 24h wall-clock diff stops deciding code verdicts.
+            if kind == "code":
+                try:
+                    from . import selfcode
+                    fit = selfcode._fitness()
+                    if fit:
+                        at["fitness"] = fit["brier"]
+                except Exception:
+                    pass
             self.know.setdefault("self_changes", []).append({
                 "id": cid, "ts": time.time(), "title": title[:120], "kind": kind,
-                "at": {"n": int(m0.get("n", 0) or 0), "brier": float(m0.get("brier", 0.25) or 0.25),
-                       "explore": tr0, "dir_hits": int(ex0.get("dir_hits", 0) or 0)}})
+                # W3.1 ATTRIBUTION: structured fields the coach reads directly — the old rows carried
+                # only a title, so verdicts had to regex-guess WHAT was even changed.
+                "target_file": next((str(pp.get("file")) for pp in (patches or []) if pp.get("file")), None),
+                "knob": knob if kind == "config" else None,
+                "patch_hash": hashlib.sha1(json.dumps(patches, sort_keys=True).encode()).hexdigest()[:12],
+                "at": at})
             self.know["self_changes"] = self.know["self_changes"][-60:]
             m = item.get("meta") or {}
             notify.send(f"🔧 <b>I changed myself</b>\n\n{notify.esc(m.get('plain') or title)}\n\n"
