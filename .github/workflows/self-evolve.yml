@@ -65,15 +65,24 @@ jobs:
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
         run: |
-          # selfcode leaves the working tree modified ONLY when a patch passed the FULL gate
-          if [ -z "$(git status --porcelain -- earshot)" ]; then
+          # selfcode leaves earshot/ modified ONLY when a patch passed the FULL gate. state_seed/
+          # holds (a) the repo-riding CI ledger — W3.4: every CI-applied patch's record ships IN THE
+          # SAME COMMIT as the patch, so the live coach can count + score CI changes like live ones —
+          # and (b) quarantined patches (W3.5: target has no routed deterministic metric — parked
+          # for the Telegram approval path instead of auto-shipping on crash-checks alone).
+          CODE_CHANGED="$(git status --porcelain -- earshot)"
+          SEED_CHANGED="$(git status --porcelain -- state_seed)"
+          if [ -z "$CODE_CHANGED" ] && [ -z "$SEED_CHANGED" ]; then
             echo "No tested change this run — nothing to ship."; exit 0
           fi
           git config user.name  "tentacle-self-evolve"
           git config user.email "self-evolve@tentacle.bot"
-          git add earshot
+          git add earshot state_seed
           git commit -m "self-evolve: autonomous tested change (compile+import+sim gate; rails locked)"
           git push origin HEAD:main || (git pull --rebase origin main && git push origin HEAD:main)
+          if [ -z "$CODE_CHANGED" ]; then
+            echo "Ledger/quarantine record only — no code change, skipping the deploy."; exit 0
+          fi
           # DEPLOY-INTEGRITY: ship exactly what is ON MAIN after the push — never this runner's tree.
           # (A push race once deployed a patched sim.py that wasn't on main; it crashed every cycle.)
           git fetch origin main && git reset --hard origin/main

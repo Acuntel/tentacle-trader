@@ -188,6 +188,10 @@ class Coach:
     # verdicts stamped before this went live measured the METRIC-ERA TRANSITION (the 7/5 label-quality
     # fix made the fake-good weekend Brier recover), not the changes themselves — unattributable.
     ERA_BOUNDARY_TS = 1751743800.0                        # 2026-07-05T19:30Z, label-gate deploy
+    # W3.4c: two changes share a "burst window" only when their 24h measurement windows overlap by
+    # more than half — i.e. they were APPLIED less than 12h apart. Coming due in the same coach pass
+    # is not a burst (that was the defer-then-batch artifact that voided 23/58 live verdicts).
+    BURST_OVERLAP_SECS = 12 * 3600
 
     def _migrate_verdicts(self):
         """ONE-TIME cleanup (Brady's 'study the verdicts' pass, 2026-07-08): 41 of the first 54
@@ -250,11 +254,101 @@ class Coach:
         self.know["change_lessons"] = summary
         return summary
 
+    def _ingest_ci_changes(self) -> int:
+        """W3.4b: pull the repo-riding CI ledger into the live scoreboard. The daily self-evolve
+        job applies patches on a GitHub runner and pushes to main — those deploys used to land
+        UNCOUNTED inside the same 24h windows this scoreboard measures (23/58 live verdicts voided
+        as 'burst window'). The workflow commits state_seed/ci_changes.jsonl in the SAME commit as
+        each patch, so the record ships inside the deployed image; ingest any record whose
+        patch_hash isn't already tracked, stamp the live vitals as its baseline (ingest time ≈
+        first pass after deploy), and let it count against max_unscored_in_flight pacing exactly
+        like a live change (the pacing check reads unscored self_changes rows)."""
+        try:
+            lines = open(selfcode.CI_LEDGER).readlines()[-200:]
+        except Exception:
+            return 0
+        sc = self.know.setdefault("self_changes", [])
+        ingested = self.know.setdefault("ci_ingested", [])   # durable dedupe: survives the 60-row trim
+        seen = set(ingested) | {c.get("patch_hash") for c in sc if c.get("patch_hash")}
+        n = 0
+        for ln in lines:
+            try:
+                r = json.loads(ln)
+            except Exception:
+                continue
+            h = str(r.get("patch_hash") or "")
+            if not h or h in seen:
+                continue
+            seen.add(h)
+            ingested.append(h)
+            m0 = self.know.get("model", {})
+            ex0 = self.know.get("explore", {})
+            at = {"n": int(m0.get("n", 0) or 0), "brier": float(m0.get("brier", 0.25) or 0.25),
+                  "explore": int(ex0.get("trades", 0) or 0),
+                  "dir_hits": int(ex0.get("dir_hits", 0) or 0)}
+            kind = str(r.get("kind") or "code")
+            if kind == "code":
+                try:                                       # post-deploy replay baseline (drift check);
+                    fit = selfcode._fitness()              # the patch's OWN effect is gate_fitness_delta
+                    if fit:
+                        at["fitness"] = fit["brier"]
+                except Exception:
+                    pass
+            sc.append({"id": "CI-" + h[:8], "ts": time.time(), "title": str(r.get("title") or "")[:120],
+                       "kind": kind, "target_file": r.get("target_file"), "knob": None,
+                       "patch_hash": h, "channel": "ci", "sha": r.get("sha"),
+                       "gate_fitness_delta": r.get("gate_fitness_delta"), "at": at})
+            n += 1
+        if n:
+            self.know["ci_ingested"] = ingested[-400:]
+            self.know["self_changes"] = sc[-60:]
+            _append(PROPOSALS, {"ts": iso(time.time()), "status": "CI CHANGES INGESTED",
+                                "file": selfcode.CI_LEDGER,
+                                "change": f"{n} CI-applied change(s) joined the scoreboard",
+                                "why": "W3.4: CI deploys now count against pacing and earn their "
+                                       "own 24h verdicts instead of silently voiding others'"})
+        return n
+
+    def _ingest_quarantine(self) -> int:
+        """W3.5b: CI patches whose target has no routed deterministic metric don't auto-ship — the
+        runner reverts them and parks the exact patch in state_seed/quarantine_patches.jsonl. Route
+        each through the Telegram approval path; approvals.propose dedupes by content hash (and its
+        autonomous mode refuses to auto-apply quarantined targets), so a human decides."""
+        if self.approvals is None:
+            return 0
+        try:
+            lines = open(selfcode.QUARANTINE).readlines()[-50:]
+        except Exception:
+            return 0
+        n = 0
+        for ln in lines:
+            try:
+                r = json.loads(ln)
+            except Exception:
+                continue
+            f, fnd, rep = r.get("file"), r.get("find"), r.get("replace")
+            if not (f and fnd and rep is not None):
+                continue
+            cid = self.approvals.propose(
+                "code", f"CI-quarantined: {str(r.get('title') or f)[:80]}",
+                "no deterministic metric for this target — needs human eyes",
+                patches=[{"file": f, "find": fnd, "replace": rep}],
+                meta={"plain": f"A CI self-patch to {f} passed the crash gate, but I have no "
+                               "deterministic metric that could catch it being subtly wrong — "
+                               "I won't ship it without your eyes.",
+                      "why": str(r.get("why") or "no deterministic metric for this target — "
+                                                 "needs human eyes")[:200],
+                      "tech": f"edits {f} · quarantined by the W3.5 fitness-routing table"})
+            if cid:
+                n += 1
+        return n
+
     def _score_self_changes(self) -> list[str]:
         """The self-change SCOREBOARD: ~24h after each auto-applied change, compare the loop's vitals
         (labels gained, Brier, explore dir-hit on the trades SINCE) to the snapshot stamped at apply
-        time. BURST-AWARE: changes whose windows resolve together share one metric move — scoring
-        each ≥3-sized group 'unattributable (burst window)' instead of pretending per-change signal.
+        time. W3.4c BURST-AWARE, per-change windows: a verdict is void only when another change's
+        24h window ACTUALLY overlaps this one's by more than half — not merely because several
+        deferred changes came due in the same coach pass.
         Verdicts persist on the change record + the journal and steer the next proposals."""
         self._migrate_verdicts()
         out = []
@@ -279,10 +373,19 @@ class Coach:
             if dn < 20 and dh is None and now - c.get("ts", 0) < 72 * 3600:
                 continue                                 # too little new data — wait, don't guess
             due.append((c, dn, db, dh))
-        burst = len(due) >= 3                             # same pass = same window = one shared move
+        # W3.4c: score each due change INDIVIDUALLY against its OWN ts+24h window, oldest first.
+        # The old rule (>=3 due in one pass = burst) let the 72h defer-then-batch mechanic
+        # retroactively brand well-PACED changes as bursts — changes applied DAYS apart that merely
+        # came due together were voided (23/58 live verdicts). Now a change is unattributable only
+        # when another applied change's 24h window truly overlaps its own by more than half
+        # (applied < 12h apart) — then the shared metric move genuinely can't be split.
+        due.sort(key=lambda t: t[0].get("ts", 0) or 0)
         for c, dn, db, dh in due:
+            cts = c.get("ts", 0) or 0
+            overlapped = any(o is not c and abs((o.get("ts", 0) or 0) - cts) < self.BURST_OVERLAP_SECS
+                             for o in changes)
             fd = None
-            if burst:
+            if overlapped:
                 c["verdict"] = "unattributable (burst window)"
             else:
                 # W3.1: kind=="code" is judged on the DETERMINISTIC ledger replay first — approvals
@@ -290,7 +393,12 @@ class Coach:
                 # the patch did to real-outcome prediction. The 24h wall-clock diff below is demoted
                 # to a corroborating signal (it's a global-metric diff that carried no causal signal:
                 # 24 hurt / 23 unattributable in the live tally).
-                if c.get("kind") == "code" and (c.get("at") or {}).get("fitness") is not None:
+                # W3.4b: CI-ingested rows carry the runner's own gate-time delta of that SAME replay
+                # (gate_fitness_delta) — that IS the patch's isolated effect; their at.fitness was
+                # stamped post-deploy so it only measures drift, not the patch.
+                if c.get("channel") == "ci" and isinstance(c.get("gate_fitness_delta"), (int, float)):
+                    fd = float(c["gate_fitness_delta"])
+                elif c.get("kind") == "code" and (c.get("at") or {}).get("fitness") is not None:
                     post = selfcode._fitness()
                     if post:
                         fd = round(float(post["brier"]) - float(c["at"]["fitness"]), 5)
@@ -362,6 +470,10 @@ class Coach:
         # apply time (approvals). ~24h later, re-measure: did samples/day, Brier, or explore dir-hit
         # actually MOVE? The verdict is journaled + fed to the LLM as evidence, so the proposer stops
         # believing "survived the gate" means "helped" — improvement of the loop is the reward.
+        # W3.4/W3.5: first fold in the repo-riding CI ledger (CI deploys count + get scored like
+        # live changes) and route CI-quarantined patches to the Telegram approval path.
+        ci_n = self._ingest_ci_changes()
+        q_n = self._ingest_quarantine()
         sc_verdicts = self._score_self_changes()
 
         # (3) the LLM reasons across the ENTIRE brain snapshot + the mother's creed + her feelings
@@ -473,6 +585,9 @@ class Coach:
         if sc_verdicts:
             self.last_summary += f"; SCORED {len(sc_verdicts)} self-change(s) on loop metrics: " + \
                                  " | ".join(v.split(' -> ')[-1][:40] for v in sc_verdicts[:3])
+        if ci_n or q_n:
+            self.last_summary += (f"; CI ledger: {ci_n} change(s) ingested, "
+                                  f"{q_n} quarantined patch(es) routed to approval")
         if forge_r:
             self.last_summary += f"\n    🔨 FORGE (free search): {forge_r}"
         if hive_r:

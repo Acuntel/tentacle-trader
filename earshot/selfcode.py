@@ -23,6 +23,7 @@ Exit 0 + a modified working tree = a tested change ready to commit; exit 0 + cle
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import py_compile
@@ -36,6 +37,13 @@ from .models import iso
 PKG = os.path.dirname(__file__)
 EVO_DIR = "state/evolution"
 APPLIED = os.path.join(EVO_DIR, "applied_patches.jsonl")
+# W3.4a: the REPO-RIDING CI ledger. CI-applied patches used to be recorded only in the ephemeral
+# local applied_patches.jsonl above — the deploy shipped, the record died with the runner, and the
+# live scoreboard measured a 24h window with an uncounted change inside it (23/58 live verdicts were
+# voided as "burst window"). These files are committed IN THE SAME COMMIT as the patch, so the record
+# rides the deploy it describes and the live coach ingests it on the next pass (repo root = workdir).
+CI_LEDGER = "state_seed/ci_changes.jsonl"
+QUARANTINE = "state_seed/quarantine_patches.jsonl"       # W3.5b: gated-but-unmeasurable patches
 # the rails + the self-modification machinery itself — NEVER self-editable. Locking selfcode/apply_patch
 # is what stops the system from removing its own guard; locking executor/risk/backtest is the money gate.
 LOCKED = {"risk.py", "executor.py", "backtest.py", "selfcode.py", "apply_patch.py"}
@@ -49,6 +57,82 @@ MONEY_GUARD = ("live_allowed", "RobinStocksExecutor", "get_executor", "order_buy
 def _unsafe(code) -> bool:
     low = str(code)
     return any(tok in low for tok in MONEY_GUARD)
+
+
+# W3.5a FITNESS ROUTING: which deterministic metric can actually SEE a patch to each module.
+# _FIT_CODE replays the ledger through LearnedGate — a patch to coach/options/enrich/notify can
+# NEVER move that number, so it used to auto-pass on crash-checks alone ("no measurable effect" was
+# the modal shipped outcome, and every patch could legally ship +FITNESS_TOL). A target with no
+# routed metric is QUARANTINED to human review instead of auto-shipping.
+# sim/forge/strategies/histtrain deliberately have NO route (-> quarantine): no cheaply-invokable
+# DETERMINISTIC eval exists today — SimEngine.step() is a stochastic smoke and sim.report() reads
+# accumulated state, so neither isolates a patch's effect. Route them here if one is ever built.
+FIT_ROUTES = {
+    "learnedgate.py": "brier", "learning.py": "brier", "patterns.py": "brier", "brain.py": "brier",
+    "core.py": "brier", "dossier.py": "brier", "distill.py": "brier",
+}
+
+
+def _route(fname: str) -> str:
+    """The gate metric routed for a target module: 'brier' (ledger-replay) or 'quarantine'."""
+    return FIT_ROUTES.get(os.path.basename(str(fname)), "quarantine")
+
+
+def _pure_deletion(find: str, replace: str) -> bool:
+    """True when a patch ONLY removes code: every surviving line of `replace` already exists in
+    `find` in the same order, and at least one line is gone. Deletions are exempt from quarantine —
+    the standing measured lesson is that structural deletions are the proven-helpful shape, and the
+    compile+import+smoke gate still covers them at apply time."""
+    f = [ln.strip() for ln in str(find).splitlines() if ln.strip()]
+    r = [ln.strip() for ln in str(replace).splitlines() if ln.strip()]
+    if len(r) >= len(f):
+        return False
+    it = iter(f)
+    return all(any(line == got for got in it) for line in r)   # r is an ordered subsequence of f
+
+
+def needs_human(patches) -> bool:
+    """W3.5b: True when any .py patch targets a module with NO routed deterministic metric and is
+    not a pure deletion. The gate can prove such a patch doesn't crash but never that it works, so
+    it goes to the proposal pool / Telegram approval path instead of auto-shipping."""
+    for p in patches or []:
+        f = str(p.get("file", ""))
+        if not f.endswith(".py"):
+            continue
+        if _route(f) == "quarantine" and not _pure_deletion(str(p.get("find", "")),
+                                                            str(p.get("replace", ""))):
+            return True
+    return False
+
+
+def _patch_hash(patches) -> str:
+    """Identical formula to approvals' self_changes stamp, so the live ingest can dedupe a change
+    that was ALSO recorded at propose time (autonomous applies dispatch to the same Action)."""
+    return hashlib.sha1(json.dumps(patches, sort_keys=True).encode()).hexdigest()[:12]
+
+
+def record_ci_change(patches: list, kind: str, title: str, why: str | None = None,
+                     gate_fitness_delta: float | None = None) -> dict:
+    """W3.4a: append a structured record of a CI-applied patch to the repo-riding ledger. The
+    workflow commits this file in the SAME commit as the patch, so the record ships inside the
+    deployed image; the live coach ingests it (dedup by patch_hash), stamps a baseline, and counts
+    it against max_unscored_in_flight pacing exactly like a live change."""
+    try:
+        sha = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True,
+                             timeout=10).stdout.strip()
+    except Exception:
+        sha = ""
+    rec = {"ts": time.time(), "iso": iso(time.time()),
+           "target_file": next((str(pp.get("file")) for pp in (patches or []) if pp.get("file")), None),
+           "patch_hash": _patch_hash(patches), "kind": kind, "title": str(title)[:120],
+           "why": (str(why)[:200] if why else None),
+           # a record can't contain its own commit's hash — this is the commit the patch was gated
+           # ON (the shipping commit's parent), enough to pin the deploy in history
+           "sha": sha, "channel": "ci"}
+    if gate_fitness_delta is not None:
+        rec["gate_fitness_delta"] = gate_fitness_delta
+    _append(CI_LEDGER, rec)
+    return rec
 
 SYSTEM = ("You improve an autonomous trading bot's own Python source. Propose ONE small, safe, "
           "concrete change that fixes a bug or measurably improves it. You may NOT weaken the hard "
@@ -295,17 +379,58 @@ def _fitness() -> dict | None:
     return None
 
 
-def _fitness_check(base: dict | None) -> tuple[bool, str]:
-    """Compare post-patch fitness to the pre-patch baseline. Pass when no baseline exists."""
+TOL_BUDGET = 0.01        # W3.5c: max cumulative shipped regression before only improvers may ship
+
+
+def _know() -> dict:
+    try:
+        from .persist import load_json
+        return load_json("state/knowledge.json", {})
+    except Exception:
+        return {}
+
+
+def _tol_spent(know: dict | None = None) -> float:
+    """W3.5c: the cumulative fitness regression shipped since the last 'helped' verdict, over at
+    most the last 20 code changes. FITNESS_TOL is per-patch, so 20 individually-'legal' patches
+    could silently ratchet the ledger Brier +0.1 — this bounds the ratchet ACROSS patches. Scored
+    changes count their measured after.fitness_delta; unscored CI-shipped ones count the gate-time
+    delta the runner recorded (gate_fitness_delta, riding the CI ledger so this is computable both
+    live and on runners); anything unmeasured counts 0."""
+    k = know if know is not None else _know()
+    sc = [c for c in (k.get("self_changes") or []) if c.get("kind") == "code"]
+    spent = 0.0
+    for c in reversed(sc[-20:]):
+        if c.get("verdict") == "helped":
+            break                                          # a proven win resets the budget
+        fd = (c.get("after") or {}).get("fitness_delta")
+        if fd is None:
+            fd = c.get("gate_fitness_delta")
+        if isinstance(fd, (int, float)):
+            spent += float(fd)
+    return round(spent, 5)
+
+
+def _fitness_check(base: dict | None, know: dict | None = None) -> tuple[bool, str, float | None]:
+    """Compare post-patch fitness to the pre-patch baseline. Pass when no baseline exists.
+    Returns (ok, reason, delta) — the delta rides the CI ledger so the cumulative tolerance budget
+    stays computable everywhere the record ships."""
     if not base:
-        return True, "no ledger — fitness skipped"
+        return True, "no ledger — fitness skipped", None
     after = _fitness()
     if not after:
-        return True, "fitness unavailable post-patch — skipped"
-    if after["brier"] > base["brier"] + FITNESS_TOL:
+        return True, "fitness unavailable post-patch — skipped", None
+    d = round(after["brier"] - base["brier"], 5)
+    if d > FITNESS_TOL:
         return False, (f"FITNESS REGRESSION: ledger Brier {base['brier']} -> {after['brier']} "
-                       "(the patch made the brain worse at predicting real outcomes)")
-    return True, f"fitness OK (Brier {base['brier']} -> {after['brier']})"
+                       "(the patch made the brain worse at predicting real outcomes)"), d
+    if d >= 0:
+        spent = _tol_spent(know)
+        if spent > TOL_BUDGET:
+            return False, (f"TOL BUDGET SPENT: recent shipped patches already cost +{spent} "
+                           f"cumulative ledger Brier (cap +{TOL_BUDGET}) — only strictly-improving "
+                           "patches may ship until a 'helped' verdict resets the budget"), d
+    return True, f"fitness OK (Brier {base['brier']} -> {after['brier']})", d
 
 
 def _propose() -> tuple[dict | None, str | None]:
@@ -371,11 +496,34 @@ def attempt() -> dict:
     new = src.replace(p["find"], p["replace"])
     open(path, "w").write(new)                              # apply
     ok, reason = _gate()                                    # prove it doesn't break
+    fit_delta = None
     if ok:
-        ok, fit_reason = _fitness_check(base_fit)           # prove it isn't DUMBER
+        ok, fit_reason, fit_delta = _fitness_check(base_fit)   # prove it isn't DUMBER (+ tol budget)
         reason = f"{reason}; {fit_reason}"
+    patch = [{"file": p["file"], "find": p["find"], "replace": p["replace"]}]
+    if ok and needs_human(patch):
+        # W3.5b QUARANTINE: this target has no routed deterministic metric — the gate proved the
+        # patch doesn't crash, but nothing can prove it isn't subtly wrong. Don't auto-ship: park
+        # the exact patch in the repo-riding quarantine file; the live coach routes it through the
+        # Telegram approval path (approvals.propose) for human eyes. Pure deletions never land
+        # here (needs_human exempts them — the proven-helpful shape ships on the crash gate).
+        open(path, "w").write(src)                          # revert — nothing ships un-measured
+        llm.feedback(coder, "code", True)                   # the code SURVIVED; the routing said no
+        _append(QUARANTINE, {"ts": time.time(), "iso": iso(time.time()), "file": p["file"],
+                             "find": p["find"], "replace": p["replace"], "why": p.get("why"),
+                             "title": f"quarantined patch to {p['file']}",
+                             "patch_hash": _patch_hash(patch)})
+        rec = {"ts": iso(time.time()),
+               "status": "QUARANTINED (no deterministic metric for this target — needs human eyes)",
+               "file": p["file"], "why": p.get("why"), "gate": reason, "coder": coder}
+        _append(APPLIED, rec)
+        return {"status": "quarantined", **rec}
     if ok:
         llm.feedback(coder, "code", True)                   # this model writes code that survives
+        # W3.4a: the record RIDES the shipping commit (the workflow adds state_seed/ alongside
+        # earshot/), so the live coach can count + score this CI change like any live one.
+        record_ci_change(patch, "code", p.get("why") or f"CI self-evolve patch to {p['file']}",
+                         why=p.get("why"), gate_fitness_delta=fit_delta)
         rec = {"ts": iso(time.time()), "status": "TESTED+APPLIED (commit to self-evolve)",
                "file": p["file"], "why": p.get("why"), "gate": reason, "coder": coder}
         _append(APPLIED, rec)
@@ -432,10 +580,19 @@ def apply_external(patches: list) -> dict:
     if not applied:
         return {"status": "skipped", "why": "no patches"}
     ok, reason = _gate()
+    fit_delta = None
     if ok:
-        ok, fit_reason = _fitness_check(base_fit)          # approved code must not make the brain dumber
+        ok, fit_reason, fit_delta = _fitness_check(base_fit)   # approved code must not make the brain dumber
         reason = f"{reason}; {fit_reason}"
     if ok:
+        # W3.4a: the approvals Action commits with `git add -A`, so this ledger record rides the
+        # same commit as the approved patch. The live coach dedupes by patch_hash — autonomous
+        # applies were already stamped into self_changes at propose time; human-tapped ✅ applies
+        # were previously NOT recorded anywhere, and this closes that gap too.
+        record_ci_change(patches, ("code" if any(str(p.get("file", "")).endswith(".py")
+                                                 for p in patches) else "config"),
+                         "approved self-change (apply-approved Action)",
+                         gate_fitness_delta=fit_delta)
         _append(APPLIED, {"ts": iso(time.time()), "status": "APPROVED+TESTED (apply-approved)",
                           "files": applied, "gate": reason})
         return {"status": "applied", "files": applied, "gate": reason}
