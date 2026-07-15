@@ -1,6 +1,11 @@
 """Keyless free tentacles — these run with ZERO API keys."""
 from __future__ import annotations
 
+import json
+import os
+import re
+import time
+
 import requests
 import feedparser
 
@@ -26,11 +31,68 @@ class EdgarSource(Source):
     # family (2566 trades, 40% win). Emit Form 4s unhinted (generic filing evidence -> keyword
     # classify -> UNKNOWN); the real cluster-BUY signal is OpenInsider in scrape.py.
     HINTS = {"edgar_8k": None, "edgar_form4": None, "edgar_13d": "activist_stake"}
+    # ...but a Form 4 that IS an open-market purchase (code P) is genuinely bullish and early.
+    # Re-earn the hint by reading the filing's XML: bounded per poll, verdicts cached so re-polled
+    # entries never re-fetch, and any failure just emits unhinted exactly like the line above.
+    FORM4_XML_BUDGET = 10        # max filing fetches per poll (the feed yields ~40 entries)
+    FORM4_FETCH_DELAY = 0.3      # gap between filing fetches — far under SEC's ~10 req/s fair-use
+    FORM4_CACHE_CAP = 2000
+    ACCESSION_RE = re.compile(r"\d{10}-\d{2}-\d{6}")
+    NONDERIV_TXN_RE = re.compile(r"<nonDerivativeTransaction>(.*?)</nonDerivativeTransaction>",
+                                 re.S | re.I)
+    CODE_P_RE = re.compile(r"<transactionCode>\s*P\s*</transactionCode>", re.I)
+    ACQUIRED_RE = re.compile(r"<transactionAcquiredDisposedCode>\s*<value>\s*A\s*</value>",
+                             re.S | re.I)
 
     def __init__(self, weights: dict, user_agent: str):
         super().__init__(weights)
         self.ua = user_agent
         self._cik_map: dict[int, str] | None = None
+        self._form4_path = os.path.join("state", "form4_verdicts.json")
+        try:
+            with open(self._form4_path) as f:
+                self._form4_verdicts = {str(k): bool(v) for k, v in json.load(f).items()}
+        except Exception:
+            self._form4_verdicts = {}
+        self._form4_budget = 0
+
+    def _save_form4_verdicts(self):
+        try:
+            if len(self._form4_verdicts) > self.FORM4_CACHE_CAP:  # insertion-ordered dict -> FIFO cap
+                for k in list(self._form4_verdicts)[: len(self._form4_verdicts) - self.FORM4_CACHE_CAP]:
+                    del self._form4_verdicts[k]
+            os.makedirs("state", exist_ok=True)
+            with open(self._form4_path, "w") as f:
+                json.dump(self._form4_verdicts, f)
+        except Exception:
+            pass
+
+    def _form4_is_purchase(self, link: str) -> bool:
+        """True ONLY for a verified open-market buy: the filing has a non-derivative transaction
+        coded P and acquired ("A"). Sells, option exercises, grants, over-budget entries and
+        anything we can't fetch/parse -> False (signal still emitted, unhinted as today)."""
+        m = self.ACCESSION_RE.search(link or "")
+        if not m or "/" not in link:
+            return False
+        acc = m.group(0)
+        if acc in self._form4_verdicts:                    # re-polled entries never re-fetch
+            return self._form4_verdicts[acc]
+        if self._form4_budget <= 0:                        # bounded; uncached -> retried next poll
+            return False
+        self._form4_budget -= 1
+        try:
+            time.sleep(self.FORM4_FETCH_DELAY)             # politeness gap between filing fetches
+            url = f"{link.rsplit('/', 1)[0]}/{acc}.txt"    # full submission embeds the ownership XML
+            r = requests.get(url, headers={"User-Agent": self.ua}, timeout=TIMEOUT)
+            r.raise_for_status()
+            verdict = any(self.CODE_P_RE.search(txn) and self.ACQUIRED_RE.search(txn)
+                          for txn in self.NONDERIV_TXN_RE.findall(r.text))
+        except Exception as e:                             # graceful: failures aren't cached
+            print(f"  [tentacle:edgar] form4 xml {acc} failed (emit unhinted): {e}")
+            return False
+        self._form4_verdicts[acc] = verdict
+        self._save_form4_verdicts()
+        return verdict
 
     def _ciks(self) -> dict[int, str]:
         # AUDIT FIX: retry when the map is EMPTY, not only when None — one failed fetch at boot used to
@@ -50,6 +112,7 @@ class EdgarSource(Source):
     def fetch(self) -> list[RawSignal]:
         out: list[RawSignal] = []
         ciks = self._ciks()
+        self._form4_budget = self.FORM4_XML_BUDGET
         for form, skey in self.FEEDS.items():
             url = ("https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent"
                    f"&type={form.replace(' ', '+')}&company=&dateb=&owner=include&count=40&output=atom")
@@ -65,10 +128,14 @@ class EdgarSource(Source):
                 tickers = [ticker] if ticker else extract_tickers(title)
                 if not tickers:
                     continue
+                link = getattr(e, "link", "")
+                hint = self.HINTS[skey]
+                if skey == "edgar_form4" and self._form4_is_purchase(link):
+                    hint = "insider_cluster"       # re-earned: verified code-P open-market buy
                 out.append(RawSignal(
                     source=skey, weight=self.weight(skey), ts=now_ts(),
-                    tickers=tickers, headline=title, url=getattr(e, "link", ""),
-                    catalyst_hint=self.HINTS[skey], strength=1.0,
+                    tickers=tickers, headline=title, url=link,
+                    catalyst_hint=hint, strength=1.0,
                 ))
         return out
 
