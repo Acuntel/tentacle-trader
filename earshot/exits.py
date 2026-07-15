@@ -10,8 +10,14 @@ not just at a fixed horizon. Five ways out, in priority order:
 from __future__ import annotations
 
 import time
+from datetime import datetime, timezone
 
-from . import technicals, options
+from . import market, technicals, options
+
+
+def _et_date(ts: float):
+    """ET calendar date of an epoch timestamp — daily candles roll over on ET trading dates."""
+    return market.now_et(datetime.fromtimestamp(ts, timezone.utc)).date()
 
 
 class ExitEngine:
@@ -41,7 +47,10 @@ class ExitEngine:
         if peak_gain >= self.trail_arm_pct and drop_from_peak <= -self.trail_pct:
             return "trailing", chg
         # PRICE ACTION: a fresh bearish reversal candle (overbought / trend-break) -> the move is done.
-        if self.tech_on:
+        # ARMED only after a full daily bar has COMPLETED since entry: technicals read completed
+        # candles, so on entry day the "fresh" bearish pattern is YESTERDAY'S static bar — the entry
+        # gate already priced it, and firing on it churned buy->exit within minutes (VRTX 8x in 1h).
+        if self.tech_on and _et_date(now) > _et_date(pos.get("entry_ts", now)):
             should, why = technicals.exit_read(pos["ticker"], self.tech)
             if should:
                 return why, chg
