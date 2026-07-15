@@ -43,6 +43,8 @@ def build(candidate, macro: str = "") -> dict:
     for s in candidate.signals:
         fams.setdefault(FAMILY.get(s.source, "other"), []).append(s.headline)
 
+    # W1.7: newswire (the PR wires) now lives in the "news" family, so a press release and its
+    # google_news/yahoo echo land in the SAME dedup scope and collapse to one event / one pillar.
     news_events = _distinct_events(tuple(fams.get("news", [])))
     # Filing headlines are distinct semantic events even if Jaccard overlaps with news.
     # AUDIT FIX: this was computed and thrown away (write-only) — now returned + featurized.
