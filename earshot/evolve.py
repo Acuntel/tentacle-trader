@@ -132,14 +132,25 @@ def update_calibration(core) -> dict:
         return {"factor": 1.0, "note": "no outcomes yet"}
     tot = sum(n for n, _ in buckets.values())
     bins = {str(b): {"n": n, "win": round(w / n, 3)} for b, (n, w) in buckets.items() if n}
+    per_bin: dict[str, float] = {}
     if tot >= 20:
         # bucket-weighted average win rate, not raw sum of wins / sum of counts
         avg_win = sum(w for n, w in buckets.values()) / tot
         fld = field_rate(core.know)
         factor = round(max(0.7, min(1.1, (avg_win / max(0.05, fld)) ** 0.5)), 3)  # sqrt: soften small-n swings
+        # PER-BIN calibration (audit fix 2026-07-13): the single scalar above applied the SAME haircut to
+        # every confidence level, so a high-conviction bucket that historically LOSES (e.g. 85-conf winning
+        # ~11%) got sized the same as a 70-conf bucket winning ~42% — the bot bet biggest on its worst ideas.
+        # Give each bucket its OWN factor, Bayes-shrunk toward the overall pick rate (K pseudo-obs) so a
+        # 9-sample bin can't swing wildly. brain._size scales on the calibrated score, so a low per-bin factor
+        # directly shrinks the bet on chronically-losing high-confidence setups. Same [0.7,1.1] clamp + sqrt.
+        K = 12.0
+        for b, (n, w) in buckets.items():
+            shrunk = (w + K * avg_win) / (n + K)
+            per_bin[str(b)] = round(max(0.7, min(1.1, (shrunk / max(0.05, fld)) ** 0.5)), 3)
     else:
         factor = 1.0
-    core.know["calibration"] = {"bins": bins, "factor": factor, "n": tot}
+    core.know["calibration"] = {"bins": bins, "factor": factor, "per_bin": per_bin, "n": tot}
     return core.know["calibration"]
 
 

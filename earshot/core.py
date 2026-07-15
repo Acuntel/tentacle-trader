@@ -70,7 +70,16 @@ class BrainCore:
 
     # ---- calibration (#3): does a stated confidence match reality? ----
     def calib_factor(self, conf: float) -> float:
-        return float(self.know["calibration"].get("factor", 1.0))
+        # confidence-AWARE calibration (audit fix 2026-07-13): use the per-bucket factor so a
+        # high-confidence bucket that historically loses is haircut harder than a winning mid bucket.
+        # Buckets MUST match evolve.update_calibration: <70 -> "55", <85 -> "70", else "85".
+        cal = self.know.get("calibration", {})
+        per = cal.get("per_bin")
+        if per:
+            b = "55" if conf < 70 else "70" if conf < 85 else "85"
+            if b in per:
+                return float(per[b])
+        return float(cal.get("factor", 1.0))          # back-compat: pre-fix knowledge.json (global scalar)
 
     # ---- THE simultaneous fusion — everything sharpens everything, in one pass ----
     def synthesize(self, patterns) -> dict:
