@@ -93,8 +93,9 @@ PROVIDERS = {
 # reasoner is only reached on failover and never stalls the trading loop. Every model serves multiple tasks.
 # FAST/FREE models lead high-volume lanes; OpenRouter→DeepSeek (paid, capped) sits in QUALITY lanes
 # (code/reason/quant) not volume lanes (judge). Every model still serves multiple tasks.
-# NOTE: a provider that goes fully dead (0 usable answers over a long window, per failing_parts) should be
-# REMOVED from these lanes, not just demoted — a dead tail still costs a failover attempt each cycle.
+# NOTE: a provider that goes fully dead (0 usable answers over a long window, per failing_parts) is now
+# AUTO-QUARANTINED at routing time (see _quarantined) — a dead tail still costs a failover attempt each
+# cycle, so _chain() drops it entirely (all lanes) and only re-probes it rarely so recovery stays possible.
 ROUTING = {
     "judge":   ["cerebras", "groq", "sambanova", "nv_bytedance", "nvidia"],                          # fast, high-volume — NO paid
     "reason":  ["cerebras", "openrouter", "nv_mistral", "nvidia", "groq", "nv_nemotron", "nv_stepfun"],  # deep reasoning
@@ -109,6 +110,11 @@ _BUDGET_PATH = "state/llm_budget.json"
 _STATS_PATH = "state/llm_stats.json"                      # LEARNED router: per (provider|task) track record
 _COOLDOWN: dict[str, float] = {}                          # name -> epoch until which to skip (after a 429)
 _stats_cache: dict | None = None
+_QUAR_CALLS = 150                                         # lifetime calls with ZERO usable answers -> quarantine
+_PROBE_EVERY = 200                                        # routed calls between probation probes of a quarantined provider
+_PROBE_TASK = "judge"                                     # probe on the cheapest lane (fast, free, high-volume)
+_route_count = 0                                          # routed calls this session (drives probation cadence)
+_probe_at: dict[str, int] = {}                            # name -> _route_count at its last probation probe
 
 
 # ---- THE LEARNED ROUTER — the pool stops being a hand-ordered guess and learns who's good at what ----
@@ -190,12 +196,39 @@ def _spend(name: str, tokens: int):
     save_json(_BUDGET_PATH, b)
 
 
+def _quarantined() -> set[str]:
+    """AUTO-QUARANTINE (the gemini lesson: 0/2035 usable answers, yet it burned a failover attempt
+    every escalation until a human deleted it). A provider whose LIFETIME stats across ALL lanes show
+    >= _QUAR_CALLS calls and ZERO usable answers is dead (quota-dead key, gone model) — _chain() skips
+    it entirely, all lanes, instead of just demoting. Reversible by DATA alone: one usable answer
+    (a probation probe, or any manual call after a key rotation) and it re-enters automatically."""
+    s = _stats()
+    agg: dict[str, list[int]] = {}
+    for key, d in s.items():
+        if "|" not in key or not isinstance(d, dict):
+            continue
+        a = agg.setdefault(key.split("|")[0], [0, 0])
+        a[0] += d.get("calls", 0)
+        a[1] += d.get("ok", 0)
+    quar = {n for n, (calls, ok) in agg.items() if n in PROVIDERS and calls >= _QUAR_CALLS and ok == 0}
+    marker = {"names": sorted(quar)}                       # surfaced so selfreview/failing_parts can report "quarantined (auto)"
+    if s.get("_quarantined") != marker:
+        s["_quarantined"] = marker
+        _save_stats()
+        print(f"[llm] auto-quarantine: {', '.join(marker['names']) or '(none — all clear)'}", flush=True)
+    return quar
+
+
 def _chain(task: str) -> list[str]:
     """Preferred order for a task, RE-RANKED by measured performance: answer rate + downstream
     'was it actually good' grades, with the hand-tuned order as the prior for unproven providers.
     A 10% exploration swap keeps sampling non-leaders so a recovered/new provider can earn its way
-    up (otherwise one early 429 streak buries a good model forever)."""
-    base = ROUTING.get(task, ROUTING["default"])
+    up (otherwise one early 429 streak buries a good model forever). Fully-dead providers are
+    quarantined out entirely (see _quarantined), with a rare probation probe on the cheapest lane."""
+    global _route_count
+    _route_count += 1
+    quar = _quarantined()
+    base = [n for n in ROUTING.get(task, ROUTING["default"]) if n not in quar]
     s = _stats()
 
     def _score(pos: int, name: str) -> float:
@@ -214,6 +247,14 @@ def _chain(task: str) -> list[str]:
     if len(ranked) > 2 and random.random() < 0.10:
         j = random.randrange(1, len(ranked))
         ranked[0], ranked[j] = ranked[j], ranked[0]
+    # PROBATION: a quarantined provider gets ONE attempt per ~_PROBE_EVERY routed calls, cheapest lane
+    # only, so recovery (e.g. a rotated key) needs no human. Front of the chain so the probe actually
+    # fires; a dead one fails fast and normal failover continues — bounded cost, automatic re-entry.
+    if quar and task == _PROBE_TASK:
+        due = [n for n in sorted(quar) if _route_count - _probe_at.get(n, 0) >= _PROBE_EVERY]
+        if due:
+            _probe_at[due[0]] = _route_count
+            ranked.insert(0, due[0])
     return ranked
 
 
