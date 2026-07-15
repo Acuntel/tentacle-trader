@@ -38,6 +38,15 @@ def _read_jsonl(path, cap=2000):
     return out[-cap:]
 
 
+def _row_win(row: dict):
+    """Alpha-consistent win for an outcomes.jsonl row. The ledger's raw `win` field is ret>0, but
+    every learner trains on alpha>0 (beat the market) — two DIFFERENT quantities (raw ~0.20 vs
+    alpha ~0.34), so a review judging the raw field misfires against what the bot actually learns
+    from. Rows since ~June carry `alpha`; legacy rows fall back to the raw `win`."""
+    a = row.get("alpha")
+    return (a > 0) if a is not None else row.get("win")
+
+
 class SelfReview:
     def __init__(self, cfg: dict, learner, instinct):
         self.cfg = cfg.get("selfreview", {})
@@ -68,6 +77,8 @@ class SelfReview:
             self._remember("Never open a position when the exchange is closed — the price isn't tradeable.")
 
         # 2) Per-catalyst expectancy — trim the prior on a proven money-loser (bounded auto-fix).
+        # know['catalysts'] is alpha-fed (learning._learn accumulates alpha, wins = alpha>0), so these
+        # numbers are the SAME quantity the learners train on; the evidence says so explicitly.
         for cat, st in (know.get("catalysts") or {}).items():
             n = st.get("trades", 0)
             if n >= self.min_n:
@@ -76,7 +87,7 @@ class SelfReview:
                     applied = self._trim_prior(cat)
                     findings.append({
                         "issue": f"catalyst '{cat}' has negative expectancy",
-                        "evidence": f"avg {avg:+.2f}%/trade over {n} resolved",
+                        "evidence": f"avg alpha {avg:+.2f}%/trade over {n} resolved",
                         "severity": "medium", "status": "TUNED" if applied else "FLAGGED",
                         "fix": f"lower the '{cat}' prior" + (f" -> {applied}" if applied else ""),
                         "auto_applied": bool(applied)})
@@ -94,7 +105,7 @@ class SelfReview:
                     new_w = self._deweight(src)
                     findings.append({
                         "issue": f"source '{src}' is low-precision",
-                        "evidence": f"{prec*100:.0f}% win, {avg:+.2f}% avg over {n}",
+                        "evidence": f"{prec*100:.0f}% alpha-win, {avg:+.2f}% avg alpha over {n}",
                         "severity": "medium", "status": "TUNED",
                         "fix": f"weight -> {new_w}", "auto_applied": True})
 
@@ -152,11 +163,15 @@ class SelfReview:
             pass
         know["failing_parts"] = failing                     # the daily digest names them to Brady
 
-        # 5) Honest progress check — distance to the next rung (no inflation).
+        # 5) Honest progress check — distance to the next rung (no inflation). The win-rate quoted
+        # here is alpha-consistent (_row_win), the quantity the learners actually train on.
         stt = self.instinct.status()
+        wins_a = sum(1 for o in outcomes if _row_win(o))
+        awr = f", alpha-win {wins_a}/{len(outcomes)}" if outcomes else ""
         findings.append({
             "issue": "graduation status", "evidence": f"mastery {stt['mastery']} / need "
-            f"{stt['needs_mastery']} for rung {stt['rung']} ({stt['stage']}); {len(outcomes)} resolved trades",
+            f"{stt['needs_mastery']} for rung {stt['rung']} ({stt['stage']}); "
+            f"{len(outcomes)} resolved trades{awr}",
             "severity": "info", "status": "ON-TRACK" if outcomes else "NEEDS-RESOLVED-TRADES",
             "fix": "keep shadow trades resolving — mastery only moves on real price-based outcomes",
             "auto_applied": False})
