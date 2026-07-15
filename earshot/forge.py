@@ -15,6 +15,7 @@ space; the Forge only proposes — a human + the test-gate decide what ships.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import random
@@ -57,17 +58,28 @@ def _load_obs(limit: int = 4000):
     return rows[-limit:]
 
 
+def _row_key(feat, ret) -> str:
+    """Stable fingerprint of one resolved row (survives restarts — no builtin hash randomization).
+    Used to identify a holdout slice so a given slice can crown at most ONE champion."""
+    s = json.dumps([round(float(ret), 6), sorted(feat.items())], sort_keys=True)
+    return hashlib.md5(s.encode()).hexdigest()[:16]
+
+
 def champion_pwin(know, feats, min_edge: float = 0.3, min_fwd: float = 0.0):
-    """Score a setup by the Forge's CHAMPION policy → a 0-1 signal the live gate can blend in, but ONLY
-    once the free search has PROVEN an edge that survives BOTH the walk-forward folds (champion.edge >=
-    min_edge) AND a truly out-of-time FORWARD holdout (champion.forward_edge >= min_fwd). Until the
-    forward holdout exists and is positive it returns None — historical search PROPOSES, forward data
-    DISPOSES. This is how free deterministic search shapes live decisions — guarded + bounded."""
-    ch = (know.get("forge") or {}).get("champion")
+    """Score a setup by the Forge's CROWNED champion → a 0-1 signal the live gate can blend in, or None
+    (= no influence). Influence must be EARNED (see Forge._maybe_crown): the walk-forward edge clears
+    min_edge, the forward-holdout edge clears a trial-count-adjusted LUCK FLOOR (millions of candidates
+    re-scored against the same few-thousand rows make forward_edge > 0 by selection alone), and each
+    holdout slice crowns at most once. HARD FREEZE: if the strategy tournament's honesty module reports
+    ZERO walk-forward survivors, it has already proven the strategy space is overfit — the free search's
+    influence must not outrank that verdict, so it stands down entirely."""
+    if (know.get("honesty") or {}).get("survivors") == 0:
+        return None                                    # honesty says OVERFIT — free search stands down
+    ch = (know.get("forge") or {}).get("crowned")      # only a CROWNED champion has live influence
     if not ch or float(ch.get("edge", 0) or 0) < min_edge:
         return None
     fe = ch.get("forward_edge")
-    if fe is None or float(fe) < min_fwd:              # must also survive the most-recent forward slice
+    if fe is None or float(fe) < min_fwd:              # must also have survived the forward slice
         return None
     w, fn = ch.get("w") or [], ch.get("feats") or []
     if len(w) != len(fn) or not fn:
@@ -133,9 +145,15 @@ class Forge:
         self.persist = persist or (lambda: None)
         self.fg = know.setdefault("forge", {})
         self.fg.setdefault("champion", None)
+        self.fg.setdefault("crowned", None)     # the champion that EARNED live influence (_maybe_crown)
+        self.fg.setdefault("embargo", None)     # holdout slice that crowned it — one crowning per slice
         self.fg.setdefault("hist", [])
         self.fg.setdefault("flat", 0)
         self.fg.setdefault("generation", 0)
+        # cumulative candidate policies ever scored — the multiple-testing trial count behind the luck
+        # floor. Backfill legacy state from generation*population so a long-lived deploy (gen 5000+)
+        # doesn't restart with a near-zero floor after ~1.4M policies already probed the same rows.
+        self.fg.setdefault("trials", int(self.fg.get("generation", 0)) * self.pop)
         self.last = 0.0
 
     def due(self) -> bool:
@@ -154,6 +172,36 @@ class Forge:
     # self._percentile which is module-level, so it would have CRASHED if ever called — and it
     # had already absorbed one approved self-change, A0080). Self-coder: only patch called code.
 
+    def _fwd_floor(self, hold_rets, n_acc) -> float:
+        """LUCK FLOOR for the forward edge — same deflated-Sharpe shape as strategies._luck_threshold:
+        with T candidate policies tried against the SAME holdout, the best one's forward edge under NO
+        real skill is ~ SE(mean of n_acc holdout returns) * sqrt(2·ln T). Grows with ln(trials), so a
+        champion selected from millions of tries must clear a far higher bar than one from dozens."""
+        t = max(2, int(self.fg.get("trials", 0)))
+        hm = sum(hold_rets) / len(hold_rets)
+        hvar = sum((r - hm) ** 2 for r in hold_rets) / max(1, len(hold_rets) - 1)
+        se = math.sqrt(hvar) / math.sqrt(max(1, n_acc))
+        return se * math.sqrt(2 * math.log(t))
+
+    def _maybe_crown(self, fwd_edge, fwd_floor, hold_keys) -> bool:
+        """CROWNING = earning live influence (champion_pwin reads forge.crowned, never the raw search
+        champion). Requires (a) a forward edge ABOVE the trial-count luck floor — not merely > 0 — and
+        (b) an EMBARGOED FRESH HOLDOUT: a given holdout slice crowns at most ONE champion. On crowning
+        we record the slice's tail row; until new resolved rows extend the holdout by >=20% of that
+        slice, no re-crowning off it — the search keeps running, but influence can't be re-earned from
+        an exhausted slice (gen 5000+ re-scoring the same ~4-6k rows passes >0 by selection alone)."""
+        if fwd_edge is None or fwd_floor is None or not hold_keys or fwd_edge <= fwd_floor:
+            return False
+        emb = self.fg.get("embargo") or {}
+        tail = emb.get("tail")
+        if tail and tail in hold_keys:                  # crowning slice still inside the holdout window
+            new = len(hold_keys) - 1 - max(i for i, k in enumerate(hold_keys) if k == tail)
+            if new < max(1, int(0.2 * int(emb.get("n_hold") or len(hold_keys)))):
+                return False                            # same exhausted slice — refuse a second crowning
+        self.fg["crowned"] = dict(self.fg["champion"])
+        self.fg["embargo"] = {"tail": hold_keys[-1], "n_hold": len(hold_keys), "ts": iso(time.time())}
+        return True
+
     def tick(self) -> dict:
         self.last = time.time()
         try:
@@ -165,8 +213,9 @@ class Forge:
             rets = [r for _, r in rows]
             nf = len(feats)
             # WS4 FORWARD HOLDOUT: fit + select on the OLDER portion; hold out the most-recent slice as a
-            # truly out-of-time test. The champion only earns LIVE influence (champion_pwin) if it ALSO
-            # beats accept-all on this forward holdout — historical search proposes, forward data disposes.
+            # truly out-of-time test. The champion only earns LIVE influence (champion_pwin) if it is
+            # CROWNED off it: forward edge above the trial-count luck floor, one crowning per slice
+            # (_maybe_crown) — historical search proposes, forward data (honestly discounted) disposes.
             n = len(rows)
             fwd_frac = float(self.cfg.get("forge", {}).get("forward_frac", 0.2))
             cut = max(40, int(n * (1.0 - fwd_frac)))
@@ -200,6 +249,8 @@ class Forge:
                 while len(pop) < self.pop - self.explore:
                     pop.append(self._breed(random.choice(elites), random.choice(elites), nf))
                 pop += [self._rand(nf) for _ in range(self.explore)]
+            # every candidate scored is a TRIAL against these same rows — the luck floor grows with it
+            self.fg["trials"] = int(self.fg.get("trials", 0)) + experiments
             if best_g is None:
                 return {"experiments": experiments, "viable": 0, "setups": len(rows)}
             self.fg["generation"] = self.fg.get("generation", 0) + self.gens
@@ -223,7 +274,7 @@ class Forge:
             edge = best_s - baseline
             self.fg["champion"]["edge"] = round(edge, 4)        # walk-forward edge over accept-all (train)
             # FORWARD HOLDOUT edge: apply the champion to the held-out most-recent setups (out-of-time)
-            fwd_edge = None
+            fwd_edge, fwd_floor = None, None
             if hold_rets:
                 hscores = [sum(w * v for w, v in zip(best_g["w"], vec)) for vec in hold_vecs]
                 hcut = _percentile(sorted(hscores), 1.0 - best_g["keep"])
@@ -231,7 +282,12 @@ class Forge:
                 if len(acc) >= 20:   # AUDIT FIX: 5 accepted holdout rows was a coin-flip sample — a
                                      # lucky handful could hand the champion live influence
                     fwd_edge = round(sum(acc) / len(acc) - sum(hold_rets) / len(hold_rets), 4)
-            self.fg["champion"]["forward_edge"] = fwd_edge      # None until enough forward data; gates live use
+                    fwd_floor = round(self._fwd_floor(hold_rets, len(acc)), 4)
+            self.fg["champion"]["forward_edge"] = fwd_edge      # raw measurement (reporting only) — live
+            self.fg["champion"]["fwd_floor"] = fwd_floor        # influence requires CROWNING (see below)
+            # CROWNING: live influence only if the forward edge beats the multiple-testing luck floor AND
+            # this holdout slice hasn't already crowned a champion (champion_pwin reads forge.crowned)
+            crowned = self._maybe_crown(fwd_edge, fwd_floor, [_row_key(f, r) for f, r in rows[cut:]])
             escalated = False
             if (edge >= self.min_gain and improved) or self.fg["flat"] >= self.plateau_ticks:
                 escalated = self._escalate(self.fg["champion"], edge)
@@ -239,7 +295,8 @@ class Forge:
             self.persist()
             return {"generation": self.fg["generation"], "experiments": experiments, "viable": len(scored),
                     "setups": len(rows), "champion_alpha": round(best_s, 3), "vs_baseline": round(edge, 3),
-                    "forward_edge": fwd_edge, "top_features": self.fg["champion"]["top"], "escalated": escalated}
+                    "forward_edge": fwd_edge, "fwd_floor": fwd_floor, "crowned": crowned,
+                    "top_features": self.fg["champion"]["top"], "escalated": escalated}
         except Exception as e:
             return {"error": str(e)[:140]}
 
