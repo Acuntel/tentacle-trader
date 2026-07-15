@@ -17,6 +17,30 @@ FEATURES = ["independence", "news_events", "opt_bias", "tech_bias", "squeeze", "
             # regime conditioning (the same setup behaves differently across regimes)
             "risk_on", "rates_down", "downtrend"]
 
+# W1.5: running per-feature stats for the auto-included RAW numeric tier (t_/o_/f_). tanh() straight
+# on raw magnitudes (RSI ~60, market caps in dollars, strikes) froze the whole tier at a constant
+# ±1.0 — z-score FIRST, then squash. featurize() is a staticmethod (analyst.py calls it on the
+# class), so the registry lives at module level; LearnedGate seeds it from knowledge.json
+# ("feature_stats") on boot and persists it back on update().
+_RAW_STATS: dict = {}
+
+
+def _znorm(key: str, fv: float) -> float:
+    """Welford running z-score -> tanh squash on a ~2-sigma scale. Bounded (-1,1), NaN-safe,
+    neutral (0.0) until a feature has enough spread to carry information."""
+    st = _RAW_STATS.setdefault(key, {"n": 0, "mean": 0.0, "m2": 0.0})
+    st["n"] += 1
+    d = fv - st["mean"]
+    st["mean"] += d / st["n"]
+    st["m2"] += d * (fv - st["mean"])
+    if st["n"] < 2:
+        return 0.0                                     # no scale info yet
+    var = st["m2"] / (st["n"] - 1)
+    if not (var > 1e-12):                              # constant so far (guards NaN too) -> no signal
+        return 0.0
+    z = (fv - st["mean"]) / math.sqrt(var)
+    return math.tanh(z / 2.0) if z == z else 0.0
+
 
 class LearnedGate:
     def __init__(self, know: dict, lr: float = 0.05, key: str = "model",
@@ -34,6 +58,12 @@ class LearnedGate:
         # tracking a non-stationary market. lr_eff = lr * max(floor_ratio, warm/(warm+n)).
         self.warm = max(1, int(warm))
         self.lr_floor_ratio = float(lr_floor_ratio)
+        # W1.5: seed the raw-feature normalizer from persisted stats so z-scores survive restarts
+        for fk, fd in (know.get("feature_stats") or {}).items():
+            if isinstance(fd, dict) and fd.get("norm_n", 0) > _RAW_STATS.get(fk, {}).get("n", 0):
+                mu, m2 = float(fd.get("norm_mean", 0.0)), float(fd.get("norm_m2", 0.0))
+                if math.isfinite(mu) and math.isfinite(m2):
+                    _RAW_STATS[fk] = {"n": int(fd["norm_n"]), "mean": mu, "m2": m2}
 
     def _lr_eff(self) -> float:
         return self.lr * max(self.lr_floor_ratio, self.warm / (self.warm + self.n))
@@ -68,8 +98,10 @@ class LearnedGate:
         }
         # WIDEN — log EVERYTHING the bot already measures so the model + the Forge can use it all, not a
         # subset. Every pillar type, source breadth, and every numeric tech/options/fundamentals signal.
-        # Auto-included values are tanh-squashed to (-1,1) so raw magnitudes (prices, floats) can't
-        # destabilize the online learner. New keys cost nothing: weights start at 0 (backward-compatible).
+        # Auto-included values are z-scored per feature (running stats, persisted) THEN tanh-squashed to
+        # (-1,1). W1.5 AUDIT FIX: tanh straight on raw magnitudes (RSI ~60, caps in $, strikes) pinned
+        # 7 features at a constant ~1.0 — a whole dead tier. New keys still cost nothing: weights start
+        # at 0 (backward-compatible).
         for pil in ("regulatory", "crowd", "demand", "onchain", "flow", "altdata"):
             feat["is_" + pil] = 1.0 if pil in p else 0.0
         feat["n_src"] = min(float(dossier.get("n_sources", 0) or 0), 10) / 10.0
@@ -80,8 +112,8 @@ class LearnedGate:
                     fv = float(v)
                 except (TypeError, ValueError):
                     continue
-                if fv == fv and abs(fv) > 1e-9:                 # finite, non-zero (NaN-safe)
-                    feat[prefix + str(k)] = round(math.tanh(fv), 4)
+                if math.isfinite(fv) and abs(fv) > 1e-9:        # finite, non-zero (NaN-safe)
+                    feat[prefix + str(k)] = round(_znorm(prefix + str(k), fv), 4)
         # Forge-found features: t_bias, o_skew, f_squeeze are the strongest predictors.
         # Expose them explicitly so the online learner gets stable, named weights.
         feat["t_bias"] = feat.get("t_bias", 0.0)
