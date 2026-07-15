@@ -33,11 +33,39 @@ def _wilson_lower(wins: int, n: int, z: float = 1.64) -> float:
     return max(0.0, (center - margin) / d)
 
 
-def compute_mastery(recent: list[dict], start: float) -> dict:
+_FLD_CACHE = {"t": 0.0, "v": None}
+
+
+def _live_field() -> float | None:
+    """R1: the live alpha-win base rate from knowledge.json (patterns.field_rate math), cached 10min.
+    Read lazily here so survival needs no new wiring from main/learning (rails stay isolated);
+    None (no state yet / any failure) -> compute_mastery falls back to the legacy math."""
+    if time.time() - _FLD_CACHE["t"] > 600:
+        try:
+            from .persist import load_json
+            from .patterns import field_rate
+            k = load_json("state/knowledge.json", None)
+            _FLD_CACHE["v"] = field_rate(k) if k else None
+        except Exception:
+            _FLD_CACHE["v"] = None
+        _FLD_CACHE["t"] = time.time()
+    return _FLD_CACHE["v"]
+
+
+def compute_mastery(recent: list[dict], start: float, field: float | None = None) -> dict:
     """Composite 0..100 over resolved outcomes {conf, pnl_pct, alpha, win}, derived ONLY from real,
     price-based outcomes — no self-judgment. SKILL is measured on ALPHA (return minus the market), so
     a rising tide can't inflate the score; the drawdown term still uses the RAW equity (real risk).
-    A conservative win-rate lower bound + an overconfidence brake keep it honest. Reused by the Gauntlet."""
+    A conservative win-rate lower bound + an overconfidence brake keep it honest. Reused by the Gauntlet.
+
+    RAIL FIX R1 (2026-07-15, needs Brady's sign-off): `field` = the live alpha-win base rate (~0.35).
+    conf/100 is a 0-100 conviction SCORE born in a coin-flip world; comparing it raw against alpha
+    labels whose base rate is ~0.35 charged a STRUCTURAL ~0.3 'overconfidence' the bot could never
+    escape — the brake made the ladder's rung-0 bar (60) mathematically unreachable (ceiling ~58.6,
+    live mastery pinned ~10 while climbing). With `field` set, the conviction claim is rescaled into
+    the label's world (claim = conf/100 x field/0.5): a bot performing AT field with conviction ~2x
+    field now carries ZERO structural penalty; only genuine over-belief is braked. `field=None`
+    preserves the legacy math exactly (the Gauntlet/backtest callers pass nothing)."""
     n = len(recent)
     if n == 0:
         return {"mastery": 0.0, "win_rate": 0, "win_lb": 0, "profit_factor": 0, "max_dd": 0,
@@ -58,8 +86,10 @@ def compute_mastery(recent: list[dict], start: float) -> dict:
         eq *= (1 + r["pnl_pct"] / 100)
         peak = max(peak, eq)
         maxdd = max(maxdd, (peak - eq) / peak)
-    avg_conf = sum(r["conf"] for r in recent) / n / 100
-    calibration = 1 - sum(abs(r["conf"] / 100 - (1 if r["win"] else 0)) for r in recent) / n
+    scale = (field / 0.5) if field else 1.0                # R1: rescale the claim into the label's world
+    claims = [min(1.0, r["conf"] / 100 * scale) for r in recent]
+    avg_conf = sum(claims) / n
+    calibration = 1 - sum(abs(c - (1 if r["win"] else 0)) for c, r in zip(claims, recent)) / n
     overconf = max(0.0, avg_conf - raw_win)                 # it believed more than it delivered
     sample = min(1.0, n / 30)
     mean_alpha = sum(alpha(r) for r in recent) / n         # expectancy is mean ALPHA (skill)
@@ -199,7 +229,7 @@ class MotherInstinct:
 
     # ---- mastery score (0..100) ----
     def mastery(self) -> float:
-        return compute_mastery(self.state["recent"], self.start)["mastery"]
+        return compute_mastery(self.state["recent"], self.start, field=_live_field())["mastery"]
 
     def monthly_return_pct(self) -> float | None:
         """Realized return of the shadow equity curve, normalized to a 30-day month — the number to
@@ -324,7 +354,7 @@ class MotherInstinct:
                     eq += o["size_usd"] * o["pnl_pct"] / 100
         except FileNotFoundError:
             return {"ok": True, "note": "no ledger yet"}
-        ledger_m = compute_mastery(recs[-100:], self.start)["mastery"]
+        ledger_m = compute_mastery(recs[-100:], self.start, field=_live_field())["mastery"]  # same anchor as mastery()
         eq_ok = abs(eq - self.state["paper_equity"]) < 1.0
         m_ok = abs(ledger_m - self.mastery()) < 1.0
         return {"ok": eq_ok and m_ok, "ledger_equity": round(eq, 2),
