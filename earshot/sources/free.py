@@ -181,7 +181,9 @@ class HackerNewsSource(Source):
             out.append(RawSignal(
                 source=self.key, weight=self.weight(), ts=now_ts(),
                 tickers=tickers, headline=title, url=h.get("url") or "",
-                catalyst_hint="ai_quantum_breakout" if is_theme else None,
+                # ai_quantum_breakout hint RETIRED (EDGE doctrine): theme momentum is fast +
+                # maximally crowded — the race we lose. HN stays a news-family confirmer.
+                catalyst_hint=None,
                 strength=min(2.0, 0.4 + (h.get("points", 0) / 300)),
             ))
         return out

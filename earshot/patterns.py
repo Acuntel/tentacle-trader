@@ -57,6 +57,16 @@ def _wilson_lower(wins: int, n: int, z: float = 1.64) -> float:
     return max(0.0, (c - m) / d)
 
 
+def _wilson_upper(wins: int, n: int, z: float = 1.64) -> float:
+    if n == 0:
+        return 1.0
+    p = wins / n
+    d = 1 + z * z / n
+    c = p + z * z / (2 * n)
+    m = z * math.sqrt((p * (1 - p) + z * z / (4 * n)) / n)
+    return min(1.0, (c + m) / d)
+
+
 class PatternMemory:
     def __init__(self, know: dict):
         self.know = know
@@ -157,6 +167,47 @@ class PatternMemory:
                 st["wins"] += 1
                 st["sum_win_ret"] += pnl_pct
             st["recent"] = (st.get("recent", [])[-19:] + [1 if win else 0])   # rolling window for decay
+
+    # ---- Catalyst graduation (EDGE_MASTERPROMPT): a catalyst's forward ledger must PROVE alpha
+    # before live conviction entries flow to it. Judged on the catalyst-level agg (resolved
+    # out-of-sample outcomes only) against the live field rate — one graduated catalyst = one
+    # real, provable edge. 'unknown' is the discovery pool: never graduates, never killed.
+    GRAD_MIN_N = 30
+    DEAD_MIN_N = 50
+
+    def _cat_stats(self, catalyst: str) -> dict | None:
+        st = self.agg.get(catalyst)
+        return st if st and st.get("trades") else None
+
+    def catalyst_graduated(self, catalyst: str) -> bool:
+        if not catalyst or catalyst == "unknown":
+            return False
+        st = self._cat_stats(catalyst)
+        return bool(st and st["trades"] >= self.GRAD_MIN_N
+                    and _wilson_lower(st["wins"], st["trades"]) > self.field())
+
+    def catalyst_dead(self, catalyst: str) -> bool:
+        """Conservatively worse than the field at real n — stop pouring explore budget into it."""
+        if not catalyst or catalyst == "unknown":
+            return False
+        st = self._cat_stats(catalyst)
+        return bool(st and st["trades"] >= self.DEAD_MIN_N
+                    and _wilson_upper(st["wins"], st["trades"]) < self.field() - 0.05)
+
+    def graduation_report(self) -> dict:
+        out = {"graduated": [], "pending": [], "dead": []}
+        # agg holds both 'catalyst|families' and bare 'catalyst' keys — only the bare ones count here
+        for cat, st in self.agg.items():
+            if "|" in cat or cat == "unknown" or not st.get("trades"):
+                continue
+            row = f"{cat} {st['wins']}/{st['trades']}"
+            if self.catalyst_graduated(cat):
+                out["graduated"].append(row)
+            elif self.catalyst_dead(cat):
+                out["dead"].append(row)
+            else:
+                out["pending"].append(row)
+        return out
 
     def report(self, k: int = 5) -> dict:
         rows = [{"sig": s, "n": v["trades"], "win": round(v["wins"] / v["trades"], 2),

@@ -117,7 +117,12 @@ catalysts:
   gov_contract:      {prior: 1.05, hold_days: 5,  stop_pct: 8, target_pct: 12}
   activist_stake:    {prior: 1.10, hold_days: 10, stop_pct: 8, target_pct: 15}
   insider_cluster:   {prior: 1.00, hold_days: 10, stop_pct: 8, target_pct: 12}
-  ai_quantum_breakout: {prior: 0.95, hold_days: 3, stop_pct: 8, target_pct: 12}
+  # demand_surge: the alt-data exclusives (Steam/app-rank/reviews/downloads/web traffic) are THESIS
+  # signals — weekly diffusion, not event pops — so they get a thesis-length hold, not the 5d default.
+  demand_surge:      {prior: 1.05, hold_days: 15, stop_pct: 10, target_pct: 18}
+  # retired: theme momentum is fast + maximally crowded (the race we lose); hint no longer emitted,
+  # entry kept so stored patterns/ledgers still resolve.
+  ai_quantum_breakout: {prior: 0.85, hold_days: 3, stop_pct: 8, target_pct: 12}
 
 # ---- Hard risk law (enforced OUTSIDE the model — the bot cannot reason past these) ----
 risk:
