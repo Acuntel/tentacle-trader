@@ -69,7 +69,8 @@ class AppStoreReviewSource(Source):
                     source=self.key, weight=self.weight(), ts=now_ts(), tickers=[tk],
                     headline=f"{tk} app engagement up — {name} reviews {old:,}→{count:,} "
                              f"(rating {rating:.1f}★)",
-                    url="https://apps.apple.com", strength=min(1.8, 0.5 + (count / old - 1) * 5)))
+                    url="https://apps.apple.com", catalyst_hint="demand_surge",
+                    strength=min(1.8, 0.5 + (count / old - 1) * 5)))
             prev[name] = count
         _save(self.PATH, prev)
         return out
@@ -121,7 +122,8 @@ class CloudflareRadarSource(Source):
                 out.append(RawSignal(
                     source=self.key, weight=self.weight(), ts=now_ts(), tickers=[DOMAINS[dom]],
                     headline=f"{DOMAINS[dom]} web traffic rising — {dom} Cloudflare rank {old:,}→{rank:,}",
-                    url="https://radar.cloudflare.com", strength=min(1.8, 0.6 + (old - rank) / old)))
+                    url="https://radar.cloudflare.com", catalyst_hint="demand_surge",
+                    strength=min(1.8, 0.6 + (old - rank) / old)))
             prev[dom] = rank
         _save(self.PATH, prev)
         return out

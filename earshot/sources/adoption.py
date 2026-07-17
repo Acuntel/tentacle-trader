@@ -30,7 +30,8 @@ DOCKER = {"library/elasticsearch": "ESTC", "library/mongo": "MDB", "confluentinc
 def _emit(key, weight, tk, label, old, new, growth):
     return RawSignal(source=key, weight=weight, ts=now_ts(), tickers=[tk],
                      headline=f"{tk} dev adoption rising — {label} {old:,}→{new:,} (+{growth:.0%})",
-                     url="https://pypistats.org", strength=min(2.0, 0.6 + growth * 3))
+                     url="https://pypistats.org", catalyst_hint="demand_surge",
+                     strength=min(2.0, 0.6 + growth * 3))
 
 
 class PyPiDownloadsSource(Source):

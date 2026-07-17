@@ -433,6 +433,12 @@ class Earshot:
             print("  patterns learned — best:", [f"{r['sig']}={r['win']}({r['n']})" for r in prep["best"][:3]])
             if prep["worst"]:
                 print("    vetoed/weak:", [f"{r['sig']}={r['win']}({r['n']})" for r in prep["worst"][:3]])
+        # EDGE doctrine headline: graduated catalysts = proven, live-eligible edges. This — not the
+        # pooled Brier — is the honest "is it working?" gauge.
+        grad = self.learner.patterns.graduation_report()
+        print(f"  catalyst graduation — LIVE-ELIGIBLE: {grad['graduated'] or 'none yet'}"
+              f"  |  pending: {grad['pending'][:6] or '—'}"
+              f"{('  |  dead: ' + str(grad['dead'])) if grad['dead'] else ''}")
 
         # 7) SELF-REVIEW — diagnose its own behaviour and recommend (auto-apply the safe) fixes
         every = max(1, int(self.review.get("every_cycles", 240)))

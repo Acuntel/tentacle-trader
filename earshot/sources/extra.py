@@ -104,10 +104,23 @@ class UsaSpendingSource(Source):
             aid = a.get("Award ID") or f"{name}|{amt}"
             if tk and amt >= 50_000_000 and not self.seen.seen(aid):
                 self.seen.add(aid)
+                # RELATIVE surprise (EDGE doctrine): a $50M award to a $100M-cap company is a
+                # thesis; $2B to Lockheed is a rounding error. Absolute dollars only as fallback
+                # when fundamentals aren't cached. fundamentals.read is 6h-cached (new awards
+                # are seen-gated, so this stays cheap).
+                from .. import fundamentals
+                mc = ((fundamentals.read(tk) or {}).get("market_cap") or 0)
+                if mc > 0:
+                    strength = min(2.0, 0.5 + 8.0 * (amt / mc))
+                    pct = f" ({amt / mc:.0%} of mktcap)"
+                else:
+                    strength = min(2.0, 0.6 + amt / 1e9)
+                    pct = ""
                 out.append(RawSignal(
                     source=self.key, weight=self.weight(), ts=now_ts(), tickers=[tk],
-                    headline=f"{name} federal award ${amt/1e6:.0f}M", url="https://usaspending.gov",
-                    catalyst_hint="gov_contract", strength=min(2.0, 0.6 + amt / 1e9),
+                    headline=f"{name} federal award ${amt/1e6:.0f}M{pct}",
+                    url="https://usaspending.gov",
+                    catalyst_hint="gov_contract", strength=strength,
                 ))
         return out
 

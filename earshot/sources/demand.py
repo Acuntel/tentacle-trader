@@ -92,7 +92,8 @@ class AppStoreDemandSource(Source):
                 out.append(RawSignal(
                     source=self.key, weight=self.weight(), ts=now_ts(), tickers=[tk],
                     headline=f"{tk} app demand rising — App Store rank {old or '—'}→#{rank}",
-                    url="https://apps.apple.com", strength=min(2.0, 0.6 + max(climb, 25 - rank) / 30)))
+                    url="https://apps.apple.com", catalyst_hint="demand_surge",
+                    strength=min(2.0, 0.6 + max(climb, 25 - rank) / 30)))
         # AUDIT FIX: MERGE into the baseline like the steam/github siblings — writing the rebuilt dict
         # wiped every baseline whenever a fetch failed (both feeds erroring saved {}), and each name
         # then re-fired as a fresh "rank<=25" discovery on the next good poll.
@@ -141,7 +142,8 @@ class SteamDemandSource(Source):
                 out.append(RawSignal(
                     source=self.key, weight=self.weight(), ts=now_ts(), tickers=[tk],
                     headline=f"{tk} usage surge — {name} concurrent players {old:,}→{n:,} on Steam",
-                    url="https://steamdb.info", strength=min(2.0, 0.6 + (n / max(old, 1) - 1))))
+                    url="https://steamdb.info", catalyst_hint="demand_surge",
+                    strength=min(2.0, 0.6 + (n / max(old, 1) - 1))))
             prev[appid] = n
         _save(self.PATH, prev)
         return out
@@ -182,7 +184,8 @@ class GithubActivitySource(Source):
                 out.append(RawSignal(
                     source=self.key, weight=self.weight(), ts=now_ts(), tickers=[tk],
                     headline=f"{tk} developer adoption — {repo} stars {old:,}→{stars:,}",
-                    url=f"https://github.com/{repo}", strength=min(1.5, 0.5 + (stars - old) / 500)))
+                    url=f"https://github.com/{repo}", catalyst_hint="demand_surge",
+                    strength=min(1.5, 0.5 + (stars - old) / 500)))
             prev[repo] = stars
         _save(self.PATH, prev)
         return out

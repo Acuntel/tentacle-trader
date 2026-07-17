@@ -23,7 +23,8 @@ class Catalyst(str, Enum):
     GOV_CONTRACT = "gov_contract"
     ACTIVIST_STAKE = "activist_stake"
     INSIDER_CLUSTER = "insider_cluster"
-    AI_QUANTUM_BREAKOUT = "ai_quantum_breakout"
+    AI_QUANTUM_BREAKOUT = "ai_quantum_breakout"   # retired hint (kept for stored patterns)
+    DEMAND_SURGE = "demand_surge"                 # alt-data usage/adoption surge — thesis hold
     UNKNOWN = "unknown"
 
 

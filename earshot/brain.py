@@ -36,6 +36,16 @@ FAMILY = {
     "discord": "social", "telegram": "social",
 }
 
+# EDGE_MASTERPROMPT family doctrine — edge = information x (1 - competition).
+# TRIGGER families carry slow-diffusion information whose half-life (days-weeks) dwarfs our
+# ~30-min latency; a conviction setup MUST contain at least one. CONFIRM families (news,
+# attention, onchain, other) corroborate but can never anchor a setup — fast news alone is a
+# race we structurally lose. ANTI families measure COMPETITION: they never count toward
+# confirmation and their presence penalizes the score (every learner-vetoed pattern contains
+# +social — when the crowd confirms, we're late).
+TRIGGER_FAMILIES = {"filing", "regulatory", "surprise", "demand", "flow", "alt"}
+ANTI_FAMILIES = {"social", "crowd"}
+
 KEYWORDS = {
     Catalyst.EARNINGS_BEAT: ("beats", "tops estimate", "raises guidance", "record revenue",
                              "raises full-year", "earnings beat", "smashes"),
@@ -160,10 +170,15 @@ class Brain:
                 ccfg = self.core.rule(catalyst.value, ccfg)
 
             # only spend a yfinance price call on candidates that could ACTUALLY qualify
-            # (>= min sources AND min families) — at 10k tentacles this prevents a Yahoo ban
-            families = {FAMILY.get(s, "other") for s in per_source}
+            # (>= min sources AND min families) — at 10k tentacles this prevents a Yahoo ban.
+            # Doctrine: ANTI families are stripped from the confirmation count, and >=1 TRIGGER
+            # family is required (trigger-less multi-family names fall to the near-miss lane).
+            all_families = {FAMILY.get(s, "other") for s in per_source}
+            anti_n = sum(1 for s in per_source if FAMILY.get(s, "other") in ANTI_FAMILIES)
+            families = all_families - ANTI_FAMILIES
             qualifies = (len(per_source) >= self.conv["min_independent_sources"]
-                         and len(families) >= self.conv.get("min_families", 1))
+                         and len(families) >= self.conv.get("min_families", 1)
+                         and bool(families & TRIGGER_FAMILIES))
             learn_scope = qualifies
             if (not qualifies and nearmiss_used < nearmiss_budget
                     and len(per_source) >= self.conv["min_independent_sources"]):
@@ -178,12 +193,19 @@ class Brain:
                 score *= 0.85
             elif "risk_on" in self.macro:
                 score *= 1.05
-            # learned PATTERN recognition: amplify proven setups, set data-driven profit target
+            # crowding penalty: social/crowd presence = competition already on the trade
+            if anti_n:
+                score *= max(0.70, 1.0 - 0.08 * anti_n)
+            # learned PATTERN recognition: amplify proven setups, set data-driven profit target.
+            # Signatures keep the FULL family set (incl. social) so the learner still sees crowd
+            # presence as a pattern feature — and old stored signatures stay comparable.
             target, sig = ccfg["target_pct"], ""
             if self.patterns is not None:
-                sig = self.patterns.signature(catalyst.value, families, self.macro)
+                sig = self.patterns.signature(catalyst.value, all_families, self.macro)
                 score *= self.patterns.multiplier(sig)
                 target = self.patterns.suggested_target(sig, ccfg["target_pct"])
+                if self.patterns.catalyst_graduated(catalyst.value):
+                    score *= 1.10               # a PROVEN forward ledger earns extra conviction
 
             # PRICE ACTION (candlesticks + RSI/trend) decides the TIMING — only for names that already
             # cleared the catalyst gate, so we never price-scan the whole fleet (anti-ban).
@@ -202,6 +224,10 @@ class Brain:
                 fmult, fund_notes = fundamentals.entry_read(tk, self.fund)
                 score *= fmult                              # squeeze fuel boosts, zombie quality shrinks
                 feats = fundamentals.features(tk)
+                # under-covered is where slow diffusion lives: a micro-cap WITH real slow
+                # information gets a tilt (risk law — price/liquidity floors — untouched)
+                if feats.get("micro_cap") and (families & TRIGGER_FAMILIES):
+                    score *= 1.06
             if self.core is not None:                  # calibration: scale conviction to realized win-rate
                 score *= self.core.calib_factor(score)
             score = max(0.0, min(100.0, score))
@@ -214,6 +240,8 @@ class Brain:
                 f"catalyst={catalyst.value}, macro={self.macro or 'n/a'}, pattern={sig or 'new'}",
                 f"take-profit {target}% / stop {ccfg['stop_pct']}%",
             ]
+            if anti_n:
+                reasons.append(f"crowding: {anti_n} social/crowd source(s) — penalized, not confirming")
             if tech_notes:
                 reasons.append("price action: " + " | ".join(tech_notes))
             if opt_notes:
@@ -331,6 +359,9 @@ class Brain:
             sig = getattr(c, "_signature", "")
             if self.patterns is not None and (self.patterns.is_loser(sig) or self.patterns.is_decayed(sig)):
                 continue
+            # a DEAD catalyst (conservatively below the field at n>=50) stops earning explore budget
+            if self.patterns is not None and self.patterns.catalyst_dead(c.catalyst.value):
+                continue
             elig.append(c)
         # most informative first: uncertainty closest to a coin-flip teaches the most
         elig.sort(key=lambda c: getattr(c, "_uncertainty", 0.5), reverse=True)
@@ -393,6 +424,12 @@ class Brain:
         #      learner gathers the labeled outcomes that prove (or kill) them. In live they bite. ----
         if self.explore:
             return True, "shadow-explore: cleared hard safety (soft filters logged, not enforced)"
+
+        # ---- LIVE only: conviction capital flows ONLY to catalysts whose forward ledger has PROVEN
+        #      alpha (graduation). Shadow explores everything so pending catalysts can earn it. ----
+        if self.patterns is not None and not self.patterns.catalyst_graduated(c.catalyst.value):
+            return False, (f"catalyst '{c.catalyst.value}' not graduated — needs n>="
+                           f"{self.patterns.GRAD_MIN_N} forward outcomes with Wilson-lower > field")
 
         # ---- SOFT in live only: don't buy into a bearish reversal at the highs (timing). In shadow we
         #      explore through it so it actually trades + LEARNS whether that timing loses. ----
