@@ -40,8 +40,12 @@ thesis; a $2B award to Lockheed is a rounding error.
 
 ## The catalyst graduation ladder (how an edge gets PROVEN, per family)
 
-Every catalyst keeps a forward ledger (patterns_agg, catalyst level — resolved out-of-sample
-outcomes only). Judged against the live field rate (~0.34 alpha-win base):
+Every catalyst keeps a FORWARD-ONLY ledger (`patterns_grad`, catalyst level) that started
+counting at doctrine ship-time (2026-07-17). The lifetime `patterns_agg` is NOT evidence here:
+it mixes label eras (pre-de-pollution, pre-base-rate-anchor) against today's field EMA — on
+day one it read every thesis catalyst as dead, which would have cut their explore budget. Only
+outcomes the CURRENT configuration produced count for or against it. Judged against the live
+field rate:
 
 - **GRADUATED** — n ≥ 30 AND Wilson-lower(win rate) > field rate. Live conviction entries are
   restricted to graduated catalysts only; in shadow, graduated catalysts get a score boost.

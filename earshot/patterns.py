@@ -72,6 +72,12 @@ class PatternMemory:
         self.know = know
         self.p = know.setdefault("patterns", {})        # exact signature -> stats (persisted)
         self.agg = know.setdefault("patterns_agg", {})  # HIERARCHICAL backoff levels (catalyst / +families)
+        # FORWARD-ONLY graduation ledger (EDGE doctrine): catalyst -> stats counted from doctrine
+        # ship-time (2026-07-17) onward. The lifetime agg mixes label eras (pre-de-pollution, pre-
+        # base-rate-anchor) against TODAY's field EMA — judging graduation on it marked every thesis
+        # catalyst dead on day one and would have cut their explore budget. Only outcomes the CURRENT
+        # configuration produced count as evidence for or against it.
+        self.grad = know.setdefault("patterns_grad", {})
 
     @staticmethod
     def signature(catalyst: str, families, macro: str = "") -> str:
@@ -167,6 +173,12 @@ class PatternMemory:
                 st["wins"] += 1
                 st["sum_win_ret"] += pnl_pct
             st["recent"] = (st.get("recent", [])[-19:] + [1 if win else 0])   # rolling window for decay
+        # forward graduation ledger: catalyst-level, current-configuration outcomes only
+        if not sig.startswith(("sim_", "study_")):
+            g = self.grad.setdefault(sig.split("|")[0], {"trades": 0, "wins": 0})
+            g["trades"] += 1
+            if win:
+                g["wins"] += 1
 
     # ---- Catalyst graduation (EDGE_MASTERPROMPT): a catalyst's forward ledger must PROVE alpha
     # before live conviction entries flow to it. Judged on the catalyst-level agg (resolved
@@ -176,7 +188,7 @@ class PatternMemory:
     DEAD_MIN_N = 50
 
     def _cat_stats(self, catalyst: str) -> dict | None:
-        st = self.agg.get(catalyst)
+        st = self.grad.get(catalyst)
         return st if st and st.get("trades") else None
 
     def catalyst_graduated(self, catalyst: str) -> bool:
@@ -196,9 +208,8 @@ class PatternMemory:
 
     def graduation_report(self) -> dict:
         out = {"graduated": [], "pending": [], "dead": []}
-        # agg holds both 'catalyst|families' and bare 'catalyst' keys — only the bare ones count here
-        for cat, st in self.agg.items():
-            if "|" in cat or cat == "unknown" or not st.get("trades"):
+        for cat, st in self.grad.items():
+            if cat == "unknown" or not st.get("trades"):
                 continue
             row = f"{cat} {st['wins']}/{st['trades']}"
             if self.catalyst_graduated(cat):
