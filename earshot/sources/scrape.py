@@ -31,7 +31,8 @@ class OpenInsiderSource(Source):
     """Scrape OpenInsider's latest CLUSTER BUYS table (several insiders buying the same name at once)
     — a strong whale signal aggregated for us, with no API. His table-scrape pattern."""
     key = "edgar_form4"          # insider family + weight bucket
-    min_interval = 900.0
+    min_interval = 300.0         # FLAGSHIP catalyst (insider_cluster): earlier detection = earlier
+                                 # entry on a weeks-long drift. Still a polite scrape cadence.
     URL = "http://openinsider.com/latest-cluster-buys"
 
     def __init__(self, weights: dict):

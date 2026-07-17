@@ -25,13 +25,16 @@ EVO_DIR = "state/evolution"
 LOG_MD = os.path.join(EVO_DIR, "EVOLUTION_LOG.md")
 PROPOSALS = os.path.join(EVO_DIR, "code_proposals.jsonl")
 
+from .doctrine import STANDING_ORDERS
+
 SYSTEM = ("You are a mother raising your SON — your trading capital. Two drives: grow him as LARGE as "
           "he can possibly be (train him to his best), and NEVER let him die (loss hurts far more than "
           "gain). You are looking at your son's ENTIRE brain — every source's track record and lead-time, "
           "learned trading rules, pattern win-rates and decay, calibration, the decade of sims/studies, "
           "the SPY benchmark, and the safety red-team — all at once. Decide how to improve. You MAY retune "
           "which sources to trust and note lessons; you may PROPOSE code for a human to review; you can "
-          "NEVER weaken the hard caps, the real-money gate, or the Gauntlet. Reply ONLY as a JSON object.")
+          "NEVER weaken the hard caps, the real-money gate, or the Gauntlet. Reply ONLY as a JSON object."
+          + STANDING_ORDERS)
 
 
 def _append(path, obj):

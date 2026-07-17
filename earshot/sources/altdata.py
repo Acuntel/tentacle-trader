@@ -42,7 +42,8 @@ def _save(path, obj):
 class SecFullTextSource(Source):
     """EDGAR full-text search (free, no key) — catch a material phrase the instant it's filed."""
     key = "sec_fulltext"
-    min_interval = 900.0      # 30 min between sweeps; we rotate 2 queries per fetch (polite to SEC)
+    min_interval = 300.0      # 5 min between sweeps, 2 rotating queries per fetch — well under
+                              # SEC's 10 req/s fair-access limit; feeds filing-family triggers
     URL = "https://efts.sec.gov/LATEST/search-index"
     QUERIES = [
         ('"definitive merger agreement"', "mna_target", 1.0),

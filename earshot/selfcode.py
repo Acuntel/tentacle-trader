@@ -134,6 +134,8 @@ def record_ci_change(patches: list, kind: str, title: str, why: str | None = Non
     _append(CI_LEDGER, rec)
     return rec
 
+from .doctrine import STANDING_ORDERS
+
 SYSTEM = ("You improve an autonomous trading bot's own Python source. Propose ONE small, safe, "
           "concrete change that fixes a bug or measurably improves it. You may NOT weaken the hard "
           "risk caps, the real-money gate, or the Gauntlet. "
@@ -143,7 +145,7 @@ SYSTEM = ("You improve an autonomous trading bot's own Python source. Propose ON
           "behavior is a failure, not a win. Reply ONLY as JSON: "
           '{"file": "earshot/<name>.py", "find": "<exact snippet present once>", '
           '"replace": "<the improved snippet>", "why": "<one sentence incl. the call site>"}. '
-          "Keep `find` short and unique; `replace` must be valid Python.")
+          "Keep `find` short and unique; `replace` must be valid Python." + STANDING_ORDERS)
 
 # Target priority (Brady's law for the self-coder):
 #   1. FIX WHAT'S WRONG — a module the auditor flagged BROKEN jumps the whole queue.

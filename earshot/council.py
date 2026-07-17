@@ -35,6 +35,8 @@ HIVE_LOG = os.path.join(EVO_DIR, "hive.jsonl")
 PKG = os.path.dirname(__file__)
 LOCKED = {"risk.py", "executor.py", "backtest.py"}        # the rails — never self-edit
 
+from .doctrine import STANDING_ORDERS
+
 COORD_SYS = (
     "You are the COORDINATOR of an autonomous (still PRACTICE-mode) trading bot's self-improvement hive. "
     "Given the bot's brain, its recent work, a BACKLOG of past ideas worth reviving, past LESSONS/mistakes, "
@@ -44,7 +46,7 @@ COORD_SYS = (
     "find_source|request_tool|design_strategy\",\"spec\":\"<for improve_code: ONE earshot/*.py filename to "
     "harden; otherwise a short concrete description>\",\"why\":\"<evidence-based reason, cite the data>\","
     "\"priority\":0-100}]}. Be concrete, safe, non-duplicative. You may NOT touch risk caps, the money gate, "
-    "or the Gauntlet.")
+    "or the Gauntlet." + STANDING_ORDERS)
 CODER_SYS = (
     "You improve an autonomous trading bot's own Python source. Propose ONE small, safe, concrete change "
     "to the given file that fixes a bug or measurably improves it. You may NOT weaken the hard risk caps, "
@@ -70,7 +72,7 @@ STRAT_SYS = (
     "\"style\":\"momentum|breakout|pullback\", \"min_move\":1-15 (trigger day-move %), \"stop\":3-15, "
     "\"target\":5-30, \"hold\":1-15 (days), \"uptrend\":true|false (require price>SMA50), "
     "\"rationale\":\"...\"}. Long-only, hold>=1 day, no options/shorts/leverage. Be realistic; no "
-    "promises of guaranteed profit.")
+    "promises of guaranteed profit." + STANDING_ORDERS)
 
 
 def _json(txt):
