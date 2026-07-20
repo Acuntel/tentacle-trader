@@ -177,7 +177,7 @@ class Learner:
             if self.lgate is not None and p.get("lgate_features"):
                 fd = dict(p["lgate_features"])
                 df = float(d)
-                fd["dir_long"] = df                              # signed: +1 long / -1 short
+                fd["dir_long"] = df; fd["dirx_tech"] = df * fd.get("t_bias", 0.0); fd["dirx_opt"] = df * fd.get("opt_bias", 0.0)                              # signed: +1 long / -1 short
                 fd["dirx_tech"] = df * fd.get("t_bias", 0.0)     # side x timing signals — lets the
                 fd["dirx_opt"] = df * fd.get("opt_bias", 0.0)    # model learn WHICH side the evidence
                 fd["dirx_down"] = df * fd.get("downtrend", 0.0)  # actually supports
