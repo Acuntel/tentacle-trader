@@ -1,0 +1,11 @@
+{
+  "id": "A0132",
+  "title": "code change in coach.py",
+  "patches": [
+    {
+      "file": "earshot/coach.py",
+      "find": "good = (db < -0.003) or (dh is not None and dh > 0.5)",
+      "replace": "good = (db < -0.003) or (dh is not None and dh > 0.5 and (tr1 - tr0) >= 5)"
+    }
+  ]
+}
