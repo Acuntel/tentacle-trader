@@ -1,0 +1,11 @@
+{
+  "id": "A0133",
+  "title": "code change in selfreview.py",
+  "patches": [
+    {
+      "file": "earshot/selfreview.py",
+      "find": "if prec < max(0.15, fld - 0.08) and avg <= 0:",
+      "replace": "if prec < max(0.15, fld - 0.08) and avg <= 0 and n >= 10:"
+    }
+  ]
+}
