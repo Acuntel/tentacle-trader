@@ -232,6 +232,11 @@ class Brain:
                 score *= self.core.calib_factor(score)
             score = max(0.0, min(100.0, score))
 
+            # LEARNING VELOCITY: emit near-miss candidates for labeling even when they won't trade
+            if not qualifies and nearmiss_used < nearmiss_budget and len(per_source) >= self.conv["min_independent_sources"]:
+                nearmiss_used += 1
+                learn_scope = True
+
             eff_families = len(families) + (1 if opt_confirm else 0)
             reasons = [
                 f"{len(per_source)} sources / {eff_families} families "
