@@ -6,3 +6,5 @@ state/
 dungeon/
 .git/
 *.log
+.claude/
+docs/
