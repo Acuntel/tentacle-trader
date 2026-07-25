@@ -206,6 +206,24 @@ class PatternMemory:
         return bool(st and st["trades"] >= self.DEAD_MIN_N
                     and _wilson_upper(st["wins"], st["trades"]) < self.field() - 0.05)
 
+    def catalyst_explore_slots(self, catalyst: str, base: int, unknown_slots: int = 1) -> int:
+        """Per-cycle explore budget for a catalyst — keep buying samples of what wins, starve what
+        loses (ledger-driven, 2026-07-25). Graduated catalysts earn extra sampling; a catalyst
+        LAGGING the field at real n keeps a heartbeat (it may come back) but stops flooding; dead
+        keeps zero (learning_picks already blocks it). `unknown` is the discovery pool and gets
+        only the configured trickle — at 640/1210 explore trades and −11.4%/trade it was the
+        single biggest drag on the pooled ledger, drowning the real per-catalyst edges."""
+        if not catalyst or catalyst == "unknown":
+            return unknown_slots
+        if self.catalyst_dead(catalyst):
+            return 0
+        if self.catalyst_graduated(catalyst):
+            return base + 2
+        st = self._cat_stats(catalyst)
+        if st and st["trades"] >= self.DEAD_MIN_N and (st["wins"] / st["trades"]) < self.field():
+            return max(1, base // 4)
+        return base
+
     def graduation_report(self) -> dict:
         out = {"graduated": [], "pending": [], "dead": []}
         for cat, st in self.grad.items():

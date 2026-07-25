@@ -151,6 +151,62 @@ class ClinicalTrialsSource(Source):
         return out
 
 
+class FdaApprovalsSource(Source):
+    """Drugs@FDA (openFDA): ORIGINAL new-drug approvals, straight from the regulator. The sharpest
+    free primary for the fda_approval catalyst — the family the forward ledger harvests best
+    (60% explore win, +1.1%/trade, 2026-07-25). ClinicalTrials (key 'fda') sees the PIPELINE;
+    this sees the APPROVAL EVENT itself, often before the sponsor's press release ripples through
+    the news tentacles. Endpoint verified 2026-07-25 (186 July approval actions, updated daily).
+    Emit-once via SeenSet; supplemental approvals (label changes) are skipped as noise.
+    NOTE: openFDA's search matches at the RECORD level, so the date/status filter here only
+    shortlists — the real per-SUBMISSION filter (AP + ORIG + in-window) happens in the loop."""
+    key = "fda_approvals"
+    min_interval = 1800.0
+
+    def __init__(self, weights: dict):
+        super().__init__(weights)
+        self.seen = SeenSet("fda_approvals")
+
+    def fetch(self) -> list[RawSignal]:
+        now = datetime.datetime.now(datetime.timezone.utc)
+        since = (now - datetime.timedelta(days=10)).strftime("%Y%m%d")
+        until = now.strftime("%Y%m%d")
+        r = requests.get(
+            "https://api.fda.gov/drug/drugsfda.json",
+            params={"search": ("submissions.submission_status:AP AND "
+                               f"submissions.submission_status_date:[{since} TO {until}]"),
+                    "limit": 100},
+            timeout=TIMEOUT)
+        out: list[RawSignal] = []
+        for rec in (r.json().get("results") or []):
+            sponsor = rec.get("sponsor_name", "")
+            tk = _map(sponsor, PHARMA_TICKER) or resolve_name(sponsor)
+            if not tk:
+                continue                       # private/foreign sponsor — no tradeable read-through
+            appl = rec.get("application_number", "")
+            brands = (rec.get("openfda") or {}).get("brand_name") or []
+            brand = brands[0] if brands else ""
+            for sub in rec.get("submissions") or []:
+                if sub.get("submission_status") != "AP" or sub.get("submission_type") != "ORIG":
+                    continue
+                d = sub.get("submission_status_date") or ""
+                if not (since <= d <= until):
+                    continue
+                dedup = f"{appl}|{sub.get('submission_number')}"
+                if self.seen.seen(dedup):
+                    continue
+                self.seen.add(dedup)
+                pri = (sub.get("review_priority") or "").upper() == "PRIORITY"
+                out.append(RawSignal(
+                    source=self.key, weight=self.weight(), ts=now_ts(), tickers=[tk],
+                    headline=(f"FDA approves {sponsor} {brand or appl} — original approval"
+                              f"{' (priority review)' if pri else ''}"),
+                    url="https://www.accessdata.fda.gov/scripts/cder/daf/",
+                    catalyst_hint="fda_approval", strength=1.2 if pri else 1.0,
+                ))
+        return out
+
+
 class Berkshire13FSource(Source):
     """Track Buffett: emit Berkshire's reported holdings on a NEW 13F (position-following, low weight,
     45-day lag — never a latency play). Persists last-seen accession to fire only on changes."""

@@ -29,6 +29,13 @@ class ExitEngine:
         self.tech_on = bool(self.tech.get("enabled", True))
         self.opt = cfg.get("options", {})
         self.opt_on = bool(self.opt.get("enabled", True))
+        # DRIFT DISCIPLINE (ledger-proven 2026-07-25): the reactive exits were chopping the very
+        # drift the entries hunt — 32/70 conviction closes were `technical` at −0.04% avg and only
+        # 2/70 ever reached target, while explore trades (stop/target/time only) hit target on
+        # 16/45 fda_approval setups at +6.2%. A drift catalyst needs DAYS; a daily reversal candle
+        # mid-hold is noise, not thesis-break. With this on, CLASSIFIED catalysts exit only on
+        # stop/target/trailing/time; `unknown` (the discovery pool) keeps every protective exit.
+        self.drift = bool(cfg.get("exits", {}).get("drift_discipline", True))
 
     def evaluate(self, pos: dict, price: float, bearish_tickers: set | None = None,
                  now: float | None = None) -> tuple[str | None, float]:
@@ -46,20 +53,23 @@ class ExitEngine:
             return "target", chg
         if peak_gain >= self.trail_arm_pct and drop_from_peak <= -self.trail_pct:
             return "trailing", chg
+        # Reactive exits (technicals / options tape / signal decay) fire only where they're still
+        # protective: unknown-catalyst positions, or everything when drift_discipline is off.
+        protective = (not self.drift) or (pos.get("catalyst") or "unknown") == "unknown"
         # PRICE ACTION: a fresh bearish reversal candle (overbought / trend-break) -> the move is done.
         # ARMED only after a full daily bar has COMPLETED since entry: technicals read completed
         # candles, so on entry day the "fresh" bearish pattern is YESTERDAY'S static bar — the entry
         # gate already priced it, and firing on it churned buy->exit within minutes (VRTX 8x in 1h).
-        if self.tech_on and _et_date(now) > _et_date(pos.get("entry_ts", now)):
+        if protective and self.tech_on and _et_date(now) > _et_date(pos.get("entry_ts", now)):
             should, why = technicals.exit_read(pos["ticker"], self.tech)
             if should:
                 return why, chg
         # OPTIONS TAPE: a strong bearish positioning shift on a name we hold long -> get out.
-        if self.opt_on:
+        if protective and self.opt_on:
             should, why = options.exit_read(pos["ticker"], self.opt)
             if should:
                 return why, chg
-        if bearish_tickers and pos["ticker"] in bearish_tickers:
+        if protective and bearish_tickers and pos["ticker"] in bearish_tickers:
             return "decay", chg
         if held_days >= pos.get("hold_days", 5):
             return "time", chg

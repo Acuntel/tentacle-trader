@@ -67,6 +67,11 @@ exploration:
   credit_rate: 0.10      # source-weight learning rate for a learning trade (> obs 0.05, < real trade 0.15)
   max_open: 300          # concurrent learning-position cap (uncapped vs the money book's 10)
   max_per_catalyst: 4    # WS2 diversity: cap learning trades per catalyst so the budget spreads across types
+                         #   (ledger-driven since 2026-07-25: graduated catalysts get +2, laggards get base/4)
+  unknown_per_cycle: 1   # `unknown` discovery-pool trickle. It ate 640/1210 explore trades at −11.4%/trade —
+                         #   the single biggest drag on the pooled ledger — while classified catalysts averaged +1%.
+  liquidity_floor: true  # explore only names above risk.min_price / risk.min_dollar_volume: an untradeable
+                         #   penny's label teaches a market we can never harvest (the −24% avg-loss tail)
   nearmiss_per_cycle: 8  # names with enough SOURCES but not enough FAMILIES that still get the full data
                          #   workup as LEARNING candidates (bounded; all reads cached). Conviction untouched.
 
@@ -77,6 +82,7 @@ source_weights:
   edgar_13d: 1.00
   newswire: 1.00
   fda: 0.90
+  fda_approvals: 0.95
   index_inclusion: 0.90
   gov_contract: 0.85
   alpaca_news: 0.80
@@ -184,6 +190,8 @@ sources:
   polymarket: true              # §18 crowd-forecast (often leads the news)
   usaspending: true             # §18 federal contract awards
   clinicaltrials: true          # §18 biotech trial status
+  fda_approvals: true           # Drugs@FDA ORIGINAL approvals via openFDA — the approval EVENT itself,
+                                #   sharpening the graduated fda_approval family (verified 2026-07-25)
   berkshire_13f: true           # §18 track Buffett's reported holdings (quarterly, low weight)
   openinsider: true             # SCRAPED whale signal — OpenInsider cluster buys (no API)
   nasdaq_halts: true            # NEW tentacle — Nasdaq trading halts/resumptions (volatility catalyst)
@@ -222,6 +230,23 @@ sources:
 exits:
   trail_pct: 7.5               # give back 5% from the peak after a gain -> lock it in
   trail_arm_pct: 6.0           # only start trailing once up +4%
+  drift_discipline: true       # 2026-07-25 ledger fix: classified catalysts exit ONLY on stop/target/
+                               #   trailing/time (like explore, which harvests the drift); reactive
+                               #   technical/options/decay exits chopped 32/70 conviction trades to
+                               #   −0.04% avg and let only 2/70 reach target. `unknown` keeps them all.
+
+# ---- Trading friction (costs.py): every resolved label is debited a liquidity-tiered round trip ----
+# Shadow fills at last price assume zero spread; on small caps the real round trip is the same order
+# as the measured ~1%/trade edge. An edge that only exists gross of costs must never graduate.
+costs:
+  enabled: true
+  default_side_pct: 0.30       # cost %/side when dollar volume is unknown
+  tiers:                       # [min daily $ volume, cost %/side] — approx half-spread + slippage
+    - [500000000, 0.03]
+    - [50000000, 0.08]
+    - [10000000, 0.20]
+    - [5000000, 0.40]
+    - [0, 0.80]
 
 # ---- Analyst brain: a COMBINATION of the free LLM + the rule heuristic (both vote, then fuse) ----
 analyst:

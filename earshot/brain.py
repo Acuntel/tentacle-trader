@@ -27,8 +27,8 @@ FAMILY = {
     # as 2 independent families (fake convergence) and escaped the dossier's news dedup.
     "newswire": "news",
     "alpaca_news": "news", "finnhub": "news", "google_news": "news", "hackernews": "news",
-    "fda": "regulatory", "gov_contract": "regulatory", "index_inclusion": "regulatory",
-    "nasdaq_halts": "regulatory",
+    "fda": "regulatory", "fda_approvals": "regulatory", "gov_contract": "regulatory",
+    "index_inclusion": "regulatory", "nasdaq_halts": "regulatory",
     "polymarket": "crowd",
     "wiki_attention": "attention",
     "x_relay": "flow",
@@ -382,14 +382,32 @@ class Brain:
                 dhead = _dh
         # WS2 DIVERSITY: cap picks per catalyst so the budget spreads across setup types — every pattern
         # reaches statistical significance, instead of 20 samples of the loudest catalyst.
-        max_per_cat = int(self.cfg.get("exploration", {}).get("max_per_catalyst", 4))
+        # 2026-07-25: the cap is now LEDGER-DRIVEN (patterns.catalyst_explore_slots) — graduated
+        # catalysts earn extra sampling, laggards get a heartbeat, `unknown` gets only a trickle.
+        ecfg = self.cfg.get("exploration", {})
+        max_per_cat = int(ecfg.get("max_per_catalyst", 4))
+        unknown_slots = int(ecfg.get("unknown_per_cycle", 1))
+        liq_floor = bool(ecfg.get("liquidity_floor", True))
+        rk = self.cfg.get("risk", {})
+        min_px = float(rk.get("min_price", 2.0))
+        min_dv = float(rk.get("min_dollar_volume", 5e6))
         picks, per_cat = [], {}
         for c in elig:
             if len(picks) >= max(0, k):
                 break
             cat = c.catalyst.value
-            if per_cat.get(cat, 0) >= max_per_cat:
+            slots = (self.patterns.catalyst_explore_slots(cat, max_per_cat, unknown_slots)
+                     if self.patterns is not None else max_per_cat)
+            if per_cat.get(cat, 0) >= slots:
                 continue
+            # LEARN ONLY THE TRADEABLE UNIVERSE: an untradeable penny's label teaches a market we
+            # can never harvest — explore's −24% avg losses lived in exactly that illiquid tail.
+            # Same floors as the live risk law; both reads are TTL-cached (no extra API surface).
+            if liq_floor:
+                px = prices.last_price(c.ticker)
+                dv = prices.dollar_volume(c.ticker)
+                if (px is not None and px < min_px) or (dv is not None and dv < min_dv):
+                    continue
             if dhead is not None:
                 base = getattr(c, "_lgate_features", {}) or {}
                 p_side = {}

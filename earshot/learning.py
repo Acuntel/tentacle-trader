@@ -8,7 +8,7 @@ import time
 
 from .models import Candidate, Outcome, iso
 from .patterns import PatternMemory, field_rate, update_field_rate
-from . import prices
+from . import costs, prices
 
 OPEN_PATH = "state/open_positions.json"
 OBS_PATH = "state/observations.json"
@@ -87,6 +87,10 @@ class Learner:
                 still_open.append(p)
                 continue
             ret = max(-p["stop_pct"], min(p["target_pct"], chg))   # bound to the disciplined range
+            # FRICTION (costs.py): debit the liquidity-tiered round trip BEFORE anything learns from
+            # this trade — mastery, patterns, weights and P(win) must all be earned NET of costs.
+            rt = costs.round_trip_pct(p["ticker"])
+            ret = round(ret - rt, 3)
             # ALPHA: the trade's return MINUS the market over the same window. Skill is learned on alpha
             # (so a rising tape isn't mistaken for edge); the $ P&L / equity stay on the raw return.
             mkt = prices.market_return_since(p["entry_ts"])
@@ -100,7 +104,7 @@ class Learner:
                 pnl_usd=round(p["size_usd"] * ret / 100, 2), win=ret > 0,
                 entry_ts=p["entry_ts"], exit_ts=time.time(), sources=p["sources"],
             )
-            _append(OUTCOMES_PATH, {**outcome.to_dict(), "exit": reason, "alpha": alpha})
+            _append(OUTCOMES_PATH, {**outcome.to_dict(), "exit": reason, "alpha": alpha, "cost_pct": rt})
             mind = instinct.record(p["confidence"], ret, p["size_usd"], alpha=alpha)  # mastery on alpha
             self._learn(p, outcome, alpha)
             self.patterns.record(p.get("pattern", ""), win_a, alpha)       # learn the ALPHA pattern
@@ -165,8 +169,11 @@ class Learner:
                 still.append(p); continue
             mkt = prices.market_return_since(p["entry_ts"])
             stock_alpha = round(ret_raw - mkt, 3) if mkt is not None else round(ret_raw, 3)
-            long_win = stock_alpha > 0                          # LONG-perspective label (bookkeeping)
-            dir_alpha = round(d * stock_alpha, 3)                # did OUR side beat the market?
+            long_win = stock_alpha > 0                          # LONG-perspective label (bookkeeping, gross)
+            # FRICTION (costs.py): our side's harvestable alpha is NET of the liquidity-tiered round
+            # trip — the directional head + the explore ledger must never learn a gross-only edge.
+            rt = costs.round_trip_pct(p["ticker"])
+            dir_alpha = round(d * stock_alpha - rt, 3)           # did OUR side beat the market AFTER costs?
             # W2.4: learning-trade labels are CENSORED at direction-dependent exit times (a short's
             # stop fires at the long's max favorable excursion), so they no longer train the P(win)
             # model, patterns, or source weights — the observation pipeline already labels the SAME
@@ -187,8 +194,8 @@ class Learner:
             ex["dir_hits"] += 1 if dir_alpha > 0 else 0
             ex["sum_alpha"] = round(ex["sum_alpha"] + dir_alpha, 3)
             _append(LEARN_OUT_PATH, {"ts": iso(time.time()), "ticker": p["ticker"], "dir": d,
-                                     "exit": reason, "ret": round(dir_ret, 3), "alpha": dir_alpha,
-                                     "long_win": long_win, "sig": p.get("pattern", "")})
+                                     "exit": reason, "ret": round(dir_ret - rt, 3), "alpha": dir_alpha,
+                                     "cost": rt, "long_win": long_win, "sig": p.get("pattern", "")})
             seen = self.know.setdefault("learn_seen", {})       # W2.5: block same-day reopen churn
             seen[p["ticker"]] = iso(time.time())[:10]
             n_res += 1

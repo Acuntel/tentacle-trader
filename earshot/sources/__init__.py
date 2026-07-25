@@ -10,7 +10,8 @@ from .base import Source
 from .free import EdgarSource, ApeWisdomSource, HackerNewsSource, RssSource
 from .keyed import AlpacaNewsSource, FinnhubSource
 from .extra import (PolymarketSource, UsaSpendingSource, ClinicalTrialsSource,
-                    Berkshire13FSource, WikiAttentionSource, NasdaqHaltsSource)
+                    FdaApprovalsSource, Berkshire13FSource, WikiAttentionSource,
+                    NasdaqHaltsSource)
 from .newswire import MarketNewsSource
 from .fleet import MegaFleetSource
 from .scrape import OpenInsiderSource, HtmlScraperSource
@@ -42,6 +43,8 @@ def build_sources(cfg: dict, weights: dict) -> list[Source]:
         out.append(UsaSpendingSource(weights))
     if s.get("clinicaltrials"):
         out.append(ClinicalTrialsSource(weights))
+    if s.get("fda_approvals"):
+        out.append(FdaApprovalsSource(weights))   # Drugs@FDA original approvals — the event itself
     if s.get("berkshire_13f"):
         out.append(Berkshire13FSource(weights, ua))
     if s.get("openinsider"):

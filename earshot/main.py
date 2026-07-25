@@ -25,6 +25,7 @@ from .scout import SourceScout
 from .daily import DailyGuard
 from .exits import ExitEngine
 from .macro import MacroMonitor
+from . import costs
 from .enrich import EnrichmentEngine
 from .selfreview import SelfReview
 from .analyst import Analyst
@@ -92,6 +93,7 @@ class Earshot:
         self.scout = SourceScout(self.learner.know, self.weights)
         self.daily = DailyGuard(cfg)
         self.exits = ExitEngine(cfg)
+        costs.configure(cfg)      # friction debit on every resolved label — see costs.py
         # W2.2: after a NON-stop exit a ticker is barred from re-entry for the rest of the ET trading
         # day — the daily-candle technicals that closed it are static all day, so an instant re-buy
         # just replays the same exit (VRTX churned buy+exit 8x in one hour). Persisted across restarts.
