@@ -331,14 +331,16 @@ class ApprovalQueue:
             return False
 
     # ---- the once-a-day visibility digest (auto-applied stuff, no approval) ----
-    def daily_digest(self, text: str):
+    def daily_digest(self, text: str, raw: bool = False):
+        """raw=True: text is already Telegram-HTML (report.py composes the full message,
+        header included) — don't escape or re-title it."""
         if not (self.digest_on and notify.enabled()):
             return
         day = time.strftime("%Y-%m-%d")
         if self.st["last_digest_day"] == day:
             return
         self.st["last_digest_day"] = day
-        notify.send("🐙 <b>TENTACLE daily self-report</b>\n\n" + notify.esc(text))
+        notify.send(text if raw else "🐙 <b>TENTACLE daily self-report</b>\n\n" + notify.esc(text))
         self.persist()
 
     def tool_request(self, title: str, why: str) -> bool:

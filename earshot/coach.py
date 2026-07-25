@@ -595,57 +595,20 @@ class Coach:
             self.last_summary += f"\n    🔨 FORGE (free search): {forge_r}"
         if hive_r:
             self.last_summary += f"\n    🐝 HIVE (multi-model agents spinning up tasks): {hive_r}"
-        if self.approvals is not None:                       # once/day heartbeat, in plain English
-            try:
-                stt = self.instinct.status()
-            except Exception:
-                stt = {}
-            pool = self.know.get("proposal_pool", [])
-            unsent = [p for p in pool if not p.get("sent")]
-            bar = self.proposer.min_impact if self.proposer else 60
-            passed = [p for p in unsent if p.get("impact", 0) >= bar]
-            eq = stt.get("paper_equity"); mret = stt.get("monthly_return")
-            vel = self.core.velocity(self.learner.lgate) if getattr(self.learner, "lgate", None) else {}
-            spd = vel.get("samples_per_day")
-            b7 = vel.get("brier_7d")
-            btrend = ("improving" if vel.get("learning") else
-                      "FLAT — no edge yet" if vel.get("no_edge") else "settling")
-            # THE headline Brady asked for: is it on the right path to eventually trade well?
-            m7 = vel.get("mastery_7d")
-            mtrend = f" ({m7:+.1f} this week)" if isinstance(m7, (int, float)) else ""
-            vmap = {
-                "ON TRACK": f"🧠 GETTING SMARTER? ✅ ON TRACK — mastery {vel.get('mastery_now', 0)}{mtrend} "
-                            "is measurably climbing / the practice trades are beating the market. Leave it running.",
-                "SPINNING": f"🧠 GETTING SMARTER? ⚠️ SPINNING — lots of activity, but mastery {vel.get('mastery_now', 0)}"
-                            f"{mtrend} isn't climbing and the practice trades aren't beating the market. This setup "
-                            "may be topping out below where you need it.",
-                "TOO EARLY": "🧠 GETTING SMARTER? ⏳ TOO EARLY — still gathering enough resolved trades/days to "
-                             "judge the trend honestly. Give it ~1–2 more weeks of this.",
-                "SETTLING": f"🧠 GETTING SMARTER? ➖ SETTLING — mastery {vel.get('mastery_now', 0)}{mtrend}, "
-                            "no clear up-trend yet. Watch the next few days.",
-            }
-            self.approvals.daily_digest(
-                vmap.get(vel.get("verdict", "TOO EARLY"), "") + "\n\n"
-                "Still in practice mode — no real money.\n\n"
-                "💰 MONEY GAUGES — these can ONLY move on a proven edge; reading 0 here is the design "
-                "protecting the $500, not a lack of work:\n"
-                f"• Shadow equity ${eq} (started $500)" + (f", ~{mret:+.1f}%/mo" if isinstance(mret, (int, float)) else "") +
-                f"; mastery {stt.get('mastery', rep['mastery'])}/{stt.get('needs_mastery', '?')} "
-                f"({stt.get('samples', '?')} resolved conviction trades)\n\n"
-                "📈 LEARNING GAUGES — this is where day-to-day improvement actually shows:\n"
-                f"• {vel.get('n', '?')} P(win) samples"
-                f"{f' (+{spd}/day)' if spd is not None else ''}, calibration Brier {vel.get('brier', '?')} "
-                f"({btrend}{f', 7d {b7:+.3f}' if b7 is not None else ''}); "
-                f"{vel.get('explore_trades', 0)} practice trades, dir-hit "
-                f"{round(100*vel['dir_hit']) if vel.get('dir_hit') is not None else '?'}%.\n"
-                f"• Today I retuned {syn['weights_moved']} source trust-levels and wrote {len(lessons)} new lesson(s).\n"
-                f"• Idea pipeline: considered {len(pool)}, {len(passed)} clear my confidence bar, "
-                f"{len(unsent)} queued.\n\n"
-                "🔁 SELF-IMPROVEMENT — what I changed about myself and what it measurably did:\n"
-                + self._improvement_report() + "\n"
-                + ("\n⚠️ HONEST: thousands of samples in and calibration still isn't improving — I have found "
-                   "NO real edge in this configuration yet.\n" if vel.get("no_edge") else "")
-                + f"\nHonest edge check: {honesty.get('status', 'still gathering data')[:130]}")
+        if self.approvals is not None:
+            # THE daily Telegram (Brady's 2026-07-25 spec): ONE morning-review style message —
+            # bought/sold/holding, what works, what got cut, changes, verdict. Plain English only;
+            # the old gauge-dense digest lives on in EVOLUTION_LOG.md for the deep read. Sent once,
+            # after the close of a day the market actually traded, so "today" is complete.
+            from . import market, report
+            et = market.now_et()
+            trading_day = et.weekday() < 5 and et.date() not in market.holiday_map(et.year)
+            if trading_day and et.hour >= 16:
+                try:
+                    self.approvals.daily_digest(
+                        report.compose(self.learner, self.instinct, self.core, self.cfg), raw=True)
+                except Exception as ex:
+                    print(f"  [coach] daily review failed: {ex}")
         return {"syn": syn, "rules": rules, "studies": studies, "calib": cal, "redteam": rt,
                 "benchmark": bench, "lessons": lessons, "code_proposals": code_props,
                 "new_sources": new_sources, "by": "groq+brain" if v else "brain"}

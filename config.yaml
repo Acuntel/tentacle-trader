@@ -387,15 +387,16 @@ telegram:
   shared_bot: true             # TRUE = we share Nessobot's token: SEND only, NEVER poll (Nesso owns the
                                #        getUpdates loop; two pollers 409-conflict). Sets TELEGRAM_SHARED_BOT.
                                #        FALSE = Tentacle owns a dedicated bot and polls for ✅/❌ taps itself.
-  daily_digest: true           # once/day summary of the AUTO-applied tuning (weights/lessons) — no approval
-  max_proposals_per_day: 20    # AUTONOMOUS self-changes back ON 2026-06-30 (Brady: keep the strat, run the
-                               #    whole machine hot — self-code + agents + Telegram updates flowing again).
-  min_interval_min: 20         # less pacing friction so meaningful changes actually land
-  min_impact: 40               # loosened quality bar (was 60) so it can make real changes, not just tiny ones
+  daily_digest: true           # THE channel (2026-07-25 Brady spec): ONE plain-English daily review after the
+                               #    close — bought/sold/holding, works/cut, changes, verdict (report.py)
+  max_proposals_per_day: 2     # 20->2: the idea-card stream was noise; self-changes still APPLY autonomously
+                               #    (approvals.autonomous) — only the rare big idea pings the phone now
+  min_interval_min: 120        # space the surviving cards out
+  min_impact: 60               # back to the HIGH-confidence bar — only ideas worth interrupting Brady for
   pool_refill_below: 12        # keep CONSTANTLY thinking — maintain a deep backlog of scored candidates
   min_impact_floor: 25         # absolute floor — ideas below this are never sent (junk)
-  always_send_best: true       # if nothing clears min_impact, still send the BEST idea flagged ⚠️ low-confidence
-  max_tool_requests_per_day: 3 # cap on the Hive's "I'd like a new tool" Telegram asks
+  always_send_best: false      # no more daily "best low-confidence idea" filler — the review covers the count
+  max_tool_requests_per_day: 1 # cap on the Hive's "I'd like a new tool" Telegram asks
 
 # ---- Approve/deny: an approved change is gate-tested + merged + redeployed by the apply-approved Action ----
 # Needs Railway var GITHUB_DISPATCH_TOKEN (fine-grained PAT, contents+actions write) and repo secret
