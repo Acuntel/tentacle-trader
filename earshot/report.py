@@ -184,3 +184,23 @@ def compose(learner, instinct, core, cfg: dict) -> str:
     }
     L.append(vmap.get(verdict, vmap["TOO EARLY"]))
     return "\n".join(L)[:3900]
+
+
+if __name__ == "__main__":
+    # On-demand review: `python -m earshot.report` prints it; `--send` also texts it via Telegram.
+    # Run inside the deployed container (railway ssh) to see exactly what Brady's phone gets.
+    # Bypasses the once-a-day gate on purpose — the scheduled after-close send is untouched.
+    import sys
+    import yaml
+    cfg = yaml.safe_load(open("config.yaml"))
+    from .learning import Learner
+    from .survival import MotherInstinct
+    from .core import BrainCore
+    from .learnedgate import LearnedGate
+    weights = dict(cfg["source_weights"])
+    ln = Learner(weights, priors=cfg["source_weights"])
+    ln.lgate = LearnedGate(ln.know)
+    msg = compose(ln, MotherInstinct(cfg), BrainCore(ln.know, weights, cfg), cfg)
+    print(msg)
+    if "--send" in sys.argv:
+        print("sent" if notify.send(msg) else "NOT sent (Telegram creds missing?)")
