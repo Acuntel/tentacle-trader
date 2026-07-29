@@ -172,7 +172,7 @@ class PatternMemory:
             if win:
                 st["wins"] += 1
                 st["sum_win_ret"] += pnl_pct
-            st["recent"] = (st.get("recent", [])[-29:] + [1 if win else 0])   # rolling window for decay
+            st["recent"] = (st.get("recent", [])[-49:] + [1 if win else 0])   # rolling window for decay
         # forward graduation ledger: catalyst-level, current-configuration outcomes only
         if not sig.startswith(("sim_", "study_")):
             g = self.grad.setdefault(sig.split("|")[0], {"trades": 0, "wins": 0})
