@@ -1,8 +1,9 @@
-"""The daily review — ONE Telegram message, written like a morning stock note.
+"""The daily review — ONE Telegram message, written like a firm reporting to its client.
 
-Brady's spec (2026-07-25): what was bought and sold today, a count and a plain outcome for
-every section, what's working and what isn't (and that the losers were CUT), zero jargon.
-One scan = the full picture. Anything that needs a glossary does not belong in this message.
+Brady's spec (2026-07-29, supersedes 07-25): lead with exactly four data points, one metric
+per line — account balance, amount invested, return on those investments, and what's held
+(with allocations). Then the decision rule's RESULTS: which approaches were kept because
+they're profitable and which were stopped because they aren't. Plain language, zero jargon.
 
 Composes exclusively from the real ledgers/state (never invents numbers); HTML-ready for
 notify.send. The old digest (Brier/P(win)/dir-hit language) lives on in EVOLUTION_LOG.md
@@ -63,126 +64,110 @@ def _read_jsonl(path: str, tail_bytes: int = 300_000) -> list[dict]:
         return []
 
 
+def _sign_usd(v: float) -> str:
+    return f"{'+' if v >= 0 else '−'}${abs(v):,.2f}"
+
+
 def compose(learner, instinct, core, cfg: dict) -> str:
+    """core is unused since the 07-29 format (kept for call-site compatibility)."""
     e = notify.esc
     today = _today_et()
     nice_day = market.now_et().strftime("%a %b %-d")
 
-    # ---- the book: sold today (realized), bought today, still holding ----
     sold = [o for o in _read_jsonl("state/outcomes.jsonl")
             if _et_day(o.get("exit_ts", 0)) == today]
     bought = [p for p in learner.open if _et_day(p.get("entry_ts", 0)) == today]
     bought += [o for o in sold if _et_day(o.get("entry_ts", 0)) == today]  # same-day round trips
-    holding = list(learner.open)
-
-    stt = instinct.status()
-    eq = stt.get("paper_equity", 0.0)
     day_pnl = round(sum(o.get("pnl_usd", 0.0) for o in sold), 2)
 
-    L: list[str] = [f"🐙 <b>TENTACLE — daily review · {e(nice_day)}</b>", ""]
-
-    # ---- MONEY ----
-    L.append(f"💰 <b>MONEY</b>  practice account ${eq:.0f} (started $500) · today "
-             f"{'+' if day_pnl >= 0 else '−'}${abs(day_pnl):.2f}")
-    L.append(f"Real money: $0 at risk — stays locked until it proves itself "
-             f"({stt.get('mastery', 0):.0f}/{stt.get('needs_mastery', '?')} toward unlocking the first $25).")
-    L.append("")
-
-    # ---- BOUGHT ----
-    L.append(f"🛒 <b>BOUGHT ({len(bought)})</b>")
-    if bought:
-        for p in bought[:8]:
-            L.append(f"• {e(p['ticker'])} ${p.get('size_usd', 0):.0f} — {e(_plain_cat(p.get('catalyst')))}")
-        if len(bought) > 8:
-            L.append(f"• …and {len(bought) - 8} more")
-    else:
-        L.append("• nothing — no setup was good enough today (that's discipline, not laziness)")
-    L.append("")
-
-    # ---- SOLD ----
-    L.append(f"💸 <b>SOLD ({len(sold)})</b>")
-    if sold:
-        for o in sold[:8]:
-            sign = "+" if o.get("pnl_usd", 0) >= 0 else "−"
-            L.append(f"• {e(o['ticker'])} {o.get('pnl_pct', 0):+.1f}% ({sign}${abs(o.get('pnl_usd', 0)):.2f}) "
-                     f"— {e(_plain_exit(o.get('exit', '')))}")
-        if len(sold) > 8:
-            L.append(f"• …and {len(sold) - 8} more")
-    else:
-        L.append("• nothing sold today")
-    L.append("")
-
-    # ---- HOLDING ----
-    L.append(f"📦 <b>HOLDING ({len(holding)})</b>")
-    for p in holding[:8]:
-        px = prices.last_price(p["ticker"])
-        if px and p.get("entry_price"):
-            ur = (px / p["entry_price"] - 1) * 100
-            L.append(f"• {e(p['ticker'])} {ur:+.1f}% — {e(_plain_cat(p.get('catalyst')))}")
+    # ---- mark the book to market: every number below comes from ledgers + live prices ----
+    stt = instinct.status()
+    realized_eq = stt.get("paper_equity", 0.0)             # start + all realized P&L
+    rows = []                                              # (ticker, cost, mkt_value, ret_pct|None, catalyst)
+    for p in learner.open:
+        cost = float(p.get("size_usd", 0.0))
+        px, entry = prices.last_price(p["ticker"]), p.get("entry_price")
+        if px and entry:
+            rows.append((p["ticker"], cost, cost * px / entry, (px / entry - 1) * 100, p.get("catalyst")))
         else:
-            L.append(f"• {e(p['ticker'])} — {e(_plain_cat(p.get('catalyst')))}")
-    if not holding:
-        L.append("• all cash")
+            rows.append((p["ticker"], cost, cost, None, p.get("catalyst")))
+    invested_cost = sum(r[1] for r in rows)
+    invested_mkt = sum(r[2] for r in rows)
+    total = realized_eq - invested_cost + invested_mkt     # account marked to market
+    cash = max(0.0, realized_eq - invested_cost)
+    inv_ret = (invested_mkt / invested_cost - 1) * 100 if invested_cost else 0.0
+
+    L: list[str] = [f"🐙 <b>TENTACLE — daily report · {e(nice_day)}</b>", ""]
+
+    # ---- THE FOUR NUMBERS (Brady's spec: one metric per line, nothing that needs a glossary) ----
+    L.append(f"💰 Account total: <b>${total:,.2f}</b> (practice money — started with $500).")
+    L.append(f"Invested: ${invested_mkt:,.2f} in {len(rows)} stock{'s' if len(rows) != 1 else ''} · "
+             f"Cash: ${cash:,.2f}.")
+    if rows:
+        L.append(f"Return on current investments: <b>{inv_ret:+.1f}%</b> "
+                 f"({_sign_usd(invested_mkt - invested_cost)}).")
+    else:
+        L.append("Return on current investments: nothing invested right now.")
+    L.append(f"Real dollars at risk: $0 — locked until the practice score reaches "
+             f"{stt.get('needs_mastery', '?')} (now {stt.get('mastery', 0):.0f}).")
     L.append("")
 
-    # ---- WHAT'S WORKING / NOT WORKING (forward record only; losers get their budget CUT) ----
+    # ---- WHAT YOU OWN (allocation per holding) ----
+    L.append(f"📦 <b>WHAT IT OWNS ({len(rows)})</b>")
+    for tkr, cost, mkt, ret, cat in rows[:8]:
+        pct_of = f"{mkt / total * 100:.0f}% of the account" if total > 0 else "—"
+        ret_s = f"{ret:+.1f}%" if ret is not None else "price pending"
+        L.append(f"• {e(tkr)} — ${mkt:,.0f} ({pct_of}) · {ret_s} · {e(_plain_cat(cat))}")
+    if len(rows) > 8:
+        L.append(f"• …and {len(rows) - 8} more")
+    if not rows:
+        L.append("• nothing — all cash, waiting for a setup worth buying")
+    L.append("")
+
+    # ---- TODAY'S ACTIVITY (one line each; details live in the ledger) ----
+    L.append("🛒 <b>TODAY</b>")
+    if bought:
+        L.append("Bought: " + ", ".join(f"{e(p['ticker'])} (${p.get('size_usd', 0):,.0f}, "
+                                        f"{e(_plain_cat(p.get('catalyst')))})" for p in bought[:5])
+                 + (f" +{len(bought) - 5} more" if len(bought) > 5 else "") + ".")
+    else:
+        L.append("Bought: nothing — no setup was good enough today.")
+    if sold:
+        L.append("Sold: " + ", ".join(f"{e(o['ticker'])} {o.get('pnl_pct', 0):+.1f}% "
+                                      f"({e(_plain_exit(o.get('exit', '')))})" for o in sold[:5])
+                 + (f" +{len(sold) - 5} more" if len(sold) > 5 else "")
+                 + f" · result {_sign_usd(day_pnl)}.")
+    else:
+        L.append("Sold: nothing.")
+    L.append("")
+
+    # ---- THE DECISION RULE'S RESULTS (implemented, not proposed): profitable approaches keep
+    # their budget, unprofitable ones lost theirs. Straight from the forward outcomes ledger. ----
     pm = learner.patterns
-    fld = pm.field()
-    working, cut, testing = [], [], []
+    working, stopped, testing = [], [], []
     base = int(cfg.get("exploration", {}).get("max_per_catalyst", 4))
     for cat, st in sorted(pm.grad.items(), key=lambda kv: -kv[1].get("trades", 0)):
         n = st.get("trades", 0)
         if not n:
             continue
-        w = st.get("wins", 0)
-        row = f"{e(_plain_cat(cat))}: {w} wins of {n}"
+        row = f"{e(_plain_cat(cat))}: {st.get('wins', 0)} wins of {n}"
         if cat == "unknown":
-            cut.append(f"{row} — random unclassified news lost money, budget cut to a trickle")
+            stopped.append(f"{row} — unclassified news lost money; cut to one tryout at a time")
         elif pm.catalyst_graduated(cat):
-            working.append(f"{row} — proven, gets extra budget")
+            working.append(f"{row} — profitable; kept, with extra budget")
         elif pm.catalyst_dead(cat):
-            cut.append(f"{row} — proven loser, cut entirely")
+            stopped.append(f"{row} — a proven loser; stopped entirely")
         elif pm.catalyst_explore_slots(cat, base) < base:
-            cut.append(f"{row} — losing more than the field, budget cut to a trickle")
+            stopped.append(f"{row} — losing more than average; budget cut to a trickle")
         elif n >= 20:
             testing.append(row)
-    L.append(f"✅ <b>WORKING ({len(working)})</b>")
-    L += [f"• {r}" for r in working[:5]] or ["• nothing proven yet — still earning it"]
+    L.append(f"✅ <b>WORKING — KEPT ({len(working)})</b>")
+    L += [f"• {r}" for r in working[:5]] or ["• nothing has proven itself yet — still testing"]
     L.append("")
-    L.append(f"❌ <b>NOT WORKING → CUT ({len(cut)})</b>")
-    L += [f"• {r}" for r in cut[:5]] or ["• nothing on the chopping block today"]
+    L.append(f"❌ <b>NOT WORKING — STOPPED ({len(stopped)})</b>")
+    L += [f"• {r}" for r in stopped[:5]] or ["• nothing needed cutting today"]
     if testing:
-        L.append(f"🧪 still testing: {', '.join(r.split(':')[0] for r in testing[:4])}")
-    L.append("")
-
-    # ---- CHANGES it made to itself today ----
-    changes = [c for c in (learner.know.get("self_changes") or [])
-               if _et_day(c.get("ts", 0)) == today]
-    L.append(f"🔧 <b>CHANGES TODAY ({len(changes)})</b>")
-    for c in changes[:3]:
-        L.append(f"• {e((c.get('title') or 'small self-tune')[:70])}")
-    if len(changes) > 3:
-        L.append(f"• …and {len(changes) - 3} smaller tunes")
-    if not changes:
-        L.append("• none — it left itself alone today")
-    lab = [r for r in _read_jsonl("state/learning_outcomes.jsonl", 150_000)
-           if (r.get("ts") or "")[:10] == today]
-    if lab:
-        lw = sum(1 for r in lab if r.get("alpha", 0) > 0)
-        L.append(f"🧫 practice lab: {len(lab)} experiments finished, {lw} beat the market "
-                 f"(these never touch the $500)")
-    L.append("")
-
-    # ---- VERDICT ----
-    vel = core.velocity(learner.lgate) if getattr(learner, "lgate", None) else {}
-    verdict = vel.get("verdict", "TOO EARLY")
-    vmap = {
-        "ON TRACK": "✅ VERDICT: improving — the score that unlocks real money is climbing. Leave it running.",
-        "SPINNING": "⚠️ VERDICT: busy but not improving — if this holds another week, the setup needs rethinking.",
-        "TOO EARLY": "⏳ VERDICT: too early to judge — still collecting enough finished trades.",
-        "SETTLING": "➖ VERDICT: steady, no clear trend yet — watch the next few days.",
-    }
-    L.append(vmap.get(verdict, vmap["TOO EARLY"]))
+        L.append(f"🧪 Still testing: {', '.join(r.split(':')[0] for r in testing[:4])}.")
     return "\n".join(L)[:3900]
 
 
