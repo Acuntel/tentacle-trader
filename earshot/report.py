@@ -74,8 +74,8 @@ def compose(learner, instinct, core, cfg: dict) -> str:
     today = _today_et()
     nice_day = market.now_et().strftime("%a %b %-d")
 
-    sold = [o for o in _read_jsonl("state/outcomes.jsonl")
-            if _et_day(o.get("exit_ts", 0)) == today]
+    ledger = _read_jsonl("state/outcomes.jsonl", 2_000_000)   # the whole audited book (small file)
+    sold = [o for o in ledger if _et_day(o.get("exit_ts", 0)) == today]
     bought = [p for p in learner.open if _et_day(p.get("entry_ts", 0)) == today]
     bought += [o for o in sold if _et_day(o.get("entry_ts", 0)) == today]  # same-day round trips
     day_pnl = round(sum(o.get("pnl_usd", 0.0) for o in sold), 2)
@@ -108,6 +108,25 @@ def compose(learner, instinct, core, cfg: dict) -> str:
                  f"({_sign_usd(invested_mkt - invested_cost)}).")
     else:
         L.append("Return on current investments: nothing invested right now.")
+    # Day-over-day truth: compare against the last report from a PREVIOUS day (snapshot survives
+    # multiple same-day sends), and say how much of the move was actually locked in by sales.
+    snap_path = "state/report_snapshot.json"
+    try:
+        snap = json.load(open(snap_path))
+    except Exception:
+        snap = {}
+    baseline = snap.get("prev_total") if snap.get("date") == today else snap.get("total")
+    if baseline is not None:
+        L.append(f"Change since the last report: {_sign_usd(total - float(baseline))} "
+                 f"(locked in by sales today: {_sign_usd(day_pnl)}).")
+    else:
+        L.append(f"Locked in by sales today: {_sign_usd(day_pnl)}.")
+    try:
+        json.dump({"date": today, "total": round(total, 2),
+                   "prev_date": snap.get("prev_date") if snap.get("date") == today else snap.get("date"),
+                   "prev_total": baseline}, open(snap_path, "w"))
+    except Exception:
+        pass
     L.append(f"Real dollars at risk: $0 — locked until the practice score reaches "
              f"{stt.get('needs_mastery', '?')} (now {stt.get('mastery', 0):.0f}).")
     L.append("")
@@ -135,39 +154,49 @@ def compose(learner, instinct, core, cfg: dict) -> str:
     if sold:
         L.append("Sold: " + ", ".join(f"{e(o['ticker'])} {o.get('pnl_pct', 0):+.1f}% "
                                       f"({e(_plain_exit(o.get('exit', '')))})" for o in sold[:5])
-                 + (f" +{len(sold) - 5} more" if len(sold) > 5 else "")
-                 + f" · result {_sign_usd(day_pnl)}.")
+                 + (f" +{len(sold) - 5} more" if len(sold) > 5 else "") + ".")
     else:
         L.append("Sold: nothing.")
     L.append("")
 
-    # ---- THE DECISION RULE'S RESULTS (implemented, not proposed): profitable approaches keep
-    # their budget, unprofitable ones lost theirs. Straight from the forward outcomes ledger. ----
+    # ---- THE DECISION RULE'S RESULTS, in DOLLARS (implemented, not proposed). Evidence = the
+    # book's own audited ledger — the same file equity is recomputed from. Observation labels no
+    # longer vote here (07-29 fix: they were 98.5% of the old ledger and buried the real record). ----
     pm = learner.patterns
-    working, stopped, testing = [], [], []
     base = int(cfg.get("exploration", {}).get("max_per_catalyst", 4))
-    for cat, st in sorted(pm.grad.items(), key=lambda kv: -kv[1].get("trades", 0)):
-        n = st.get("trades", 0)
-        if not n:
-            continue
-        row = f"{e(_plain_cat(cat))}: {st.get('wins', 0)} wins of {n}"
-        if cat == "unknown":
-            stopped.append(f"{row} — unclassified news lost money; cut to one tryout at a time")
-        elif pm.catalyst_graduated(cat):
-            working.append(f"{row} — profitable; kept, with extra budget")
-        elif pm.catalyst_dead(cat):
-            stopped.append(f"{row} — a proven loser; stopped entirely")
-        elif pm.catalyst_explore_slots(cat, base) < base:
-            stopped.append(f"{row} — losing more than average; budget cut to a trickle")
-        elif n >= 20:
-            testing.append(row)
-    L.append(f"✅ <b>WORKING — KEPT ({len(working)})</b>")
-    L += [f"• {r}" for r in working[:5]] or ["• nothing has proven itself yet — still testing"]
+    book: dict = {}
+    for o in ledger:
+        d = book.setdefault(o.get("catalyst") or "unknown", {"n": 0, "usd": 0.0})
+        d["n"] += 1
+        d["usd"] += o.get("pnl_usd", 0.0)
+    working, stopped, watching = [], [], []
+    for cat, d in sorted(book.items(), key=lambda kv: -kv[1]["usd"]):
+        row = f"{e(_plain_cat(cat))}: {_sign_usd(d['usd'])} over {d['n']} trade{'s' if d['n'] != 1 else ''}"
+        slots = pm.catalyst_explore_slots(cat, base)
+        if d["usd"] > 0:
+            working.append(row + (" — kept, proven, extra budget" if pm.catalyst_graduated(cat)
+                                  else " — kept"))
+        elif cat == "unknown":
+            stopped.append(row + " — capped at one tryout at a time (discovery pool)")
+        elif pm.catalyst_dead(cat) or slots == 0:
+            stopped.append(row + " — stopped entirely")
+        elif slots < base:
+            stopped.append(row + " — budget cut to a minimum until it earns it back")
+        else:
+            watching.append(f"{e(_plain_cat(cat))} ({_sign_usd(d['usd'])}, {d['n']} trades)")
+    L.append(f"✅ <b>MAKING MONEY — KEPT ({len(working)})</b>")
+    L += [f"• {r}" for r in working[:5]] or ["• none right now"]
     L.append("")
-    L.append(f"❌ <b>NOT WORKING — STOPPED ({len(stopped)})</b>")
-    L += [f"• {r}" for r in stopped[:5]] or ["• nothing needed cutting today"]
-    if testing:
-        L.append(f"🧪 Still testing: {', '.join(r.split(':')[0] for r in testing[:4])}.")
+    L.append(f"❌ <b>LOSING MONEY — CUT ({len(stopped)})</b>")
+    L += [f"• {r}" for r in stopped[:5]] or ["• nothing needed cutting"]
+    if watching:
+        L.append(f"👀 Too few trades to judge yet: {', '.join(watching[:4])}.")
+    n_all = sum(d["n"] for d in book.values())
+    proven = [c for c in book if pm.catalyst_graduated(c)]
+    L.append(f"Proven long-term (30+ of its own trades, beats the account's average): "
+             + (", ".join(e(_plain_cat(c)) for c in proven) + "."
+                if proven else f"none yet — the account has {n_all} finished trades total, "
+                               f"so a green day is a data point, not proof."))
     return "\n".join(L)[:3900]
 
 

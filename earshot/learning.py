@@ -107,7 +107,8 @@ class Learner:
             _append(OUTCOMES_PATH, {**outcome.to_dict(), "exit": reason, "alpha": alpha, "cost_pct": rt})
             mind = instinct.record(p["confidence"], ret, p["size_usd"], alpha=alpha)  # mastery on alpha
             self._learn(p, outcome, alpha)
-            self.patterns.record(p.get("pattern", ""), win_a, alpha)       # learn the ALPHA pattern
+            self.patterns.record(p.get("pattern", ""), win_a, alpha,
+                                 usd=outcome.pnl_usd)      # learn the ALPHA pattern; $ vote in grad
             if self.lgate is not None and p.get("lgate_features"):
                 self.lgate.update(p["lgate_features"], win_a)              # train P(win) on beat-the-market
             if self.core is not None and p.get("features"):
@@ -344,7 +345,8 @@ class Learner:
                 mkt = prices.market_return_since(o["ts"])               # ALPHA-label observations too
                 alpha = ret - mkt if mkt is not None else ret
                 win = alpha > 0
-                self.patterns.record(o.get("sig", ""), win, alpha)      # learn the ALPHA pattern from data
+                self.patterns.record(o.get("sig", ""), win, alpha,
+                                     grad=False)   # observations train patterns, NOT the keep/cut ledger
                 self._credit_sources(o["sources"], win, alpha, rate=rate)  # horizon-scaled, < a real trade
                 if self.lgate is not None and o.get("feat"):
                     # W2.1 PER-HORIZON HEADS — the root-cause fix for 12k-samples-zero-skill. One

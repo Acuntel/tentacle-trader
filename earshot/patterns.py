@@ -10,6 +10,7 @@ This is how it self-improves and analyzes where it went wrong — per pattern, n
 """
 from __future__ import annotations
 
+import json
 import math
 
 # ---- THE FIELD RATE: what fraction of ALL labeled setups beat the market (alpha-win base rate). ----
@@ -72,12 +73,16 @@ class PatternMemory:
         self.know = know
         self.p = know.setdefault("patterns", {})        # exact signature -> stats (persisted)
         self.agg = know.setdefault("patterns_agg", {})  # HIERARCHICAL backoff levels (catalyst / +families)
-        # FORWARD-ONLY graduation ledger (EDGE doctrine): catalyst -> stats counted from doctrine
-        # ship-time (2026-07-17) onward. The lifetime agg mixes label eras (pre-de-pollution, pre-
-        # base-rate-anchor) against TODAY's field EMA — judging graduation on it marked every thesis
-        # catalyst dead on day one and would have cut their explore budget. Only outcomes the CURRENT
-        # configuration produced count as evidence for or against it.
+        # GRADUATION ledger (EDGE doctrine): catalyst -> stats from the BOOK's own trades only.
+        # 2026-07-29 audit: the old ledger was 98.5% observation labels (5,172 labels vs 76 real
+        # trades) — free fixed-horizon gross-alpha labels on setups the book never traded — so
+        # keep/cut verdicts weren't judging the son's actual record (and called his one real
+        # earner, FDA approval at +$7.32/24 trades, "still testing"). Rebuilt once from the
+        # audited outcomes ledger; from here only resolve_due (grad=True) may add evidence.
         self.grad = know.setdefault("patterns_grad", {})
+        if know.get("patterns_grad_src") != "book":
+            know["patterns_grad"] = self.grad = self._grad_from_ledger()
+            know["patterns_grad_src"] = "book"
 
     @staticmethod
     def signature(catalyst: str, families, macro: str = "") -> str:
@@ -102,6 +107,36 @@ class PatternMemory:
 
     def field(self) -> float:
         return field_rate(self.know)
+
+    def book_field(self) -> float:
+        """The bar a catalyst must beat for keep/cut: the BOOK's own pooled alpha-win rate, measured
+        on the same trades that fill the grad ledger. field_rate() is observation-fed (a different,
+        cheaper game — no costs, no exits); judging book trades against it was apples vs oranges."""
+        t = sum(v.get("trades", 0) for v in self.grad.values())
+        w = sum(v.get("wins", 0) for v in self.grad.values())
+        return round(w / t, 4) if t >= 20 else 0.5
+
+    @staticmethod
+    def _grad_from_ledger(path: str = "state/outcomes.jsonl") -> dict:
+        """One-time rebuild of the graduation ledger from the immutable book ledger (same source
+        survival.audit() trusts). alpha fallback matches audit(): old rows predate the alpha field."""
+        g: dict = {}
+        try:
+            with open(path) as f:
+                for line in f:
+                    try:
+                        o = json.loads(line)
+                    except Exception:
+                        continue
+                    d = g.setdefault(o.get("catalyst") or "unknown",
+                                     {"trades": 0, "wins": 0, "usd": 0.0})
+                    d["trades"] += 1
+                    d["usd"] = round(d["usd"] + o.get("pnl_usd", 0.0), 2)
+                    if o.get("alpha", o.get("pnl_pct", 0.0)) > 0:
+                        d["wins"] += 1
+        except FileNotFoundError:
+            pass
+        return g
 
     def _stats(self, sig: str) -> dict:
         return self.p.get(sig, {"trades": 0, "wins": 0, "sum_ret": 0.0, "sum_win_ret": 0.0})
@@ -162,7 +197,9 @@ class PatternMemory:
             return round(max(4.0, min(25.0, st["sum_win_ret"] / st["wins"])), 1)
         return default
 
-    def record(self, sig: str, win: bool, pnl_pct: float):
+    def record(self, sig: str, win: bool, pnl_pct: float, grad: bool = True, usd: float = 0.0):
+        """grad=False for observation labels: they still train patterns/backoff (cheap, plentiful),
+        but only the book's OWN resolved trades may vote in the keep/cut graduation ledger."""
         if not sig:
             return
         for key, table in [(sig, self.p)] + [(lvl, self.agg) for lvl in self._levels(sig)]:
@@ -173,10 +210,11 @@ class PatternMemory:
                 st["wins"] += 1
                 st["sum_win_ret"] += pnl_pct
             st["recent"] = (st.get("recent", [])[-49:] + [1 if win else 0])   # rolling window for decay
-        # forward graduation ledger: catalyst-level, current-configuration outcomes only
-        if not sig.startswith(("sim_", "study_")):
-            g = self.grad.setdefault(sig.split("|")[0], {"trades": 0, "wins": 0})
+        # graduation ledger: catalyst-level, the book's own outcomes only
+        if grad and not sig.startswith(("sim_", "study_")):
+            g = self.grad.setdefault(sig.split("|")[0], {"trades": 0, "wins": 0, "usd": 0.0})
             g["trades"] += 1
+            g["usd"] = round(g.get("usd", 0.0) + usd, 2)
             if win:
                 g["wins"] += 1
 
@@ -196,15 +234,15 @@ class PatternMemory:
             return False
         st = self._cat_stats(catalyst)
         return bool(st and st["trades"] >= self.GRAD_MIN_N
-                    and _wilson_lower(st["wins"], st["trades"]) > self.field())
+                    and _wilson_lower(st["wins"], st["trades"]) > self.book_field())
 
     def catalyst_dead(self, catalyst: str) -> bool:
-        """Conservatively worse than the field at real n — stop pouring explore budget into it."""
+        """Conservatively worse than the book's own average at real n — stop the explore budget."""
         if not catalyst or catalyst == "unknown":
             return False
         st = self._cat_stats(catalyst)
         return bool(st and st["trades"] >= self.DEAD_MIN_N
-                    and _wilson_upper(st["wins"], st["trades"]) < self.field() - 0.05)
+                    and _wilson_upper(st["wins"], st["trades"]) < self.book_field() - 0.05)
 
     def catalyst_explore_slots(self, catalyst: str, base: int, unknown_slots: int = 1) -> int:
         """Per-cycle explore budget for a catalyst — keep buying samples of what wins, starve what
@@ -220,7 +258,12 @@ class PatternMemory:
         if self.catalyst_graduated(catalyst):
             return base + 2
         st = self._cat_stats(catalyst)
-        if st and st["trades"] >= self.DEAD_MIN_N and (st["wins"] / st["trades"]) < self.field():
+        # Brady's decision rule, in DOLLARS (2026-07-29): a catalyst that has lost the book real
+        # money over 10+ of its own trades drops to a heartbeat until it earns its way back —
+        # actionable long before the n>=50 statistical verdicts can fire.
+        if st and st["trades"] >= 10 and st.get("usd", 0.0) < 0:
+            return 1
+        if st and st["trades"] >= self.DEAD_MIN_N and (st["wins"] / st["trades"]) < self.book_field():
             return max(1, base // 4)
         return base
 
