@@ -258,6 +258,11 @@ class PatternMemory:
         if self.catalyst_graduated(catalyst):
             return base + 2
         st = self._cat_stats(catalyst)
+        # PROOF VELOCITY (2026-07-31): a catalyst earning real dollars at real n gets one extra
+        # tryout per cycle — the sooner it reaches GRAD_MIN_N, the sooner conviction capital may
+        # concentrate on a proven edge instead of waiting on a slow drip of samples.
+        if st and st["trades"] >= 20 and st.get("usd", 0.0) > 0:
+            return base + 1
         # Brady's decision rule, in DOLLARS (2026-07-29): a catalyst that has lost the book real
         # money over 10+ of its own trades drops to a heartbeat until it earns its way back —
         # actionable long before the n>=50 statistical verdicts can fire.

@@ -175,6 +175,7 @@ def compose(learner, instinct, core, cfg: dict) -> str:
         slots = pm.catalyst_explore_slots(cat, base)
         if d["usd"] > 0:
             working.append(row + (" — kept, proven, extra budget" if pm.catalyst_graduated(cat)
+                                  else " — kept, extra tryout to finish proving it" if slots > base
                                   else " — kept"))
         elif cat == "unknown":
             stopped.append(row + " — capped at one tryout at a time (discovery pool)")

@@ -108,7 +108,8 @@ class Brain:
         convergence = min(1.5, 1 + fbonus * max(0, n_families - 1))
         return max(0.0, min(100.0, base * prior * earliness * convergence))
 
-    def _size(self, score: float, capital: float, pwin: float | None = None) -> float:
+    def _size(self, score: float, capital: float, pwin: float | None = None,
+              catalyst: str | None = None) -> float:
         frac = 0.0
         for band in self.conv["size_bands"]:
             if score >= band["min"]:
@@ -125,6 +126,13 @@ class Brain:
             edge = max(-1.0, min(1.0, (pwin - fld) / max(0.15, 1 - fld) * 2.5))
             trust = self.lgate.trust()                      # 0 if poorly calibrated, 1 if sharp (Brier)
             frac *= max(0.25, (1 - trust) + trust * (1.0 + 0.5 * edge))   # at-field -> 1.0, capped floor
+        # EVIDENCE-SIZED (2026-07-31): the bands may command up to 100% of capital, but big size
+        # must be EARNED. A catalyst whose own real-money record is negative (or empty) caps at
+        # 25% of equity until it digs itself out; $-positive/graduated catalysts keep full bands.
+        # The score is self-assessed conviction — the ledger is what actually happened.
+        if catalyst and self.patterns is not None and not self.patterns.catalyst_graduated(catalyst):
+            if (self.patterns.grad.get(catalyst) or {}).get("usd", 0.0) <= 0:
+                frac = min(frac, 0.25)
         return round(capital * frac, 2)
 
     def evaluate(self, signals: list[RawSignal], capital: float, regime_down: bool) -> list[Candidate]:
@@ -255,7 +263,7 @@ class Brain:
                 reasons.append("fundamentals: " + " | ".join(fund_notes))
             cand = Candidate(
                 ticker=tk, catalyst=catalyst, confidence=score,
-                size_usd=self._size(score, capital), signals=sigs, runup_pct=runup,
+                size_usd=self._size(score, capital, catalyst=catalyst.value), signals=sigs, runup_pct=runup,
                 regime_ok=not regime_down,
                 stop_pct=ccfg["stop_pct"], target_pct=target, hold_days=ccfg["hold_days"],
                 reasons=reasons,
@@ -332,7 +340,8 @@ class Brain:
                         cand.confidence = max(0.0, min(100.0, cand.confidence * (1.0 + 0.12 * edge)))
                 except Exception:
                     pass
-                cand.size_usd = self._size(cand.confidence, capital, pwin=getattr(cand, "_pwin", None))
+                cand.size_usd = self._size(cand.confidence, capital, pwin=getattr(cand, "_pwin", None),
+                                           catalyst=cand.catalyst.value)
                 cand.reasons.append(
                     f"analyst[{verdict.get('by')}]: real={verdict['real']} dir={verdict['direction']} "
                     f"conv={verdict['conviction']} P(win)={getattr(cand, '_pwin', 'n/a')} "
