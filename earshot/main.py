@@ -280,8 +280,13 @@ class Earshot:
         # 2) MANAGE open positions against the live price FIRST (exit engine decides sells).
         # Closed market -> only the hard stop may fire (ClosedMarketExits): everything else would
         # resolve the REAL book at a weekend/evening frozen price and feed mastery a fake label.
+        # Extended sessions (pre-market/after-hours, when enabled): the REAL BOOK may trade at
+        # fresh extended prints, but every LEARNING pipeline below stays regular-session-only —
+        # the July-4th degenerate-label incident applies to thin extended tape too.
+        ext_session = mkt.get("session") in ("premarket", "afterhours")
+        regular_open = mkt_open and not ext_session
         live_exits = self.exits if mkt_open else ClosedMarketExits(self.exits)
-        for r in self.learner.resolve_due(self.instinct, live_exits):
+        for r in self.learner.resolve_due(self.instinct, live_exits, extended=ext_session):
             o, m = r["outcome"], r["mind"]
             if r["exit"] != "stop":                  # W2.2: non-stop exit -> same-day re-entry cooldown
                 self._note_exit(o["ticker"])
@@ -293,12 +298,12 @@ class Earshot:
         # degenerate — zero drift -> alpha 0 -> "loss" with certainty -> the model learns to predict
         # ~0 for everything and the Brier plunges to a FAKE-perfect 0.01 (seen live on July 4th).
         # Matured horizons simply resolve at the next open, where the price actually carries news.
-        learned = self.learner.resolve_observations() if mkt_open else 0
+        learned = self.learner.resolve_observations() if regular_open else 0
         if learned:
             print(f"  learned from {learned} matured observations (data, not just trades)")
         # WS1: resolve OFF-BOOK learning trades (stop/target/time) — floods patterns/P(win)/weights,
         # never touches mastery or the $500. Market-open only (same degenerate-label guard as above).
-        if mkt_open and self.explore_cfg.get("enabled", True) and self.brain.explore:
+        if regular_open and self.explore_cfg.get("enabled", True) and self.brain.explore:
             exr = self.learner.resolve_learning(int(self.explore_cfg.get("max_open", 300)),
                                                 float(self.explore_cfg.get("credit_rate", 0.10)))
             if exr["resolved"]:
@@ -351,7 +356,7 @@ class Earshot:
         # Market-open ONLY (same guard as the resolve calls above): off-hours the recorded entry is
         # the FROZEN prior close, so the overnight gap gets credited to the label as "alpha" the bot
         # could never have traded (lookahead). Setups seen off-hours are simply not recorded.
-        if mkt_open:
+        if regular_open:
             self.learner.observe(cands, max_pending=self.observe_cap)  # every worked-up setup -> a labeled example
 
         # 5) act — but NOT if the day is halted, and NEVER when the market is closed (can't trade it)
@@ -385,11 +390,16 @@ class Earshot:
             if chosen and chosen.size_usd < 25:
                 chosen, why = None, f"capital fully deployed (${deployed:.0f}/${capital:.0f}) — holding"
             if chosen:
-                fill = self.executor.buy(chosen)
-                self.risk.on_execute()
-                self.learner.open_position(chosen, fill["price"])
-                print(f"\n  >> SHADOW BUY {chosen.ticker}  ~${chosen.size_usd:.0f} @ ${fill['price']:.2f}  "
-                      f"(score {chosen.confidence:.0f}, {chosen.catalyst.value})")
+                fill = self.executor.buy(chosen, extended=ext_session)
+                if not fill.get("price"):
+                    print(f"\n  >> NO FILL {chosen.ticker} — no fresh extended-hours print; "
+                          "queued for the next session (won't fake a fill at a stale price)")
+                else:
+                    self.risk.on_execute()
+                    self.learner.open_position(chosen, fill["price"])
+                    print(f"\n  >> SHADOW BUY {chosen.ticker}  ~${chosen.size_usd:.0f} @ ${fill['price']:.2f}  "
+                          f"({'extended-hours, ' if ext_session else ''}score {chosen.confidence:.0f}, "
+                          f"{chosen.catalyst.value})")
                 print(f"     conviction: {chosen.reasons[0]}")
                 print(f"     plan: {chosen.reasons[2]} | pattern {getattr(chosen, '_signature', 'new')}")
             else:

@@ -42,7 +42,24 @@ def _last_price(ticker: str):
     return None
 
 
-def last_price(ticker: str):
+def _last_price_ext(ticker: str, max_age_min: float = 20.0):
+    """A REAL pre/post-market print (prepost bars), no older than max_age_min. Returns None when
+    nothing fresh is trading off-hours — an honest 'no fill possible', never a stale regular
+    close dressed up as a quote. Thin names simply don't fill until the open."""
+    if not _HAVE_YF:
+        return None
+    try:
+        h = yf.Ticker(ticker).history(period="1d", interval="1m", prepost=True)
+        if len(h) and time.time() - h.index[-1].timestamp() <= max_age_min * 60:
+            return float(h["Close"].iloc[-1])
+    except Exception:
+        pass
+    return None
+
+
+def last_price(ticker: str, extended: bool = False):
+    if extended:
+        return _cached(("price_ext", ticker), 120, lambda: _last_price_ext(ticker))
     return _cached(("price", ticker), 300, lambda: _last_price(ticker))
 
 

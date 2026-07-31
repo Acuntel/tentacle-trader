@@ -46,7 +46,14 @@ class ShadowExecutor(Executor):
     """Paper fills at the live price (or a nominal price if data is unavailable). No money moves."""
     name = "shadow"
 
-    def buy(self, c: Candidate, **kw) -> dict:
+    def buy(self, c: Candidate, extended: bool = False, **kw) -> dict:
+        if extended:
+            # Extended-hours fill = a real, FRESH pre/post print or NO fill at all. A stale
+            # regular-session price here would book an entry no live order could get (the whole
+            # point of off-hours entry is the price BEFORE the crowd — faking it inflates mastery).
+            px = prices.last_price(c.ticker, extended=True)
+            return {"status": "shadow_fill_ext" if px else "no_fill", "ticker": c.ticker,
+                    "price": px, "usd": c.size_usd, "ts": time.time()}
         px = prices.last_price(c.ticker) or 100.0
         return {"status": "shadow_fill", "ticker": c.ticker, "price": px,
                 "usd": c.size_usd, "ts": time.time()}

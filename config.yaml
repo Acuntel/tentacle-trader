@@ -150,8 +150,11 @@ regime:
 
 # ---- Market clock (the bot must KNOW when the exchange is open — a closed market can't be traded) ----
 market:
-  require_open: true            # HARD LAW: never OPEN a position off-hours (weekend/holiday/after-hours)
-  allow_extended_hours: false   # if true, also allow pre-market (04:00-09:30 ET) + after-hours (16:00-20:00 ET)
+  require_open: true            # HARD LAW: never OPEN a position when nothing is tradable (weekend/holiday/overnight)
+  allow_extended_hours: true    # 2026-07-31: trade the news WHEN IT BREAKS — pre-market (04:00-09:30 ET) +
+                                # after-hours (16:00-20:00 ET). Fills require a FRESH extended print (no
+                                # stale-price fantasy fills) and pay a 2.5x friction premium. Ledger proof:
+                                # queued-at-open entries ran -$16 lifetime; intraday-entered FDA +$23.5.
 
 # ---- Price action: candlesticks + indicators decide WHEN to enter / exit (the catalyst decides WHAT) ----
 technicals:

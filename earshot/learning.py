@@ -8,7 +8,7 @@ import time
 
 from .models import Candidate, Outcome, iso
 from .patterns import PatternMemory, field_rate, update_field_rate
-from . import costs, prices
+from . import costs, market, prices
 
 OPEN_PATH = "state/open_positions.json"
 OBS_PATH = "state/observations.json"
@@ -72,12 +72,14 @@ class Learner:
         })
         _save(OPEN_PATH, self.open)
 
-    def resolve_due(self, instinct, exits, bearish_tickers=None) -> list[dict]:
+    def resolve_due(self, instinct, exits, bearish_tickers=None, extended: bool = False) -> list[dict]:
         """Manage every open position against the LIVE price each cycle via the exit engine.
-        Positions now close early on stop/target/trailing/decay, not just at the time horizon."""
+        Positions now close early on stop/target/trailing/decay, not just at the time horizon.
+        extended=True (pre/post sessions): only FRESH extended prints count — a name with no
+        off-hours print simply can't exit until the open (honest, same rule as entries)."""
         still_open, resolved = [], []
         for p in self.open:
-            price = prices.last_price(p["ticker"])
+            price = prices.last_price(p["ticker"], extended=extended)
             if price and p.get("entry_price"):
                 reason, chg = exits.evaluate(p, price, bearish_tickers)
             else:  # no live price -> fall back to horizon resolution
@@ -90,6 +92,9 @@ class Learner:
             # FRICTION (costs.py): debit the liquidity-tiered round trip BEFORE anything learns from
             # this trade — mastery, patterns, weights and P(win) must all be earned NET of costs.
             rt = costs.round_trip_pct(p["ticker"])
+            if market.was_closed(p.get("entry_ts", 0)):
+                rt = round(rt * 2.5, 3)        # extended-hours entry: real off-hours spreads run
+                                               # several times wider — the debit must match them
             ret = round(ret - rt, 3)
             # ALPHA: the trade's return MINUS the market over the same window. Skill is learned on alpha
             # (so a rising tape isn't mistaken for edge); the $ P&L / equity stay on the raw return.
