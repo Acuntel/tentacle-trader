@@ -19,6 +19,11 @@ from .base import Source, extract_tickers, SeenSet
 UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")          # his exact UA
 TICKER_HREF = re.compile(r"^/([A-Z]{1,5})$")
+DOLLARS = re.compile(r"\$([\d,]{4,})")   # row's dollar amounts; max = the trade-value column
+# 2026-08-05 literature filter: the insider edge concentrates in OPPORTUNISTIC officer-level buys —
+# clusters that include a CEO/CFO/president outperform director/10%-owner-only clusters.
+OFFICER_WORDS = ("ceo", "cfo", "coo", "pres", "chair", "chief", "officer")
+MIN_CLUSTER_USD = 50_000                 # routine token-sized buys are noise, not conviction
 
 
 def _session() -> requests.Session:
@@ -65,10 +70,17 @@ class OpenInsiderSource(Source):
             if self.seen.seen(rid):
                 continue
             self.seen.add(rid)
+            # 2026-08-05 literature filters (small-cap cluster edge lives in size + seniority):
+            # skip token-sized clusters; officer-led clusters (CEO/CFO/pres in the buyer titles)
+            # carry the strongest signal and get extra strength.
+            vals = [int(v.replace(",", "")) for v in DOLLARS.findall(txt)]
+            if vals and max(vals) < MIN_CLUSTER_USD:
+                continue
+            officer = any(w in txt.lower() for w in OFFICER_WORDS)
             out.append(RawSignal(
                 source=self.key, weight=self.weight(), ts=now_ts(), tickers=[ticker],
                 headline=f"OpenInsider cluster buy: {ticker} — {txt[:90]}", url=self.URL,
-                catalyst_hint="insider_cluster", strength=1.2,
+                catalyst_hint="insider_cluster", strength=1.4 if officer else 1.1,
             ))
         return out
 

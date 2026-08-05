@@ -28,7 +28,7 @@ FAMILY = {
     "newswire": "news",
     "alpaca_news": "news", "finnhub": "news", "google_news": "news", "hackernews": "news",
     "fda": "regulatory", "fda_approvals": "regulatory", "gov_contract": "regulatory",
-    "index_inclusion": "regulatory", "nasdaq_halts": "regulatory",
+    "index_inclusion": "regulatory", "nasdaq_halts": "regulatory", "pdufa": "regulatory",
     "polymarket": "crowd",
     "wiki_attention": "attention",
     "x_relay": "flow",
@@ -236,6 +236,35 @@ class Brain:
                 # information gets a tilt (risk law — price/liquidity floors — untouched)
                 if feats.get("micro_cap") and (families & TRIGGER_FAMILIES):
                     score *= 1.06
+            # FDA PRICED-IN GAUGE (2026-08-05): prediction-market approval odds measure how much of
+            # the event the market already expected — the sell-the-news failure mode of the one
+            # $-positive catalyst. High odds dampen (shadow) / veto (live in passes_gate); low odds =
+            # genuine surprise, the drift the ledger actually harvests. No priced market -> no-op.
+            odds_note, odds_veto, fda_prob, event_ts = None, None, None, None
+            if learn_scope and catalyst in (Catalyst.FDA_APPROVAL, Catalyst.PDUFA_RUNUP):
+                ocfg = self.cfg.get("fda_odds", {})
+                if ocfg.get("enabled", True):
+                    try:
+                        from . import fdaodds
+                        o = fdaodds.engine().odds_for(tk)
+                    except Exception:
+                        o = None
+                    if o:
+                        fda_prob = o["prob"]
+                        odds_note = f"prediction-market approval odds {fda_prob:.0%} ({o['src']})"
+                        if catalyst == Catalyst.FDA_APPROVAL:
+                            if fda_prob >= float(ocfg.get("priced_in_prob", 0.90)):
+                                score *= 0.55
+                                odds_veto = (f"approval was ~{fda_prob:.0%} expected on the prediction "
+                                             "market — priced in, sell-the-news risk")
+                            elif fda_prob <= float(ocfg.get("surprise_prob", 0.80)):
+                                score *= 1.12
+            if catalyst == Catalyst.PDUFA_RUNUP:
+                # stamp the decision date -> a hard exit-by date (out pre_event_days BEFORE the event;
+                # exits.py fires 'pre_event' regardless of P&L — never hold the binary coin flip)
+                dts = max((float((s.raw or {}).get("decision_ts") or 0) for s in sigs), default=0.0)
+                if dts > 0:
+                    event_ts = dts
             if self.core is not None:                  # calibration: scale conviction to realized win-rate
                 score *= self.core.calib_factor(score)
             score = max(0.0, min(100.0, score))
@@ -270,6 +299,14 @@ class Brain:
             )
             cand._families = eff_families
             cand._signature = sig
+            cand._fda_odds = fda_prob                       # priced-in gauge (None = no priced market)
+            cand._odds_veto = odds_veto                     # live-only sell-the-news veto (passes_gate)
+            cand._event_ts = event_ts                       # FDA decision date (pdufa_runup only)
+            if event_ts:
+                pre_d = float(self.cfg.get("exits", {}).get("pre_event_days", 14))
+                cand._exit_by_ts = event_ts - pre_d * 86400
+            if odds_note:
+                cand.reasons.append(odds_note)
             cand._tech_veto = tech_veto
             cand._options_confirm = opt_confirm
             cand._features = feats                          # fundamentals features for the learned model
@@ -469,6 +506,8 @@ class Brain:
             return False, c._tech_veto
         if getattr(c, "_analyst_veto", None):
             return False, c._analyst_veto
+        if getattr(c, "_odds_veto", None):
+            return False, c._odds_veto
         if (self.lgate is not None and self.lgate.ready() and getattr(c, "_pwin", None) is not None
                 and c._pwin < self.conv.get("min_pwin", 0.5)):
             return False, f"learned P(win) {c._pwin:.2f} < {self.conv.get('min_pwin', 0.5)} (model says low edge)"

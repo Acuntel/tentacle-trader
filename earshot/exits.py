@@ -51,6 +51,11 @@ class ExitEngine:
             return "stop", chg
         if chg >= pos.get("target_pct", 12):
             return "target", chg
+        # PRE-EVENT (pdufa_runup, 2026-08-05): a hard exit-by date stamped at entry (pre_event_days
+        # before the FDA decision). Fires regardless of P&L — the strategy harvests the run-up and
+        # NEVER holds the binary event; past this date every remaining day is pure coin-flip risk.
+        if pos.get("exit_by_ts") and now >= float(pos["exit_by_ts"]):
+            return "pre_event", chg
         if peak_gain >= self.trail_arm_pct and drop_from_peak <= -self.trail_pct:
             return "trailing", chg
         # Reactive exits (technicals / options tape / signal decay) fire only where they're still

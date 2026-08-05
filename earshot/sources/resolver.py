@@ -163,3 +163,48 @@ def resolve_name(name: str) -> str | None:
     if len(toks) >= 3:                                 # e.g. "... CORPORATION GLOBAL SERVICES LLC"
         return maps["prefix3"].get(" ".join(toks[:3]))
     return None
+
+
+_rev_index: dict | None = None      # ticker -> [normalized issuer names]; rebuilt when _maps refreshes
+_rev_src: dict | None = None
+
+
+def ticker_matches_text(ticker: str, text: str) -> bool:
+    """Is this a REAL SEC-listed ticker whose issuer name actually appears in the text? Guards
+    ticker extraction from structured IDs (a Kalshi event ticker KXFDAAPPROVE-MDMA ends in the
+    DRUG name, not a stock) — same philosophy as resolve_name: False always beats a wrong match."""
+    global _rev_index, _rev_src
+    tk = (ticker or "").upper()
+    if not tk or not text:
+        return False
+    maps = _get_maps()
+    if _rev_index is None or _rev_src is not maps:
+        rev: dict[str, list[str]] = {}
+        for name, t in (maps.get("exact") or {}).items():
+            rev.setdefault(t, []).append(name)
+        _rev_index, _rev_src = rev, maps
+    low = (text or "").casefold()
+    for name in _rev_index.get(tk, ()):
+        for tok in name.split():
+            if len(tok) >= 4 and tok not in _GENERIC and tok not in _SUFFIX and tok in low:
+                return True
+    return False
+
+
+def title_scan_ticker(text: str) -> str | None:
+    """Free-text -> ticker for SHORT one-line market titles ONLY (bounded call sites — this scans
+    the issuer map). Matches issuers whose distinctive FIRST name-token (len>=5, non-generic)
+    appears as a whole word in the text. EXACTLY one issuer may match; ambiguity returns None —
+    the result feeds a trading signal, so None always beats a wrong ticker."""
+    low = _clean(text or "")
+    if len(low) < 8:
+        return None
+    words = set(low.split())
+    hits: set[str] = set()
+    for name, tk in (_get_maps().get("exact") or {}).items():
+        tok = name.split()[0]
+        if len(tok) >= 5 and tok not in _GENERIC and tok in words:
+            hits.add(tk)
+            if len(hits) > 1:
+                return None
+    return hits.pop() if len(hits) == 1 else None

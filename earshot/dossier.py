@@ -52,6 +52,11 @@ def build(candidate, macro: str = "") -> dict:
     tech = technicals.read(candidate.ticker)
     opt = options.read(candidate.ticker)
     fund = fundamentals.read(candidate.ticker)
+    # FDA priced-in gauge (2026-08-05): ride the odds into the fundamentals dict so featurize()'s
+    # auto-widener learns it (f_fda_prob) — the model gets to weigh "how expected was this event".
+    if getattr(candidate, "_fda_odds", None) is not None:
+        fund = dict(fund or {})
+        fund["fda_prob"] = float(candidate._fda_odds)
 
     # PILLARS = orthogonal evidence TYPES that agree (this is the real confirmation count)
     pillars: set[str] = set()

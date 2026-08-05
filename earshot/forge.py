@@ -140,6 +140,7 @@ class Forge:
         self.explore = max(1, int(self.pop * float(f.get("explore_frac", 0.1))))
         self.plateau_ticks = int(f.get("plateau_ticks", 6))
         self.min_gain = float(f.get("min_alpha_gain", 0.3))   # >=0.3% return-lift over accept-all to flag
+        self.crown_fail_ticks = int(f.get("crown_fail_ticks", 3))   # consecutive bad re-measurements -> decrown
         self.know = know
         self.proposer = proposer
         self.persist = persist or (lambda: None)
@@ -200,7 +201,36 @@ class Forge:
                 return False                            # same exhausted slice — refuse a second crowning
         self.fg["crowned"] = dict(self.fg["champion"])
         self.fg["embargo"] = {"tail": hold_keys[-1], "n_hold": len(hold_keys), "ts": iso(time.time())}
+        self.fg["crown_fail"] = 0
         return True
+
+    def _recheck_crown(self, rows, cut):
+        """ALPHA-DECAY GUARD (2026-08-05): crowning used to be forever — a champion kept live influence
+        on the forward_edge frozen at crowning time, never re-measured. Selection on forward data must
+        STAY true on forward data: every tick the CROWNED policy is re-scored on the CURRENT holdout
+        slice (its own stored cutoff, the exact accept semantics champion_pwin uses). Negative measured
+        edge `crown_fail_ticks` consecutive times -> the crown is revoked (the embargo stands, so the
+        same exhausted slice can't immediately re-crown). <20 accepted rows = inconclusive, no verdict."""
+        ch = self.fg.get("crowned")
+        if not ch or cut >= len(rows):
+            return
+        w, fn, kcut = ch.get("w") or [], ch.get("feats") or [], ch.get("cut")
+        if len(w) != len(fn) or not fn or kcut is None:
+            return
+        hold = rows[cut:]
+        scores = [sum(w[i] * float(f.get(fn[i], 0) or 0) for i in range(len(fn))) for f, _ in hold]
+        acc = [hold[k][1] for k in range(len(hold)) if scores[k] >= float(kcut)]
+        if len(acc) < 20:
+            return
+        live_fwd = round(sum(acc) / len(acc) - sum(r for _, r in hold) / len(hold), 4)
+        ch["live_fwd"] = live_fwd                       # visible honesty: the CURRENT measurement
+        if live_fwd <= 0:
+            self.fg["crown_fail"] = int(self.fg.get("crown_fail", 0)) + 1
+            if self.fg["crown_fail"] >= self.crown_fail_ticks:
+                self.fg["crowned"] = None               # influence lapses — it must be re-EARNED
+                self.fg["crown_fail"] = 0
+        else:
+            self.fg["crown_fail"] = 0
 
     def tick(self) -> dict:
         self.last = time.time()
@@ -223,6 +253,7 @@ class Forge:
                 cut = n
             train_vecs, train_rets = vecs[:cut], rets[:cut]
             hold_vecs, hold_rets = vecs[cut:], rets[cut:]
+            self._recheck_crown(rows, cut)              # alpha-decay guard: influence must STAY earned
             # seed: the saved champion (continuity) + fresh randoms (the free swarm)
             pop = []
             champ = self.fg.get("champion")

@@ -69,6 +69,8 @@ class Learner:
             "lgate_features": getattr(c, "_lgate_features", None),   # train the P(win) model on exit
             "features": getattr(c, "_features", None),               # persisted feature history (fundamentals/quality)
             "pwin": getattr(c, "_pwin", None),
+            "event_ts": getattr(c, "_event_ts", None),               # FDA decision date (pdufa_runup)
+            "exit_by_ts": getattr(c, "_exit_by_ts", None),           # hard pre-event exit date
         })
         _save(OPEN_PATH, self.open)
 
@@ -147,6 +149,7 @@ class Learner:
             "pattern": getattr(c, "_signature", ""),
             "lgate_features": getattr(c, "_lgate_features", None),
             "pwin": getattr(c, "_pwin", None),
+            "exit_by_ts": getattr(c, "_exit_by_ts", None),   # pdufa_runup: out before the binary event
         })
         return True
 
@@ -169,6 +172,8 @@ class Learner:
                 reason = "stop"
             elif dir_ret >= p.get("target_pct", 12):
                 reason = "target"
+            elif p.get("exit_by_ts") and time.time() >= float(p["exit_by_ts"]):
+                reason = "pre_event"        # pdufa_runup: never hold the binary FDA event, even off-book
             elif age_days >= p.get("hold_days", 5):
                 reason = "time"
             else:

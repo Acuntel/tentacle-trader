@@ -113,6 +113,7 @@ source_weights:
   web_traffic: 0.55
   jets: 0.35
   congress: 0.45
+  pdufa: 0.75
 
 # Per-catalyst prior drift multiplier + default hold (learning tunes these too)
 catalysts:
@@ -122,7 +123,16 @@ catalysts:
   mna_target:        {prior: 1.15, hold_days: 10, stop_pct: 6, target_pct: 15}
   gov_contract:      {prior: 1.05, hold_days: 5,  stop_pct: 8, target_pct: 12}
   activist_stake:    {prior: 1.10, hold_days: 10, stop_pct: 8, target_pct: 15}
-  insider_cluster:   {prior: 1.00, hold_days: 10, stop_pct: 8, target_pct: 12}
+  # insider_cluster 2026-08-05 HORIZON FIX: the literature edge (small-cap cluster buys ~7.4%
+  # abnormal over 12 MONTHS, cluster premium over solitary buys) pays out over weeks-months —
+  # a 10d hold structurally couldn't harvest it (ledger −$8.39/8 agrees). Longer hold + wider
+  # stop, smaller effective size via the evidence cap: drift needs room, not a tight leash
+  # (stops were 72% of gross losses on the 07-31 ledger).
+  insider_cluster:   {prior: 1.00, hold_days: 30, stop_pct: 12, target_pct: 20}
+  # pdufa_runup 2026-08-05: SCHEDULED pre-FDA-decision accumulation (enter 4-8wk out). hold_days
+  # is a fallback only — the REAL exit is the hard pre-event date (exits.pre_event_days before
+  # the decision); never hold the binary coin flip.
+  pdufa_runup:       {prior: 1.10, hold_days: 35, stop_pct: 12, target_pct: 25}
   # demand_surge: the alt-data exclusives (Steam/app-rank/reviews/downloads/web traffic) are THESIS
   # signals — weekly diffusion, not event pops — so they get a thesis-length hold, not the 5d default.
   demand_surge:      {prior: 1.05, hold_days: 15, stop_pct: 10, target_pct: 18}
@@ -212,6 +222,8 @@ sources:
   web_traffic: true             # DEMAND layer — Cloudflare Radar domain traffic (needs CLOUDFLARE_API_TOKEN)
   jets: true                    # FLOW layer — ADS-B corporate-jet movement (needs verified JET_REGISTRY)
   congress: true                # FLOW layer — politician trades (needs FMP_API_KEY; weak/stale, confirm-only)
+  pdufa_runup: true             # SCHEDULED catalyst — FDA decision windows from the prediction-market
+                                #   calendar (fdaodds.py); enter 4-8wk out, hard-exit 2wk before the event
   megafleet: true               # tiered rotating tentacles
   fleet_universe: all           # 'all' = full US listings (~10k+ tentacles) | 'sp500' = focused ~1155
   fleet_fast_batch: 30          # liquid-core feeds polled per tick (stay fresh)
@@ -229,10 +241,23 @@ sources:
                                #   alt/attention/crowd) linger 4h so a later fast signal can still confirm
                                #   them — cross-family convergence needs both clocks to overlap.
 
+# ---- FDA prediction-market odds (fdaodds.py): the priced-in gauge for approval trades ----
+# Kalshi FDA/clinical-trial markets (launched 2026-07-16) + Polymarket's FDA book, both free public
+# APIs. The fda_approval catalyst's documented failure mode is sell-the-news: an approval everyone
+# expected has no drift left. Odds >= priced_in_prob -> dampen (shadow) / veto (live); odds <=
+# surprise_prob -> genuine surprise, boost. No matching PRICED market -> no conditioning at all
+# (never invent a probability). The odds also land in the dossier as a learned-model feature.
+fda_odds:
+  enabled: true
+  priced_in_prob: 0.90
+  surprise_prob: 0.80
+
 # ---- Exit engine (when to SELL) ----
 exits:
   trail_pct: 7.5               # give back 5% from the peak after a gain -> lock it in
   trail_arm_pct: 6.0           # only start trailing once up +4%
+  pre_event_days: 14           # pdufa_runup hard rule: be OUT this many days before the FDA decision —
+                               #   harvest the anticipation, never hold the binary event (exit 'pre_event')
   drift_discipline: true       # 2026-07-25 ledger fix: classified catalysts exit ONLY on stop/target/
                                #   trailing/time (like explore, which harvests the drift); reactive
                                #   technical/options/decay exits chopped 32/70 conviction trades to
@@ -351,6 +376,9 @@ forge:
   min_alpha_gain: 0.2         # loosened (was 0.3): pursue more meaningful changes from the free search
   forward_frac: 0.2           # WS4: hold out the most-recent 20% of setups as a truly out-of-time FORWARD
                               #       test; the champion only earns LIVE influence if it beats it too
+  crown_fail_ticks: 3         # 2026-08-05 alpha-decay guard: a CROWNED champion is re-scored on the
+                              #   CURRENT forward slice every tick; this many consecutive negative
+                              #   re-measurements -> the crown is revoked (influence must STAY earned)
 
 # ---- Semantic memory: recall outcomes of SIMILAR past setups (k-NN over bge-m3); bounded advisory nudge ----
 memory:

@@ -15,6 +15,7 @@ from .extra import (PolymarketSource, UsaSpendingSource, ClinicalTrialsSource,
 from .newswire import MarketNewsSource
 from .fleet import MegaFleetSource
 from .scrape import OpenInsiderSource, HtmlScraperSource
+from .pdufa import PdufaRunupSource
 from .altdata import SecFullTextSource, GreenhouseHiringSource
 from .demand import AppStoreDemandSource, SteamDemandSource, GithubActivitySource
 from .adoption import PyPiDownloadsSource, NpmDownloadsSource, DockerPullsSource
@@ -81,6 +82,8 @@ def build_sources(cfg: dict, weights: dict) -> list[Source]:
         out.append(JetSpottingSource(weights))          # ADS-B corporate-jet movement (needs verified registry)
     if s.get("congress"):
         out.append(CongressTradesSource(weights))       # politician trades (keyed; dark w/o FMP_API_KEY)
+    if s.get("pdufa_runup"):
+        out.append(PdufaRunupSource(weights))           # FDA decision-window calendar (prediction markets)
     if s.get("scrape_targets"):
         out.append(HtmlScraperSource(weights, s["scrape_targets"]))
     if s.get("megafleet"):
