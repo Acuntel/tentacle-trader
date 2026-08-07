@@ -62,7 +62,7 @@ def build(candidate, macro: str = "") -> dict:
     pillars: set[str] = set()
     if fams.get("filing"):
         pillars.add("filing")
-    if fams.get("news") and news_events >= 2:
+    if fams.get("news") and news_events >= 1:
         pillars.add("news")
     if fams.get("regulatory"):
         pillars.add("regulatory")
