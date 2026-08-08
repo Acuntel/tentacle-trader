@@ -32,6 +32,7 @@ from .analyst import Analyst
 from .learnedgate import LearnedGate
 from .histtrain import HistoricalTrainer
 from .sim import SimEngine
+from .robotics import RoboticsDesk
 from .coach import Coach
 from .audit import Auditor
 from .core import BrainCore
@@ -124,6 +125,9 @@ class Earshot:
         self.coach = Coach(cfg, self.learner, self.instinct, self.sim, self.scout, self.core,
                            self.approvals)                     # self-improvement -> proposals to Telegram
         self.auditor = Auditor(cfg)                            # 24/7 self-code audit loop (propose-only)
+        self.robotics = RoboticsDesk(cfg)                      # Brady's personal robotics research desk
+        #   (folded in from the retired claude.ai routine 2026-08-07) — RESEARCH ONLY, never trades,
+        #   never feeds the brain; sends its own second daily Telegram + the Sep 6 final pick.
         # progressive multi-horizon resolution (1h/1d/5d): learning accrues in HOURS, not only after a hold
         lc = cfg.get("learning", {})
         self.learner.set_horizons(lc.get("horizons_hours", [24]), lc.get("horizon_credit", [0.05]))
@@ -480,6 +484,14 @@ class Earshot:
             broke = f" ⚠ {len(ar['broken'])} BROKEN" if ar.get("broken") else ""
             print(f"\n  self-audit [{ar.get('by', 'static')}]: reviewed earshot/{ar['module']} — "
                   f"{ar['findings']} finding(s) journaled{broke}")
+
+        # 10) ROBOTICS SCOUT desk — Brady's personal research engine. Second daily Telegram with the
+        # day's research; final pick on verdict_date. Fully isolated from trading (never emits signals).
+        if self.robotics.due():
+            try:
+                print(f"\n  robotics scout — {self.robotics.run()}")
+            except Exception as ex:
+                print(f"\n  robotics scout FAILED: {ex}")
         print("=" * 74)
 
     def loop(self):

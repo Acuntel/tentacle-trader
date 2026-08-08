@@ -441,3 +441,13 @@ approvals:
                                #   burst-applied changes share one metric window and can't be attributed
                                #   (22 wasted verdicts proved it); serialized changes each earn a REAL
                                #   verdict, so measure -> lesson -> better next idea actually compounds
+
+# ---- ROBOTICS SCOUT desk (folded in from the retired claude.ai routine, 2026-08-07) ----
+# Brady's personal robotics supply-chain research engine. RESEARCH ONLY: it never trades and never
+# feeds the trading brain. Sends a second daily Telegram with the day's research; delivers the
+# 30-day final pick on verdict_date, then goes quiet.
+robotics:
+  enabled: true
+  run_hour_et: 8               # research + send once per ET day, any day of the week, after 8am ET
+  verdict_date: "2026-09-06"   # first run on/after this date sends the FINAL VERDICT instead
+  max_headlines: 60
