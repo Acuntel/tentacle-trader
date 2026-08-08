@@ -208,10 +208,14 @@ class StrategyBook:
         """Deflated-Sharpe-style multiple-testing floor. With N strategies tried, the BEST one's
         expectancy under NO real edge is ~ sigma * sqrt(2*ln N). A 'survivor' must beat THAT, so we
         never crown a strategy that only looks good because we tried hundreds of variants."""
-        scores = [self._score(s) for s in self._ranked()]
+        scores = [float(self._score(s)) for s in self._ranked()]
         if len(scores) < 5:
             return 0.0
-        sigma = statistics.pstdev(scores)
+        # hand-rolled population stdev: statistics.pstdev crashes on mixed numeric types from
+        # JSON round-trips ('float' object has no attribute 'numerator', py3.11) — and this line
+        # dying mid-coach silently killed the daily Telegram digest for a week (Aug 1-7)
+        mu = sum(scores) / len(scores)
+        sigma = math.sqrt(sum((x - mu) ** 2 for x in scores) / len(scores))
         return sigma * math.sqrt(2 * math.log(max(2, len(scores))))
 
     def _ranked(self):

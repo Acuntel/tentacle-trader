@@ -470,13 +470,20 @@ class Earshot:
         # 8) SELF-IMPROVEMENT (propose-only) — fuse hard stats + the free LLM to tune weights live,
         # write lessons, and JOURNAL proposed code changes for Brady to review. Runs 24/7 on cadence.
         if self.coach.due():
-            cr = self.coach.run(signals, self.macro_mon.context)
-            print(f"\n  coach [{cr['by']}] — {self.coach.last_summary}")
-            if not cr["redteam"]["ok"]:
-                print(f"    ⚠ SAFETY RED-TEAM FAILED: {cr['redteam']['failed']} — a protective gate no longer holds!")
-            if cr["code_proposals"] or cr.get("new_sources"):
-                print(f"    {len(cr['code_proposals'])} code + {len(cr.get('new_sources', []))} new-source "
-                      "idea(s) journaled -> state/evolution/ (review); diary in EVOLUTION_LOG.md")
+            # Isolated: a coach crash must not abort the cycle — that's how the daily digest went
+            # silent Aug 1-7 (one pstdev bug in strategies killed every coach run before the send).
+            try:
+                cr = self.coach.run(signals, self.macro_mon.context)
+                print(f"\n  coach [{cr['by']}] — {self.coach.last_summary}")
+                if not cr["redteam"]["ok"]:
+                    print(f"    ⚠ SAFETY RED-TEAM FAILED: {cr['redteam']['failed']} — a protective gate no longer holds!")
+                if cr["code_proposals"] or cr.get("new_sources"):
+                    print(f"    {len(cr['code_proposals'])} code + {len(cr.get('new_sources', []))} new-source "
+                          "idea(s) journaled -> state/evolution/ (review); diary in EVOLUTION_LOG.md")
+            except Exception as ex:
+                import traceback
+                print(f"\n  coach FAILED (cycle continues): {ex}")
+                traceback.print_exc()
 
         # 9) 24/7 SELF-CODE AUDIT — read & critique its own source on loop, journal fixes (propose-only)
         if self.auditor.due():
