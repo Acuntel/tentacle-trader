@@ -448,6 +448,11 @@ approvals:
 # 30-day final pick on verdict_date, then goes quiet.
 robotics:
   enabled: true
-  run_hour_et: 8               # research + send once per ET day, any day of the week, after 8am ET
+  run_hour_et: 8               # daily synthesis + send once per ET day, any day of the week, after 8am ET
   verdict_date: "2026-09-06"   # first run on/after this date sends the FINAL VERDICT instead
   max_headlines: 60
+  collector:                   # the 24/7 sweep feeding state/robotics/corpus.jsonl (research only)
+    poll_min: 5                # one rotating batch of queries every 5 minutes (anti-ban, ~55-query universe)
+    batch: 6                   # queries per batch -> full universe sweep roughly every 45 minutes
+    bodies_per_tick: 2         # full-article reads per batch, scored names + tier 1/2 sources only
+    corpus_hours: 36           # how far back the 8am synthesis reads

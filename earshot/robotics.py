@@ -25,13 +25,25 @@ import requests
 
 from . import llm, market, notify, prices
 from .persist import load_json, save_json
+from .robotics_feed import RoboticsFeed, _tier, flush_pending, queue_send
 
 DIR = "state/robotics"
 BOARD_PATH = f"{DIR}/scoreboard.json"
 MARK_PATH = f"{DIR}/last_run.json"
+MEM_PATH = f"{DIR}/memory.json"
 VERDICT_PATH = f"{DIR}/FINAL_VERDICT.md"
 LOG_DIR = f"{DIR}/log"
 SEED_DAY = "2026-08-07"
+
+SEED_QUESTIONS = [
+    "Does Optimus actually ramp toward 50k+ units in 2026?",
+    "Does RRX's humanoid order line recover from $1M, and what does Aamir Paul's strategy refresh change?",
+    "Does MP hit magnet output milestones, and do new offtakes land beyond DoD/GM?",
+    "Does Chinese screw capacity confirm a price war (falling ASPs) or does demand absorb it?",
+    "Does any listed industrial acquire a grinder or screw maker?",
+    "What do Unitree's aftermarket and the AgiBot/EngineAI listings imply for component multiples?",
+    "Does a US-accessible pure-play listing emerge?",
+]
 
 UA = os.getenv("TENTACLE_USER_AGENT",
                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -92,16 +104,37 @@ ROTATION = {  # ET weekday -> (focus title, extra focused queries)
     6: ("weekly synthesis: rank movement, conviction, open questions", ["humanoid robot supply chain"]),
 }
 
+_RUBRIC = "; ".join(f"{i + 1}={c} (weight {int(w * 100)}%)"
+                    for i, (c, w) in enumerate(zip(CRITERIA, WEIGHTS)))
+_SCHEMA = (
+    'Reply with JSON only: {"summary": [3-6 short complete sentences, each naming its source, ONLY '
+    "genuinely NEW information not in the previously-reported list], "
+    '"score_changes": [{"ticker": str, "criterion": 1-8, "new": 0-10, "evidence": str}], '
+    '"open_questions": [the 3-7 most important open questions going forward, carried over and updated], '
+    '"notable": "one sentence: the single most important NEW thing today"}. '
+    "Empty score_changes is the normal, honest answer.")
+_TIER_RULE = (
+    "Items are tagged [tag/T1|T2|T3 date]: T1 = SEC filings and company press releases (primary), "
+    "T2 = reputable press, T3 = blogs/aggregators. Criterion 4 (real dollars) may only move on T1 "
+    "evidence; every other criterion needs T1 or T2. T3 never moves a score. ")
+
 SYNTH_SYS = (
     "You are Robotics Scout, a disciplined equity research analyst tracking the humanoid/robotics "
-    "supply chain. You score companies on a FIXED 8-criterion rubric (0-10 each): "
-    + "; ".join(f"{i + 1}={c} (weight {int(w * 100)}%)" for i, (c, w) in enumerate(zip(CRITERIA, WEIGHTS)))
-    + ". Discipline: a score changes ONLY on hard new evidence from today's headlines, never on vibes or "
-    "TAM slides. Criterion 4 counts disclosed dollars only. Most days NO score should move. "
-    'Reply with JSON only: {"summary": [3-6 short complete sentences, each naming its source headline], '
-    '"score_changes": [{"ticker": str, "criterion": 1-8, "new": 0-10, "evidence": str}], '
-    '"notable": "one sentence: the single most important thing today"}. '
-    "Empty score_changes is the normal, honest answer.")
+    "supply chain. You score companies on a FIXED 8-criterion rubric (0-10 each): " + _RUBRIC
+    + ". Discipline: a score changes ONLY on hard new evidence, never on vibes or TAM slides. "
+    + _TIER_RULE + "Never re-report a finding from the previously-reported list; if nothing genuinely "
+    "new happened for a name, say nothing about it. " + _SCHEMA)
+
+RED_SYS = (
+    "You are Robotics Scout on RED TEAM day. Your only job today is to attack the current leader on "
+    "the scoreboard: hunt for disconfirming evidence in the items provided, steelman the bear case, "
+    "and state what would have to be true for the leader to fail and whether any of it is showing up. "
+    "Rubric: " + _RUBRIC + ". " + _TIER_RULE
+    + 'Reply with JSON only: {"summary": [3-5 complete sentences of the strongest DISCONFIRMING '
+    'evidence found, each naming its source], "bear_case": "one honest paragraph: the strongest case '
+    'against the leader today", "score_changes": [{"ticker": str, "criterion": 1-8, "new": 0-10, '
+    '"evidence": str}], "open_questions": [3-7 questions], "notable": "one sentence"}. '
+    "If the bear hunt comes up empty, say so plainly in bear_case.")
 
 
 def _composite(scores: list) -> float:
@@ -122,12 +155,31 @@ class RoboticsDesk:
         self.verdict_day = str(rc.get("verdict_date", "2026-09-06"))
         self.max_heads = int(rc.get("max_headlines", 60))
         self.st = load_json(MARK_PATH, {"last_day": None, "done": False})
+        self.feed = RoboticsFeed(cfg, UA)                      # the 24/7 collector
 
     def due(self) -> bool:
         if not self.on or self.st.get("done"):
             return False
         et = market.now_et()
         return self.st.get("last_day") != et.strftime("%Y-%m-%d") and et.hour >= self.hour_et
+
+    def upkeep(self):
+        """Called every main-loop cycle: run the 24/7 collector when a batch is due and retry any
+        queued Telegram send. Must never throw and never block the trading loop meaningfully."""
+        if not self.on:
+            return
+        try:
+            if not self.st.get("done") and self.feed.due():
+                fresh = self.feed.tick()
+                if fresh:
+                    print(f"  [robotics-feed] +{fresh} new item(s) in the corpus")
+            if flush_pending(notify.send):
+                print("  [robotics] queued Telegram delivered")
+        except Exception as ex:
+            print(f"  [robotics-feed] tick failed: {ex}")
+
+    def _memory(self) -> dict:
+        return load_json(MEM_PATH, {"days": [], "open_questions": list(SEED_QUESTIONS), "bear": {}})
 
     def _board(self) -> dict:
         b = load_json(BOARD_PATH, None)
@@ -147,26 +199,33 @@ class RoboticsDesk:
             for e in feedparser.parse(r.content).entries[:6]:
                 ts = time.mktime(e.published_parsed) if getattr(e, "published_parsed", None) else time.time()
                 if ts >= cutoff:
-                    out.append({"tag": tag, "title": getattr(e, "title", "")[:150],
+                    title = getattr(e, "title", "")[:170]
+                    src = title.rsplit(" - ", 1)[-1] if " - " in title else ""
+                    out.append({"tag": tag, "title": title, "tier": _tier(src),
                                 "when": time.strftime("%m-%d", time.localtime(ts))})
             return out
         except Exception:
             return []
 
     def _gather(self, board: dict, weekday: int) -> list[dict]:
+        """Primary material = whatever the 24/7 collector already gathered; live queries only add
+        depth on today's focus. Falls back to the old direct sweep when the corpus is cold."""
+        heads = [{"tag": it.get("tag", "?"), "title": it.get("title", ""), "tier": it.get("tier", 3),
+                  "when": time.strftime("%m-%d", time.localtime(it.get("ts", time.time()))),
+                  "body": it.get("body", "")} for it in self.feed.recent()]
         focus_qs = list(ROTATION[weekday][1])
         if weekday == 5 and board["companies"]:                       # red team hits the leader
             top = max(board["companies"], key=lambda c: c["composite"])
-            focus_qs = [f'"{top["name"]}" risk OR bear OR short OR delay OR problem']
-        heads, seen = [], set()
-        lookback = 7 if weekday in (0, 6) else 3
-        for c in board["companies"]:
-            heads += self._fetch(f'"{c["name"]}" robotics OR humanoid OR stock', c["ticker"], lookback)
-        for q in focus_qs + WATCH[:3]:
-            heads += self._fetch(q, "focus", lookback)
-        out = []
-        for h in heads:                                               # dedupe echoed copies by title
-            k = h["title"].lower()[:80]
+            focus_qs = [f'"{top["name"]}" risk OR bear OR short OR delay OR problem',
+                        f'"{top["name"]}" competition OR insourcing OR price war']
+        for q in focus_qs:
+            heads += self._fetch(q, "focus", 3)
+        if len(heads) < 10:                                           # cold corpus (fresh volume/boot)
+            for c in board["companies"]:
+                heads += self._fetch(f'"{c["name"]}" robotics OR humanoid OR stock', c["ticker"], 3)
+        seen, out = set(), []
+        for h in sorted(heads, key=lambda h: (h.get("tier", 3), -len(h.get("body", "")))):
+            k = h["title"].lower()[:80]                               # best tier + full-text first
             if k not in seen:
                 seen.add(k)
                 out.append(h)
@@ -226,47 +285,73 @@ class RoboticsDesk:
         if today >= self.verdict_day or os.path.exists(VERDICT_PATH):
             return self._verdict(today)
         board = self._board()
+        mem = self._memory()
         weekday = market.now_et().weekday()
         focus = ROTATION[weekday][0]
         heads = self._gather(board, weekday)
         px_notes = self._prices(board) if weekday == 2 else []
-        res = llm.ask_json(SYNTH_SYS, "Today's focus: " + focus + "\n\nCurrent leaderboard:\n"
-                           + "\n".join(f"{c['ticker']} ({c['name']}) composite {c['composite']}: "
-                                       + ",".join(map(str, c["scores"])) for c in board["companies"])
-                           + "\n\nToday's fresh headlines:\n"
-                           + "\n".join(f"[{h['tag']} {h['when']}] {h['title']}" for h in heads)
-                           + ("\n\nPrice notes:\n" + "\n".join(px_notes) if px_notes else ""),
-                           max_tokens=1200, task="reason") or {}
+        bodies = [h for h in heads if h.get("body")][:6]
+        prev = [f"({d['date']}) {f}" for d in mem["days"][-3:] for f in [d.get("notable", "")] + d.get("findings", []) if f]
+        user = ("Today's focus: " + focus + "\n\nCurrent leaderboard:\n"
+                + "\n".join(f"{c['ticker']} ({c['name']}) composite {c['composite']}: "
+                            + ",".join(map(str, c["scores"])) for c in board["companies"])
+                + "\n\nOpen questions being tracked:\n" + "\n".join(f"- {q}" for q in mem["open_questions"])
+                + ("\n\nPreviously reported (do NOT repeat):\n" + "\n".join(f"- {p}" for p in prev[:18]) if prev else "")
+                + "\n\nFresh items from the 24/7 collector:\n"
+                + "\n".join(f"[{h['tag']}/T{h.get('tier', 3)} {h['when']}] {h['title']}" for h in heads)
+                + ("\n\nFull-article excerpts:\n" + "\n\n".join(
+                    f"[{b['tag']}] {b['title']}\n{b['body'][:700]}" for b in bodies) if bodies else "")
+                + ("\n\nPrice notes:\n" + "\n".join(px_notes) if px_notes else ""))
+        res = llm.ask_json(RED_SYS if weekday == 5 else SYNTH_SYS, user,
+                           max_tokens=1400, task="reason") or {}
         summary = [str(s)[:220] for s in (res.get("summary") or [])][:6] or \
             [f"[{h['tag']}] {h['title']}" for h in heads[:5]] or \
             ["No fresh headlines cleared the recency filter today."]
         changed = self._apply(board, res.get("score_changes"), today)
         notable = str(res.get("notable", ""))[:220]
+        bear = str(res.get("bear_case", ""))[:500] if weekday == 5 else ""
         board["companies"].sort(key=lambda c: -c["composite"])
         save_json(BOARD_PATH, board)
+        oq = [str(q)[:160] for q in (res.get("open_questions") or []) if str(q).strip()][:7]
+        mem["days"] = (mem["days"] + [{"date": today, "notable": notable, "findings": summary}])[-7:]
+        if oq:
+            mem["open_questions"] = oq
+        if bear:
+            mem["bear"] = {"date": today, "case": bear}
+        save_json(MEM_PATH, mem)
         self._log_md(today, focus, heads, summary, changed, notable)
-        self._send_daily(today, focus, heads, summary, changed, notable, board)
-        return f"researched {len(heads)} headlines ({focus.split(':')[0]}), {len(changed)} score change(s)"
+        self._send_daily(today, focus, heads, summary, changed, notable, board, bear, len(bodies))
+        return (f"researched {len(heads)} items ({focus.split(':')[0]}), {len(bodies)} full reads, "
+                f"{len(changed)} score change(s)")
 
-    def _send_daily(self, today, focus, heads, summary, changed, notable, board):
+    def _send_daily(self, today, focus, heads, summary, changed, notable, board, bear="", n_reads=0):
         e = notify.esc
         day_n = (date.fromisoformat(today) - date.fromisoformat(SEED_DAY)).days
         left = (date.fromisoformat(self.verdict_day) - date.fromisoformat(today)).days
+        last24 = self.feed.recent(24)
+        n_edgar = sum(1 for it in last24 if it.get("tag") == "edgar")
         L = [f"🤖 <b>ROBOTICS SCOUT · daily research · {market.now_et().strftime('%a %b %-d')}</b>",
              f"Day {day_n} of 30. Today's focus: {e(focus)}.",
-             f"I read {len(heads)} fresh headlines across the tracked names.", ""]
+             f"The 24/7 collector gathered {len(last24)} new items in the last 24 hours "
+             f"({n_edgar} SEC filings). I analyzed {len(heads)} and read {n_reads} articles in full.", ""]
         if notable:
             L += [f"⭐ {e(notable)}", ""]
-        L.append("<b>WHAT I FOUND</b>")
+        L.append("<b>WHAT I FOUND (new only)</b>")
         L += [f"• {e(s)}" for s in summary]
+        if bear:
+            L += ["", "<b>RED TEAM: THE BEAR CASE ON THE LEADER</b>", e(bear)]
         L += ["", "<b>SCORE CHANGES</b>"]
-        L += [f"• {e(c)}" for c in changed] or ["• No score moved today. The rubric only moves on hard evidence."]
+        L += [f"• {e(c)}" for c in changed] or ["• No score moved today. The rubric only moves on "
+                                                "primary-source evidence."]
         L += ["", "<b>LEADERBOARD</b>"]
         L += [f"{i + 1}. {e(c['name'])} ({e(c['ticker'])}): {c['composite']}"
               for i, c in enumerate(board["companies"][:5])]
         L += ["", f"Final pick lands {self.verdict_day} ({left} days). This desk is research only: "
                   "TENTACLE does not trade these names for you."]
-        notify.send("\n".join(L)[:3900])
+        msg = "\n".join(L)[:3900]
+        if not notify.send(msg):
+            queue_send(msg)
+            print("  [robotics] Telegram send failed — queued, will retry every 2 minutes")
 
     def _verdict(self, today: str) -> str:
         if self.st.get("done"):
@@ -276,16 +361,22 @@ class RoboticsDesk:
         buyable.sort(key=lambda c: -c["composite"])
         pick, runner = buyable[0], (buyable[1] if len(buyable) > 1 else None)
         chain = [r for r in board["changelog"] if r["date"] != SEED_DAY][-12:]
+        mem = self._memory()
         case = llm.ask(
             "You are Robotics Scout delivering a 30-day final verdict. Write plainly, complete sentences, "
             "no hedging filler. Sections: the case for the pick (one paragraph), why the runner-up lost, "
-            "entry logic, and 3 invalidation criteria (specific, measurable).",
+            "the strongest bear case and your answer to it, entry logic, and 3 invalidation criteria "
+            "(specific, measurable).",
             f"Pick: {pick['name']} ({pick['ticker']}), composite {pick['composite']}. Thesis: {pick['thesis']}\n"
             + (f"Runner-up: {runner['name']} ({runner['ticker']}), composite {runner['composite']}. "
                f"Thesis: {runner['thesis']}\n" if runner else "")
+            + (f"Latest red-team bear case ({mem['bear'].get('date', '?')}): {mem['bear'].get('case', '')}\n"
+               if mem.get("bear", {}).get("case") else "")
+            + "Open questions at the end of the run:\n"
+            + "\n".join(f"- {q}" for q in mem.get("open_questions", [])) + "\n"
             + "Evidence chain from the 30 days:\n"
             + "\n".join(f"- {r['date']}: {r['change']} ({r['evidence']})" for r in chain),
-            max_tokens=900) or (
+            max_tokens=1000) or (
             f"The scoreboard's weighted rubric ranks {pick['name']} first at {pick['composite']}. "
             f"Thesis: {pick['thesis']} "
             + (f"Runner-up {runner['name']} at {runner['composite']}: {runner['thesis']}" if runner else ""))
@@ -296,11 +387,13 @@ class RoboticsDesk:
                     + ("".join(f"- {r['date']}: {r['change']} ({r['evidence']})\n" for r in chain)
                        or "- No score-moving evidence landed during the run; the seed thesis held.\n"))
         e = notify.esc
-        notify.send((f"🏁 <b>ROBOTICS SCOUT · 30-DAY FINAL VERDICT</b>\n\n"
-                     f"The pick is <b>{e(pick['name'])} ({e(pick['ticker'])})</b>, "
-                     f"final score {pick['composite']}/10.\n\n{e(case)}\n\n"
-                     "The full verdict with the evidence chain is saved on the server at "
-                     "state/robotics/FINAL_VERDICT.md. This was research only: nothing was traded.")[:3900])
+        vmsg = (f"🏁 <b>ROBOTICS SCOUT · 30-DAY FINAL VERDICT</b>\n\n"
+                f"The pick is <b>{e(pick['name'])} ({e(pick['ticker'])})</b>, "
+                f"final score {pick['composite']}/10.\n\n{e(case)}\n\n"
+                "The full verdict with the evidence chain is saved on the server at "
+                "state/robotics/FINAL_VERDICT.md. This was research only: nothing was traded.")[:3900]
+        if not notify.send(vmsg):
+            queue_send(vmsg)
         self.st["done"] = True
         save_json(MARK_PATH, self.st)
         return f"FINAL VERDICT delivered: {pick['name']} ({pick['ticker']}) at {pick['composite']}"

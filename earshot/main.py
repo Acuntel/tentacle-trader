@@ -492,13 +492,18 @@ class Earshot:
             print(f"\n  self-audit [{ar.get('by', 'static')}]: reviewed earshot/{ar['module']} — "
                   f"{ar['findings']} finding(s) journaled{broke}")
 
-        # 10) ROBOTICS SCOUT desk — Brady's personal research engine. Second daily Telegram with the
-        # day's research; final pick on verdict_date. Fully isolated from trading (never emits signals).
+        # 10) ROBOTICS SCOUT desk — Brady's personal research engine. The collector scrapes the
+        # robotics universe 24/7 in rotating batches; the daily pass synthesizes it into the second
+        # Telegram; final pick on verdict_date. Fully isolated from trading (never emits signals).
+        self.robotics.upkeep()
         if self.robotics.due():
             try:
                 print(f"\n  robotics scout — {self.robotics.run()}")
             except Exception as ex:
                 print(f"\n  robotics scout FAILED: {ex}")
+                from .robotics_feed import queue_send
+                queue_send("🤖 ROBOTICS SCOUT: today's research pass hit an error and will retry "
+                           f"tomorrow. The 24/7 collector keeps gathering meanwhile. Error: {ex}")
         print("=" * 74)
 
     def loop(self):
