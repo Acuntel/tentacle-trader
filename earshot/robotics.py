@@ -15,6 +15,7 @@ and make every later run a no-op (the old routine's hard rule #1).
 """
 from __future__ import annotations
 
+import json
 import os
 import time
 import urllib.parse
@@ -31,6 +32,7 @@ DIR = "state/robotics"
 BOARD_PATH = f"{DIR}/scoreboard.json"
 MARK_PATH = f"{DIR}/last_run.json"
 MEM_PATH = f"{DIR}/memory.json"
+FUND_PATH = f"{DIR}/fundamentals.json"
 VERDICT_PATH = f"{DIR}/FINAL_VERDICT.md"
 LOG_DIR = f"{DIR}/log"
 SEED_DAY = "2026-08-07"
@@ -110,6 +112,10 @@ _SCHEMA = (
     'Reply with JSON only: {"summary": [3-6 short complete sentences, each naming its source, ONLY '
     "genuinely NEW information not in the previously-reported list], "
     '"score_changes": [{"ticker": str, "criterion": 1-8, "new": 0-10, "evidence": str}], '
+    '"add_company": null OR {"name": str, "ticker": str, "scores": [8 ints 0-10], "thesis": str, '
+    '"evidence": str} when T1/T2 evidence reveals ONE publicly listed company that genuinely belongs '
+    "on the scoreboard and is not on it (score all 8 criteria honestly; null almost every day), "
+    '"retire": null OR {"ticker": str, "reason": str} for ONE name that clearly no longer belongs, '
     '"open_questions": [the 3-7 most important open questions going forward, carried over and updated], '
     '"notable": "one sentence: the single most important NEW thing today"}. '
     "Empty score_changes is the normal, honest answer.")
@@ -248,6 +254,105 @@ class RoboticsDesk:
                     notes.append(f"{c['ticker']} moved {mv:+.1f}% since the last check (now ${px:,.2f}).")
         return notes
 
+    def _fundamentals(self, board: dict) -> list[str]:
+        """Daily-cached valuation snapshot for every scoreboard name (criterion 5 stops running on
+        the seed's memory of multiples). Works for the .T/.SS names too via yfinance."""
+        cache = load_json(FUND_PATH, {"ts": 0, "rows": {}})
+        if time.time() - cache.get("ts", 0) > 20 * 3600:
+            rows = {}
+            try:
+                import yfinance as yf
+                for c in board["companies"]:
+                    try:
+                        info = yf.Ticker(c["ticker"]).info or {}
+                        px = info.get("currentPrice") or info.get("regularMarketPrice")
+                        hi = info.get("fiftyTwoWeekHigh")
+                        rows[c["ticker"]] = {
+                            "fpe": info.get("forwardPE"), "ps": info.get("priceToSalesTrailing12Months"),
+                            "off_high": round((1 - px / hi) * 100, 1) if px and hi else None,
+                            "short": info.get("shortPercentOfFloat"),
+                            "tgt": info.get("targetMeanPrice"), "px": px}
+                    except Exception:
+                        continue
+            except Exception:
+                pass
+            if rows:
+                cache = {"ts": time.time(), "rows": rows}
+                save_json(FUND_PATH, cache)
+        lines = []
+        for t, r in cache.get("rows", {}).items():
+            bits = []
+            if r.get("fpe"):
+                bits.append(f"fwd P/E {r['fpe']:.0f}")
+            if r.get("ps"):
+                bits.append(f"P/S {r['ps']:.1f}")
+            if r.get("off_high") is not None:
+                bits.append(f"{r['off_high']:.0f}% off 52wk high")
+            if r.get("short"):
+                bits.append(f"short {r['short'] * 100:.0f}% of float")
+            if r.get("px") and r.get("tgt"):
+                bits.append(f"analyst target {(r['tgt'] / r['px'] - 1) * 100:+.0f}%")
+            if bits:
+                lines.append(f"{t}: " + ", ".join(bits))
+        return lines
+
+    def _verify(self, changes: list, heads: list) -> list:
+        """Second-opinion pass: every proposed change survives only if an independent skeptical call
+        fails to refute it. A None verdict (verifier unavailable) keeps the change — one model with
+        keys must not brick the desk; an explicit confirmed:false kills it."""
+        out = []
+        ev = "\n".join(f"[{h['tag']}/T{h.get('tier', 3)}] {h['title']}" for h in heads[:40])
+        for ch in (changes or [])[:5]:
+            v = llm.ask_json(
+                "You are a skeptical research fact-checker for a robotics supply-chain scoreboard. "
+                "Decide if the cited evidence really supports the proposed change under these rules: "
+                "criterion 4 (real disclosed dollars) requires a tier-1 item (SEC filing or company "
+                "press release); other criteria need tier 1 or 2; narrative, TAM talk, or a price move "
+                'alone never justifies a change. Reply with JSON only: {"confirmed": true or false, '
+                '"why": "one sentence"}.',
+                "Proposed change: " + json.dumps(ch) + "\n\nToday's evidence items:\n" + ev,
+                max_tokens=200, temperature=0.0, task="reason")
+            if v is not None and v.get("confirmed") is False:
+                print(f"  [robotics] verifier refuted a change ({str(ch.get('ticker', '?'))}): "
+                      f"{str(v.get('why', ''))[:90]}")
+                continue
+            out.append(ch)
+        return out
+
+    def _mutate_board(self, board: dict, add, retire, today: str) -> list[str]:
+        """The scoreboard is alive: verified discoveries join it, dead names leave it. Bounded to one
+        add and one retire per day; the top 5 and a minimum board of 8 are untouchable."""
+        notes = []
+        if isinstance(add, dict) and add.get("ticker") and str(add.get("evidence", "")).strip():
+            t = str(add["ticker"]).upper()
+            try:
+                scores = [max(0, min(10, int(s))) for s in (add.get("scores") or [])][:8]
+                if (len(scores) == 8 and len(board["companies"]) < 18
+                        and t not in {c["ticker"] for c in board["companies"]}):
+                    row = {"name": str(add.get("name", t))[:60], "ticker": t, "scores": scores,
+                           "composite": _composite(scores), "thesis": str(add.get("thesis", ""))[:160]}
+                    board["companies"].append(row)
+                    board["changelog"].append({"date": today, "change": f"ADDED {t} at {row['composite']}",
+                                               "evidence": str(add["evidence"])[:200]})
+                    notes.append(f"New name on the scoreboard: {row['name']} ({t}) enters at "
+                                 f"{row['composite']}. {str(add['evidence'])[:120]}")
+            except Exception:
+                pass
+        if isinstance(retire, dict) and retire.get("ticker"):
+            t = str(retire["ticker"]).upper()
+            comps = board["companies"]
+            top5 = {c["ticker"] for c in sorted(comps, key=lambda c: -c["composite"])[:5]}
+            tgt = next((c for c in comps if c["ticker"] == t), None)
+            if tgt and t not in top5 and len(comps) > 8:
+                comps.remove(tgt)
+                board.setdefault("retired", []).append(
+                    dict(tgt, retired=today, reason=str(retire.get("reason", ""))[:160]))
+                board["changelog"].append({"date": today, "change": f"RETIRED {t}",
+                                           "evidence": str(retire.get("reason", ""))[:200]})
+                notes.append(f"Retired {tgt['name']} ({t}) from the scoreboard. "
+                             f"{str(retire.get('reason', ''))[:120]}")
+        return notes
+
     def _apply(self, board: dict, changes: list, today: str) -> list[str]:
         lines = []
         by_tkr = {c["ticker"]: c for c in board["companies"]}
@@ -290,6 +395,7 @@ class RoboticsDesk:
         focus = ROTATION[weekday][0]
         heads = self._gather(board, weekday)
         px_notes = self._prices(board) if weekday == 2 else []
+        fund = self._fundamentals(board)
         bodies = [h for h in heads if h.get("body")][:6]
         prev = [f"({d['date']}) {f}" for d in mem["days"][-3:] for f in [d.get("notable", "")] + d.get("findings", []) if f]
         user = ("Today's focus: " + focus + "\n\nCurrent leaderboard:\n"
@@ -301,13 +407,18 @@ class RoboticsDesk:
                 + "\n".join(f"[{h['tag']}/T{h.get('tier', 3)} {h['when']}] {h['title']}" for h in heads)
                 + ("\n\nFull-article excerpts:\n" + "\n\n".join(
                     f"[{b['tag']}] {b['title']}\n{b['body'][:700]}" for b in bodies) if bodies else "")
+                + ("\n\nValuation snapshot (criterion 5 inputs, refreshed daily):\n"
+                   + "\n".join(fund) if fund else "")
                 + ("\n\nPrice notes:\n" + "\n".join(px_notes) if px_notes else ""))
         res = llm.ask_json(RED_SYS if weekday == 5 else SYNTH_SYS, user,
                            max_tokens=1400, task="reason") or {}
         summary = [str(s)[:220] for s in (res.get("summary") or [])][:6] or \
             [f"[{h['tag']}] {h['title']}" for h in heads[:5]] or \
             ["No fresh headlines cleared the recency filter today."]
-        changed = self._apply(board, res.get("score_changes"), today)
+        changed = self._apply(board, self._verify(res.get("score_changes"), heads), today)
+        add = res.get("add_company")
+        add_ok = (self._verify([add], heads) or [None])[0] if isinstance(add, dict) else None
+        changed += self._mutate_board(board, add_ok, res.get("retire"), today)
         notable = str(res.get("notable", ""))[:220]
         bear = str(res.get("bear_case", ""))[:500] if weekday == 5 else ""
         board["companies"].sort(key=lambda c: -c["composite"])
@@ -340,10 +451,10 @@ class RoboticsDesk:
         L += [f"• {e(s)}" for s in summary]
         if bear:
             L += ["", "<b>RED TEAM: THE BEAR CASE ON THE LEADER</b>", e(bear)]
-        L += ["", "<b>SCORE CHANGES</b>"]
-        L += [f"• {e(c)}" for c in changed] or ["• No score moved today. The rubric only moves on "
-                                                "primary-source evidence."]
-        L += ["", "<b>LEADERBOARD</b>"]
+        L += ["", "<b>SCORE & BOARD CHANGES</b>"]
+        L += [f"• {e(c)}" for c in changed] or ["• Nothing moved today. Scores and the board only "
+                                                "move on verified primary-source evidence."]
+        L += ["", f"<b>LEADERBOARD (top 5 of {len(board['companies'])})</b>"]
         L += [f"{i + 1}. {e(c['name'])} ({e(c['ticker'])}): {c['composite']}"
               for i, c in enumerate(board["companies"][:5])]
         L += ["", f"Final pick lands {self.verdict_day} ({left} days). This desk is research only: "
