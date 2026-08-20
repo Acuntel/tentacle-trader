@@ -140,7 +140,7 @@ class LearnedGate:
         feat["f_squeeze"] = feat.get("f_squeeze", 0.0)
         # Forge-found features: is_crowd and is_price are strong predictors; expose them explicitly
         # so the online learner gets stable, named weights (avoids dynamic key churn in knowledge.json).
-        feat["is_crowd"] = 1.0 if "crowd" in p else 0.0
+        feat["is_crowd"] = feat.get("is_crowd", 0.0)
         feat["is_price"] = feat.get("is_price", 0.0)
         return feat
 
