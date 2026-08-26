@@ -168,7 +168,7 @@ class BrainCore:
         # Rate = samples gained / DAYS elapsed between snapshots (they aren't always consecutive days).
         # NOTE: "day" is an ISO date STRING — a self-patch (A0097) called int() on it and crashed every
         # cycle. Parse real dates; fall back to 1 day.
-        samples_per_day = None
+        samples_per_day = 0
         if len(smp) >= 2:
             try:
                 import datetime as _dt
