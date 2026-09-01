@@ -108,7 +108,7 @@ class LearnedGate:
             "independence": indep, "news_events": news, "opt_bias": opt_b, "tech_bias": tech_b,
             # AUDIT FIX: 8 self-changes ratcheted this scale 2->4->...->64; tanh(sqz*64) saturates at
             # sqz=0.05 (near-binary feature, information destroyed). sqz is already 0..1 — mild scale.
-            "squeeze": math.tanh(sqz * 1.0), "quality": qual, "analyst_conv": conv,
+            "squeeze": math.tanh(sqz * 2.0), "quality": qual, "analyst_conv": conv,
             "is_filing": is_filing, "is_options": is_options, "is_price": is_price, "is_regulatory": -1.0 if "regulatory" in p else 0.0,
             "f_market_cap": _znorm("f_market_cap", float(f.get("market_cap", 0) or 0)), "o_max_pain": _znorm("o_max_pain", float(o.get("max_pain", 0) or 0)),
             "indep_x_conv": indep * conv, "opt_x_tech": opt_b * tech_b, "sqz_x_filing": sqz * is_filing, "sqz_x_regulatory": sqz * (1.0 if "regulatory" in p else 0.0),
