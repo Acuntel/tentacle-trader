@@ -27,7 +27,11 @@ FAMILY = {
     # as 2 independent families (fake convergence) and escaped the dossier's news dedup.
     "newswire": "news",
     "alpaca_news": "news", "finnhub": "news", "google_news": "news", "hackernews": "news",
-    "fda": "regulatory", "fda_approvals": "regulatory", "gov_contract": "regulatory",
+    # AUTOPSY FIX 2026-09-01: "fda" is ClinicalTrials.gov trial-STATUS rows (a study finishing
+    # enrollment), not an approval. As a "regulatory" TRIGGER it manufactured the book's biggest
+    # catalyst (38 trades incl. LLY at $450) out of non-events. Confirm-only now; the real
+    # approval event is "fda_approvals" (openFDA Drugs@FDA).
+    "fda": "news", "fda_approvals": "regulatory", "gov_contract": "regulatory",
     "index_inclusion": "regulatory", "nasdaq_halts": "regulatory", "pdufa": "regulatory",
     "polymarket": "crowd",
     "wiki_attention": "attention",
@@ -133,7 +137,21 @@ class Brain:
         if catalyst and self.patterns is not None and not self.patterns.catalyst_graduated(catalyst):
             if (self.patterns.grad.get(catalyst) or {}).get("usd", 0.0) <= 0:
                 frac = min(frac, 0.25)
+        # AUTOPSY FIX 2026-09-01: hard per-name cap. One saturated-score name (LLY, $450 of $500)
+        # was 31% of all losses; the 31 max-confidence trades lost $71 of the $88 total.
+        frac = min(frac, float(self.conv.get("max_position_frac", 0.25)))
         return round(capital * frac, 2)
+
+    @staticmethod
+    def _soft(score: float) -> float:
+        """AUTOPSY FIX 2026-09-01: de-saturate. ~12 stacked multipliers pushed most qualifying names
+        into the hard 100 clamp, so ranking collapsed to a tiebreak and the top size band fired on
+        ties. Above 80 the score is compressed smoothly (100 -> ~87, 120 -> ~93, 200 -> ~99.5):
+        monotone, so ordering is preserved, but 100 stops being the modal score."""
+        s = max(0.0, float(score))
+        if s > 80.0:
+            s = 80.0 + 20.0 * (1.0 - math.exp(-(s - 80.0) / 40.0))
+        return min(100.0, s)
 
     def evaluate(self, signals: list[RawSignal], capital: float, regime_down: bool) -> list[Candidate]:
         by_ticker: dict[str, list[RawSignal]] = defaultdict(list)
@@ -214,6 +232,11 @@ class Brain:
                 target = self.patterns.suggested_target(sig, ccfg["target_pct"])
                 if self.patterns.catalyst_graduated(catalyst.value):
                     score *= 1.10               # a PROVEN forward ledger earns extra conviction
+            # AUTOPSY FIX 2026-09-01: reward:risk floor. Breakeven at a 6% stop / 4% target needs a
+            # 62% hit rate; the book runs ~41%. No candidate may carry a target under
+            # min_reward_risk x its stop — the learned payoff can shrink the target only down to here.
+            min_rr = float(self.conv.get("min_reward_risk", 1.5))
+            target = max(float(target), round(min_rr * float(ccfg["stop_pct"]), 1))
 
             # PRICE ACTION (candlesticks + RSI/trend) decides the TIMING — only for names that already
             # cleared the catalyst gate, so we never price-scan the whole fleet (anti-ban).
@@ -267,7 +290,7 @@ class Brain:
                     event_ts = dts
             if self.core is not None:                  # calibration: scale conviction to realized win-rate
                 score *= self.core.calib_factor(score)
-            score = max(0.0, min(100.0, score))
+            score = self._soft(score)                  # de-saturate (see _soft): no pile-up at 100
 
             # LEARNING VELOCITY: emit near-miss candidates for labeling even when they won't trade
             if not qualifies and nearmiss_used < nearmiss_budget and len(per_source) >= self.conv["min_independent_sources"]:
@@ -323,12 +346,12 @@ class Brain:
                 dos = dossier.build(cand, self.macro)
                 verdict = self.analyst.judge(dos)
                 cand._verdict = verdict
-                cand.confidence = max(0.0, min(100.0, cand.confidence * (0.6 + 0.008 * verdict["conviction"])))
+                cand.confidence = self._soft(cand.confidence * (0.6 + 0.008 * verdict["conviction"]))
                 # ORTHOGONALITY: real confirmation is agreement across INDEPENDENT evidence TYPES (the
                 # dossier's deduped pillars), not echoed sources. Reward 3+ orthogonal pillars; discount
                 # a lone-pillar setup that only looked confirmed because two sources echoed one wire.
                 indep = dos.get("independence", 1)
-                cand.confidence = min(100.0, cand.confidence * (1.08 if indep >= 3 else 1.0 if indep == 2 else 0.92))
+                cand.confidence = self._soft(cand.confidence * (1.08 if indep >= 3 else 1.0 if indep == 2 else 0.92))
                 if (not verdict.get("real", True)) or verdict.get("direction") != "up":
                     cand._analyst_veto = "analyst: " + (verdict.get("bear_case") or "not a clean up-catalyst")
                 if self.lgate is not None:
@@ -374,7 +397,7 @@ class Brain:
                         from .patterns import field_rate as _fr2
                         _fld2 = _fr2(self.lgate.know) if self.lgate is not None else 0.5
                         edge = max(-1.0, min(1.0, (mem["win_rate"] - _fld2) / max(_fld2, 1 - _fld2)))
-                        cand.confidence = max(0.0, min(100.0, cand.confidence * (1.0 + 0.12 * edge)))
+                        cand.confidence = self._soft(cand.confidence * (1.0 + 0.12 * edge))
                 except Exception:
                     pass
                 cand.size_usd = self._size(cand.confidence, capital, pwin=getattr(cand, "_pwin", None),

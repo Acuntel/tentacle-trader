@@ -89,9 +89,13 @@ class SourceScout:
             t = st["trades"]
             if t == 0:
                 continue
+            avg = st["sum_ret"] / t
+            if avg != avg:                     # AUTOPSY FIX 2026-09-01: NaN sum_ret (google_news/form4)
+                avg = 0.0
+                st["sum_ret"] = 0.0
             rows.append({
                 "source": src, "trades": t, "precision": round(st["wins"] / t, 2),
-                "avg_ret": round(st["sum_ret"] / t, 2), "weight": self.weights.get(src, 0.5),
+                "avg_ret": round(avg, 2), "weight": self.weights.get(src, 0.5),
             })
         rows.sort(key=lambda r: r["precision"], reverse=True)
         weak = [r["source"] for r in rows if r["trades"] >= 8 and r["precision"] < 0.4]

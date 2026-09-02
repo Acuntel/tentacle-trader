@@ -26,11 +26,33 @@ def save_json(path: str, obj) -> None:
     os.replace(tmp, path)                            # atomic swap-in — readers never see a half file
 
 
+def _scrub(obj, stats: dict):
+    """AUTOPSY FIX 2026-09-01: JSON round-trips carry NaN/Infinity, and one poisoned accumulator
+    (sim.sum_ret, a strategy fold's u, a source's sum_ret) silently turned the benchmark, the luck
+    floor and the honesty gauge into NaN for weeks. Every load replaces non-finite floats with 0.0
+    and counts what it healed."""
+    if isinstance(obj, float):
+        if obj != obj or obj in (float("inf"), float("-inf")):
+            stats["healed"] = stats.get("healed", 0) + 1
+            return 0.0
+        return obj
+    if isinstance(obj, dict):
+        return {k: _scrub(v, stats) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_scrub(v, stats) for v in obj]
+    return obj
+
+
 def load_json(path: str, default):
     for p in (path, path + ".bak"):                 # main first, then the backup if it's corrupt
         try:
             with open(p) as f:
-                return json.load(f)
+                obj = json.load(f)
+            stats: dict = {}
+            obj = _scrub(obj, stats)
+            if stats.get("healed"):
+                print(f"  [persist] healed {stats['healed']} non-finite value(s) in {os.path.basename(p)}")
+            return obj
         except FileNotFoundError:
             continue
         except Exception:

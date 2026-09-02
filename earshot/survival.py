@@ -83,7 +83,10 @@ def compute_mastery(recent: list[dict], start: float, field: float | None = None
     pf_norm = max(0.0, min(1.0, (pf - 1) / 2))
     eq, peak, maxdd = start, start, 0.0
     for r in recent:                                       # real drawdown is on RAW $ moves
-        eq *= (1 + r["pnl_pct"] / 100)
+        # AUTOPSY FIX 2026-09-01: size-weighted. Compounding every trade's % at 100% of equity
+        # read a 43% drawdown on a book whose real drawdown was 18%. Legacy rows without a size
+        # assume a quarter-position (the typical band).
+        eq *= (1 + r["pnl_pct"] / 100 * float(r.get("size_frac", 0.25)))
         peak = max(peak, eq)
         maxdd = max(maxdd, (peak - eq) / peak)
     scale = (field / 0.5) if field else 1.0                # R1: rescale the claim into the label's world
@@ -131,7 +134,10 @@ class MotherInstinct:
         """In shadow we size off the notional so outcomes have magnitude to learn from.
         Live uses only the capital the current rung has unlocked."""
         if self.mode == "shadow":
-            return self.start
+            # AUTOPSY FIX 2026-09-01: the book was sized off the fixed $500 start while equity sat
+            # at $411 — 121% deployed. Size off what the son actually has (floored so a deep
+            # drawdown can't starve the sample flow to zero); never above the original stake.
+            return float(min(self.start, max(0.5 * self.start, self.state["paper_equity"])))
         return float(self.rung_cfg()["capital"])
 
     @property
@@ -252,6 +258,7 @@ class MotherInstinct:
         self.state["peak_equity"] = max(self.state["peak_equity"], self.state["paper_equity"])
         self.state["recent"] = (self.state["recent"] + [{
             "conf": conf, "pnl_pct": round(pnl_pct, 2), "alpha": round(a, 2), "win": a > 0,
+            "size_frac": round(size_usd / self.start, 4) if self.start else 0.25,   # for the dd term
         }])[-100:]
         # timestamped equity curve -> realized monthly return vs the 10%/mo goal (the honest scorecard)
         self.state["equity_curve"] = (self.state.get("equity_curve", []) + [
@@ -350,7 +357,8 @@ class MotherInstinct:
                 for line in f:
                     o = json.loads(line)
                     a = o.get("alpha", o["pnl_pct"])       # recompute mastery on alpha, equity on raw $
-                    recs.append({"conf": o["confidence"], "pnl_pct": o["pnl_pct"], "alpha": a, "win": a > 0})
+                    recs.append({"conf": o["confidence"], "pnl_pct": o["pnl_pct"], "alpha": a, "win": a > 0,
+                                 "size_frac": round(o["size_usd"] / self.start, 4) if self.start else 0.25})
                     eq += o["size_usd"] * o["pnl_pct"] / 100
         except FileNotFoundError:
             return {"ok": True, "note": "no ledger yet"}

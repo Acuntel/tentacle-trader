@@ -128,6 +128,10 @@ class StrategyBook:
         return round(ret - mkt, 3) if mkt is not None else round(ret, 3)
 
     def _bump(self, b: dict, r: float):
+        if not (r == r and abs(r) < 1e6):            # AUTOPSY FIX 2026-09-01: NaN/inf never enters a fold
+            return
+        if not (b["u"] == b["u"]):                   # heal a bin already poisoned by an old NaN
+            b["u"] = 0.0
         b["n"] += 1
         b["w"] += 1 if r > 0 else 0
         n = b["n"]
@@ -209,6 +213,7 @@ class StrategyBook:
         expectancy under NO real edge is ~ sigma * sqrt(2*ln N). A 'survivor' must beat THAT, so we
         never crown a strategy that only looks good because we tried hundreds of variants."""
         scores = [float(self._score(s)) for s in self._ranked()]
+        scores = [x for x in scores if x == x and abs(x) < 1e6]   # AUTOPSY FIX: NaN disabled the floor
         if len(scores) < 5:
             return 0.0
         # hand-rolled population stdev: statistics.pstdev crashes on mixed numeric types from

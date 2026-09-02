@@ -71,10 +71,18 @@ class BrainCore:
     # ---- learned per-catalyst trading rules (#1) merged over the config defaults ----
     def rule(self, catalyst: str, default: dict) -> dict:
         r = dict(default)
-        # catalyst-specific learning wins; the decade-swept generic rule is only a FALLBACK
-        learned = self.know["catalyst_rules"].get(catalyst) or self.know["catalyst_rules"].get("__default__")
+        # AUTOPSY FIX 2026-09-01: the "__default__" rule (a random daily-bar momentum sweep, nothing
+        # to do with catalysts) was applied over EVERY catalyst because it was the only key that ever
+        # existed — insider_cluster's 30-day hold, fda's 10% stop and pdufa's 35-day hold were all
+        # silently replaced by {stop 6, target 16, hold 5}. Now: a catalyst-specific learned rule
+        # still wins, but the generic default may only FILL keys the config left missing.
+        learned = self.know["catalyst_rules"].get(catalyst)
         if learned:
             r.update({k: learned[k] for k in ("stop_pct", "target_pct", "hold_days") if k in learned})
+        generic = self.know["catalyst_rules"].get("__default__") or {}
+        for k in ("stop_pct", "target_pct", "hold_days"):
+            if k not in r and k in generic:
+                r[k] = generic[k]
         return r
 
     # ---- calibration (#3): does a stated confidence match reality? ----
@@ -82,13 +90,16 @@ class BrainCore:
         # confidence-AWARE calibration (audit fix 2026-07-13): use the per-bucket factor so a
         # high-confidence bucket that historically loses is haircut harder than a winning mid bucket.
         # Buckets MUST match evolve.update_calibration: <70 -> "55", <85 -> "70", else "85".
+        # AUTOPSY FIX 2026-09-01: calibration may only HAIRCUT. Every live bin sat above 1.0 (the
+        # 85+ bin at 1.09 while winning 43%), so "calibration" was inflating scores into the 100
+        # clamp instead of correcting them.
         cal = self.know.get("calibration", {})
         per = cal.get("per_bin")
         if per:
             b = "55" if conf < 70 else "70" if conf < 85 else "85"
             if b in per:
-                return float(per[b])
-        return float(cal.get("factor", 1.0))          # back-compat: pre-fix knowledge.json (global scalar)
+                return min(1.0, float(per[b]))
+        return min(1.0, float(cal.get("factor", 1.0)))   # back-compat: pre-fix knowledge.json (global scalar)
 
     # ---- THE simultaneous fusion — everything sharpens everything, in one pass ----
     def synthesize(self, patterns) -> dict:
@@ -149,7 +160,7 @@ class BrainCore:
                 "improving": (d7("mastery") + d7("edge") + d7("sim_son")) > 0}
 
     # ---- WS6: LEARNING VELOCITY — measure the RATE of real learning, not just activity ----
-    def velocity(self, lgate) -> dict:
+    def velocity(self, lgate, instinct=None) -> dict:
         """Is it actually learning, and how fast? Tracks the things that move only on REAL signal:
         samples/day, the Brier-score trend (calibration improving = genuine learning; flat after
         thousands of samples = no edge), and the off-book learning trades' directional hit-rate + alpha.
@@ -196,21 +207,48 @@ class BrainCore:
         mastery_7d = (round(mastery_now - float((mst[-8] if len(mst) >= 8 else mst[0])["mastery"]), 2)
                       if len(mst) >= 2 else None)
         days = len(hist)
-        real_improvement = (mastery_7d is not None and mastery_7d > 1.0) or \
-                           (avg_alpha is not None and avg_alpha > 0 and dir_hit is not None and dir_hit > 0.5)
-        enough = (trades >= int(vcfg.get("verdict_min_trades", 200))
+        # ---- AUTOPSY FIX 2026-09-01: the CLEAN practice gauge ----
+        # The lifetime explore accumulator was five corrupt reverse-split SHORT prints (sum -6,815 of
+        # -6,713) plus a side the long-only account can never take. The gauge that matters is the
+        # long-only, recent, outlier-trimmed alpha per trade — computed here from the rolling ledger.
+        import time as _t
+        recent = self.know.get("explore_recent", [])
+        wdays = float(vcfg.get("window_days", 30))
+        cutoff = _t.time() - wdays * 86400
+        longs = sorted(float(r.get("alpha", 0.0)) for r in recent
+                       if int(r.get("dir", 1)) > 0 and float(r.get("ts", 0)) >= cutoff
+                       and abs(float(r.get("alpha", 0.0))) <= 60.0)
+        clean_n, clean_alpha, clean_hit = len(longs), None, None
+        if clean_n >= 20:
+            k = clean_n // 10
+            core_ = longs[k:clean_n - k] or longs
+            clean_alpha = round(sum(core_) / len(core_), 3)
+            clean_hit = round(sum(1 for a in longs if a > 0) / clean_n, 3)
+        mret = None
+        try:
+            mret = instinct.monthly_return_pct() if instinct is not None else None
+        except Exception:
+            mret = None
+        # ---- "Is it on the RIGHT PATH?" — MONEY and CLEAN PRACTICE, never a mastery delta ----
+        # The old verdict fired "ON TRACK" on a +1 mastery move alone while realized return was
+        # -7.7%/month. Both honest gauges must agree before the banner says the path is right.
+        money_ok = mret is not None and mret > 0
+        practice_ok = clean_alpha is not None and clean_alpha > 0
+        enough = (clean_n >= 20 or trades >= int(vcfg.get("verdict_min_trades", 200))
                   or days >= int(vcfg.get("verdict_min_days", 7)))
         if not enough:
             verdict = "TOO EARLY"
-        elif real_improvement:
+        elif money_ok and practice_ok:
             verdict = "ON TRACK"
-        elif no_edge or (mastery_now <= 0.1 and (avg_alpha or 0) <= 0):
-            verdict = "SPINNING"
-        else:
+        elif money_ok or practice_ok:
             verdict = "SETTLING"
+        else:
+            verdict = "SPINNING"
         return {"n": n, "brier": brier, "trust": trust, "brier_7d": brier_7d,
                 "samples_per_day": samples_per_day, "explore_trades": trades,
                 "dir_hit": dir_hit, "avg_explore_alpha": avg_alpha,
+                "clean_n": clean_n, "clean_alpha": clean_alpha, "clean_hit": clean_hit,
+                "monthly_return": mret,
                 "learning": learning, "no_edge": no_edge,
                 "mastery_now": mastery_now, "mastery_7d": mastery_7d, "days": days, "verdict": verdict}
 

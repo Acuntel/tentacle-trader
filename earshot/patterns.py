@@ -194,7 +194,10 @@ class PatternMemory:
         if st["wins"] < 5:
             st = self._backoff(sig, 12)                 # borrow the family's payoff profile if data-poor
         if st["wins"] >= 5:
-            return round(max(4.0, min(25.0, st["sum_win_ret"] / st["wins"])), 1)
+            # AUTOPSY FIX 2026-09-01: the learned payoff is a CEILING on the config target, never a
+            # floor. The old max(4.0, ...) floor put a ~4% target under a 6% stop on every book trade
+            # (22 stops -$173 vs 18 targets +$76). brain.evaluate enforces the reward:risk floor.
+            return round(min(float(default), max(1.0, min(25.0, st["sum_win_ret"] / st["wins"]))), 1)
         return default
 
     def record(self, sig: str, win: bool, pnl_pct: float, grad: bool = True, usd: float = 0.0):

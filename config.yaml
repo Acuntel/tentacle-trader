@@ -39,11 +39,13 @@ conviction:
                                 # vetoes) so the learner gets real out-of-sample data. Set false to mirror live.
   regime_downtrend_premium: 25  # in LIVE, a downtrend tape doesn't bench longs — it raises the score bar by this
   family_bonus: 0.18            # confidence multiplier per extra family that agrees (cross-confirmation)
+  min_reward_risk: 1.5          # AUTOPSY 2026-09-01: target >= 1.5x stop on every candidate (6% stop / 4% target lost by arithmetic)
+  max_position_frac: 0.25       # AUTOPSY 2026-09-01: hard per-name cap on the sizing capital (LLY $450/$500 = 31% of all losses)
   max_runup_pct: 5.0            # if price already ran > this since the signal, the easy move is gone
   size_bands:                   # confidence score -> fraction of the rung's live capital
-    - {min: 95, frac: 1.00}
-    - {min: 85, frac: 0.70}
-    - {min: 70, frac: 0.45}
+    - {min: 95, frac: 0.35}   # AUTOPSY 2026-09-01: bands top out at 35% (was 100%); max_position_frac caps further
+    - {min: 85, frac: 0.30}
+    - {min: 70, frac: 0.25}
     - {min: 55, frac: 0.20}
     - {min: 30, frac: 0.10}     # floor band: below 55 the size was $0, so "min_score 15" could never
                                 #   actually trade (every buy sized to $0 -> skipped as < $25). A small
@@ -60,7 +62,7 @@ exploration:
   top_k: 30              # learning trades opened per cycle (the most-UNCERTAIN qualifying names first;
                          #   20->30 now that near-miss workups widened the eligible pool)
   notional_usd: 100      # paper size per learning trade — OFF the real $500 book (bookkeeping only)
-  allow_short: true      # take the SHORT side when the model's view is bearish — learn the down-tape too
+  allow_short: false           # AUTOPSY 2026-09-01: the account is long-only; a short label is a side we can never trade
   short_pwin: 0.28       # P(win) below this (or analyst direction != up) -> short instead of long.
                          #   RE-ANCHORED: the model is calibrated on ALPHA labels (~0.34 base rate), so a
                          #   prediction of 0.34 is NEUTRAL — the old 0.45 bar shorted nearly everything.
@@ -76,12 +78,15 @@ exploration:
                          #   workup as LEARNING candidates (bounded; all reads cached). Conviction untouched.
 
 # Per-source trust (the learning loop tunes these within [0.1, 1.2])
+# AUTOPSY 2026-09-01: sources held at their config prior every boot (learning can't lift them)
+source_weight_pin: [fda]
+
 source_weights:
   edgar_8k: 1.00
   edgar_form4: 0.95
   edgar_13d: 1.00
   newswire: 1.00
-  fda: 0.90
+  fda: 0.4   # AUTOPSY 2026-09-01: ClinicalTrials trial-status rows, confirm-only (was 0.90)
   fda_approvals: 0.95
   index_inclusion: 0.90
   gov_contract: 0.85
@@ -317,6 +322,7 @@ learning:
 
 # ---- WS6 Learning velocity: make "is it actually learning?" the headline metric, measured honestly ----
 velocity:
+  window_days: 30              # AUTOPSY 2026-09-01: the CLEAN practice gauge window (long-only, trimmed)
   improving_eps: 0.002        # a 7-day Brier drop >= this counts as genuine calibration improvement
   no_edge_min_samples: 1500   # only call "no edge" once this many P(win) samples have accrued
   no_edge_brier: 0.245        # ...AND Brier is still at/above the ~no-skill baseline (0.25) and not improving

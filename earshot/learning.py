@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import time
+from datetime import datetime, timezone
 
 from .models import Candidate, Outcome, iso
 from .patterns import PatternMemory, field_rate, update_field_rate
@@ -25,8 +26,20 @@ OBS_GRACE_H = 144.0   # hours past the LONGEST horizon before an unresolvable ob
 from .persist import load_json as _load, save_json as _save   # atomic + .bak — never lose progress
 
 
+ROTATE_BYTES = 4_500_000   # keep every live ledger under the 5MB off-volume backup ceiling
+
+
 def _append(path, obj):
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    # AUTOPSY FIX 2026-09-01: ledger ROTATION. resolved_obs.jsonl crossed 5MB in July, the daily
+    # backup skips files that big, and the state mirror + CI fitness gate have been scoring against
+    # a ledger frozen on 07-06 ever since. Roll a full ledger to a dated sibling; readers use the
+    # live file (the most recent rows), archives stay on the volume.
+    try:
+        if os.path.exists(path) and os.path.getsize(path) > ROTATE_BYTES:
+            os.replace(path, f"{path}.{time.strftime('%Y%m%d-%H%M')}")
+    except OSError:
+        pass
     with open(path, "a") as f:
         f.write(json.dumps(obj) + "\n")
 
@@ -74,44 +87,69 @@ class Learner:
         })
         _save(OPEN_PATH, self.open)
 
-    def resolve_due(self, instinct, exits, bearish_tickers=None, extended: bool = False) -> list[dict]:
+    def resolve_due(self, instinct, exits, bearish_tickers=None, extended: bool = False,
+                    closed: bool = False) -> list[dict]:
         """Manage every open position against the LIVE price each cycle via the exit engine.
         Positions now close early on stop/target/trailing/decay, not just at the time horizon.
         extended=True (pre/post sessions): only FRESH extended prints count — a name with no
-        off-hours print simply can't exit until the open (honest, same rule as entries)."""
+        off-hours print simply can't exit until the open (honest, same rule as entries).
+        closed=True (market fully shut): the only price available is the last REGULAR close."""
         still_open, resolved = [], []
         for p in self.open:
+            # AUTOPSY FIX 2026-09-01 — PHANTOM-STOP GUARD: with the market shut, the price source
+            # reverts to the last regular close. For a position entered in an extended session AFTER
+            # that close, the close PREDATES the entry — marking against it invented stops (AFRM:
+            # entered after-hours on earnings, "stopped" at exactly 20:01 ET when the extended tape
+            # ended). Such positions wait for real tape; nothing is marked against a stale print.
+            if closed and market.was_closed(p.get("entry_ts", 0)):
+                still_open.append(p)
+                continue
             price = prices.last_price(p["ticker"], extended=extended)
             if price and p.get("entry_price"):
-                reason, chg = exits.evaluate(p, price, bearish_tickers)
+                reason, chg = exits.evaluate(p, price, bearish_tickers, extended=extended)
             else:  # no live price -> fall back to horizon resolution
                 ret = prices.forward_return_pct(p["ticker"], p["entry_ts"], p["hold_days"])
                 reason, chg = (("time", ret) if ret is not None else (None, 0.0))
             if not reason:
                 still_open.append(p)
                 continue
-            ret = max(-p["stop_pct"], min(p["target_pct"], chg))   # bound to the disciplined range
+            # AUTOPSY FIX 2026-09-01: record the REAL move. The old clamp booked every gap-through
+            # at exactly the stop and back-computed a fabricated exit price, so the ledger, mastery,
+            # patterns and P(win) all learned a loss distribution with the tail cut off.
+            raw = float(chg)
+            clamped = max(-p["stop_pct"], min(p["target_pct"], raw))   # kept for reference only
             # FRICTION (costs.py): debit the liquidity-tiered round trip BEFORE anything learns from
             # this trade — mastery, patterns, weights and P(win) must all be earned NET of costs.
             rt = costs.round_trip_pct(p["ticker"])
             if market.was_closed(p.get("entry_ts", 0)):
                 rt = round(rt * 2.5, 3)        # extended-hours entry: real off-hours spreads run
                                                # several times wider — the debit must match them
-            ret = round(ret - rt, 3)
+            ret = round(raw - rt, 3)
             # ALPHA: the trade's return MINUS the market over the same window. Skill is learned on alpha
             # (so a rising tape isn't mistaken for edge); the $ P&L / equity stay on the raw return.
             mkt = prices.market_return_since(p["entry_ts"])
             alpha = round(ret - mkt, 3) if mkt is not None else ret
             win_a = alpha > 0
             entry = p["entry_price"] or 0.0
+            exit_px = float(price) if (price and p.get("entry_price")) else entry * (1 + raw / 100)
             outcome = Outcome(
                 ticker=p["ticker"], catalyst=p["catalyst"], confidence=p["confidence"],
                 size_usd=p["size_usd"], entry_price=entry,
-                exit_price=round(entry * (1 + ret / 100), 4), pnl_pct=ret,
+                exit_price=round(exit_px, 4), pnl_pct=ret,
                 pnl_usd=round(p["size_usd"] * ret / 100, 2), win=ret > 0,
                 entry_ts=p["entry_ts"], exit_ts=time.time(), sources=p["sources"],
             )
-            _append(OUTCOMES_PATH, {**outcome.to_dict(), "exit": reason, "alpha": alpha, "cost_pct": rt})
+            peak, trough = (p.get("peak") or entry), (p.get("trough") or entry)
+            try:
+                entry_sess = market.session(datetime.fromtimestamp(float(p["entry_ts"]), timezone.utc))["session"]
+            except Exception:
+                entry_sess = "unknown"
+            _append(OUTCOMES_PATH, {**outcome.to_dict(), "exit": reason, "alpha": alpha, "cost_pct": rt,
+                                    "raw_pct": round(raw, 3), "clamped_pct": round(clamped - rt, 3),
+                                    "mfe_pct": round((peak / entry - 1) * 100, 3) if entry else None,
+                                    "mae_pct": round((trough / entry - 1) * 100, 3) if entry else None,
+                                    "entry_session": entry_sess,
+                                    "exit_session": market.session()["session"]})
             mind = instinct.record(p["confidence"], ret, p["size_usd"], alpha=alpha)  # mastery on alpha
             self._learn(p, outcome, alpha)
             self.patterns.record(p.get("pattern", ""), win_a, alpha,
@@ -168,6 +206,17 @@ class Learner:
             d = int(p.get("dir", 1))
             dir_ret = d * ret_raw                               # the chosen side's P&L return
             age_days = (time.time() - p["entry_ts"]) / 86400
+            # AUTOPSY FIX 2026-09-01: CORRUPT-PRINT GUARD. Five reverse-split prints (LMFA -2415%,
+            # PRPL -2085%, GNPX -1872%, ...) summed to -6,815 of the ledger's -6,713 total and drove
+            # the "no edge" headline, explore-slot starvation and catalyst_dead calls. A move beyond
+            # +/-60% in a few days on a liquidity-floored name is a data glitch, not an outcome:
+            # log it as such and never let it credit a learner or an accumulator.
+            if abs(ret_raw) > 60.0:
+                _append(LEARN_OUT_PATH, {"ts": iso(time.time()), "ticker": p["ticker"], "dir": d,
+                                         "exit": "corrupt", "ret": round(ret_raw, 3), "alpha": 0.0,
+                                         "cost": 0.0, "long_win": None, "sig": p.get("pattern", ""),
+                                         "note": "rejected: |move| > 60% (split/bad print)"})
+                continue
             if dir_ret <= -p.get("stop_pct", 8):
                 reason = "stop"
             elif dir_ret >= p.get("target_pct", 12):
@@ -204,6 +253,10 @@ class Learner:
             ex["trades"] += 1
             ex["dir_hits"] += 1 if dir_alpha > 0 else 0
             ex["sum_alpha"] = round(ex["sum_alpha"] + dir_alpha, 3)
+            # rolling window for the CLEAN practice gauge (core.velocity): long-only, recent, trimmed
+            rec = self.know.setdefault("explore_recent", [])
+            rec.append({"ts": round(time.time()), "dir": d, "alpha": dir_alpha, "exit": reason})
+            del rec[:-600]
             _append(LEARN_OUT_PATH, {"ts": iso(time.time()), "ticker": p["ticker"], "dir": d,
                                      "exit": reason, "ret": round(dir_ret - rt, 3), "alpha": dir_alpha,
                                      "cost": rt, "long_win": long_win, "sig": p.get("pattern", "")})

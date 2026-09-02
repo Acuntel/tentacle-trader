@@ -59,8 +59,8 @@ class ClosedMarketExits:
     def __init__(self, exits):
         self._exits = exits
 
-    def evaluate(self, pos, price, bearish_tickers=None, now=None):
-        reason, chg = self._exits.evaluate(pos, price, bearish_tickers, now)
+    def evaluate(self, pos, price, bearish_tickers=None, now=None, extended=False):
+        reason, chg = self._exits.evaluate(pos, price, bearish_tickers, now, extended=extended)
         return (reason if reason == "stop" else None), chg
 
 
@@ -90,6 +90,14 @@ class Earshot:
         self.instinct = MotherInstinct(cfg)
         self.risk = RiskGate(cfg)
         self.learner = Learner(self.weights, priors=cfg["source_weights"])  # priors anchor the learned weights
+        # AUTOPSY FIX 2026-09-01: PINNED sources. A source the doctrine has demoted (ClinicalTrials
+        # "fda": trial-status rows, not approvals) is held at its config prior every boot, so the
+        # learned weight it accumulated as a fake TRIGGER (1.2, the ceiling) can't keep sizing the
+        # book. Learning may still move every other source.
+        for _k in cfg.get("source_weight_pin", []) or []:
+            if _k in cfg["source_weights"]:
+                self.weights[_k] = float(cfg["source_weights"][_k])
+        self.learner._persist_know()
         self.executor = get_executor(cfg["identity"]["mode"])
         self.scout = SourceScout(self.learner.know, self.weights)
         self.daily = DailyGuard(cfg)
@@ -205,7 +213,7 @@ class Earshot:
               f"  |  learned P(win) model: {self.lgate.n} samples"
               f"{' (gating)' if self.lgate.ready() else ' (advisory until 30)'}")
         # WS6 LEARNING VELOCITY — the headline metric: is it actually learning, and how fast?
-        vel = self.core.velocity(self.lgate)
+        vel = self.core.velocity(self.lgate, self.instinct)
         b7 = vel["brier_7d"]
         btrend = (f"7d {b7:+.3f} improving" if vel["learning"] else
                   f"7d {b7:+.3f} FLAT" if (b7 is not None and vel["no_edge"]) else
@@ -217,10 +225,30 @@ class Earshot:
         from .patterns import field_rate
         print(f"learning velocity: P(win) n={vel['n']} brier {vel['brier']} [{btrend}] trust {vel['trust']}  |  "
               f"{ex}  |  {spd}  |  field alpha-win base {field_rate(self.learner.know):.2f}")
+        # AUTOPSY 2026-09-01: the deciding head is model_h120 (multi-day holds), not the 24h "model"
+        # the line above reports — say so, with its own numbers.
+        try:
+            from .learnedgate import head as _lg_head
+            _h120 = _lg_head(self.learner.know, "model_h120")
+            print(f"deciding head (h120): n={getattr(_h120, 'n', 0)} brier "
+                  f"{round(float(getattr(_h120, 'brier', 0.25)), 4)}"
+                  f"{'' if _h120.ready(50) else ' (cold: 24h head decides)'}")
+        except Exception:
+            pass
+        if vel.get("clean_n"):
+            ca, ch = vel.get("clean_alpha"), vel.get("clean_hit")
+            print(f"practice book, CLEAN (long-only, last 30d, trimmed, |move|<=60%): n={vel['clean_n']}"
+                  + (f"  alpha {ca:+.2f}%/trade  hit {round(100 * ch)}%" if ca is not None else "  (building)"))
         m7 = vel.get("mastery_7d")
+        mr_v = vel.get("monthly_return")
+        ca_v = vel.get("clean_alpha")
+        money_s = f"{mr_v:+.1f}%/mo" if isinstance(mr_v, (int, float)) else "n/a"
+        clean_s = f"{ca_v:+.2f}%" if isinstance(ca_v, (int, float)) else "n/a"
+        m7_s = f", {m7:+.1f}/wk" if isinstance(m7, (int, float)) else ""
         print(f"ON THE RIGHT PATH? >>> {vel.get('verdict', '?')} <<<  "
-              f"(mastery {vel.get('mastery_now', 0)}{f', {m7:+.1f}/wk' if isinstance(m7, (int, float)) else ''} | "
-              f"the honest gauge: mastery climbing + practice-trade alpha > 0)")
+              f"(money {money_s} | clean practice alpha {clean_s} | "
+              f"mastery {vel.get('mastery_now', 0)}{m7_s} | "
+              "ON TRACK needs money > 0 AND clean practice alpha > 0)")
         if vel["no_edge"]:
             print("  ⚠ HONEST: thousands of samples in, calibration still flat — NO EDGE DETECTED "
                   "in this configuration (faster learning has bought a fast, confident 'no').")
@@ -290,7 +318,8 @@ class Earshot:
         ext_session = mkt.get("session") in ("premarket", "afterhours")
         regular_open = mkt_open and not ext_session
         live_exits = self.exits if mkt_open else ClosedMarketExits(self.exits)
-        for r in self.learner.resolve_due(self.instinct, live_exits, extended=ext_session):
+        for r in self.learner.resolve_due(self.instinct, live_exits, extended=ext_session,
+                                          closed=not mkt_open):
             o, m = r["outcome"], r["mind"]
             if r["exit"] != "stop":                  # W2.2: non-stop exit -> same-day re-entry cooldown
                 self._note_exit(o["ticker"])
@@ -414,7 +443,10 @@ class Earshot:
             # WS1 FLOOD: every QUALIFYING name (not just the one conviction pick) becomes an off-book
             # long/short paper learning trade — ignoring the bar/families/regime/capital. Feeds the
             # learners hundreds of forward labels/day; never touches mastery or the real $500.
-            if self.explore_cfg.get("enabled", True) and self.brain.explore:
+            # AUTOPSY FIX 2026-09-01: practice trades open only in the REGULAR session at a real
+            # print — an extended-hours open was booked at the stale regular close (lookahead on
+            # the gap), the same degenerate label the observation lane already guards against.
+            if self.explore_cfg.get("enabled", True) and self.brain.explore and regular_open:
                 picks = self.brain.learning_picks(
                     cands, int(self.explore_cfg.get("top_k", 20)),
                     float(self.explore_cfg.get("short_pwin", 0.45)),
@@ -455,6 +487,12 @@ class Earshot:
         print(f"  catalyst graduation — LIVE-ELIGIBLE: {grad['graduated'] or 'none yet'}"
               f"  |  pending: {grad['pending'][:6] or '—'}"
               f"{('  |  dead: ' + str(grad['dead'])) if grad['dead'] else ''}")
+        # AUTOPSY 2026-09-01: the doctrine set a deadline and the banner never reported it.
+        if not grad["graduated"] and time.strftime("%Y-%m-%d") > "2026-08-15":
+            print("  DOCTRINE VERDICT: the Aug 15 graduation deadline passed with NOTHING graduated. "
+                  "Per EDGE_MASTERPROMPT the edge is not in this source set at this latency; the next "
+                  "lever is DATA (earlier microcap filings), not more learning surgery. "
+                  "(Phase 1 fixes shipped 2026-09-01 — the clock restarts on clean exits.)")
 
         # 7) SELF-REVIEW — diagnose its own behaviour and recommend (auto-apply the safe) fixes
         every = max(1, int(self.review.get("every_cycles", 240)))

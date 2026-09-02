@@ -10,7 +10,7 @@ import requests
 import feedparser
 
 from ..models import RawSignal, now_ts
-from .base import Source, extract_tickers
+from .base import Source, SeenSet, extract_tickers
 
 TIMEOUT = 12
 AI_QUANTUM_KW = ("ai ", "a.i.", "gpt", "llm", "quantum", "chip", "gpu", "nvidia",
@@ -55,6 +55,11 @@ class EdgarSource(Source):
         except Exception:
             self._form4_verdicts = {}
         self._form4_budget = 0
+        # AUTOPSY FIX 2026-09-01: EDGAR had no seen-set, so every filing re-emitted with a fresh
+        # timestamp on every 30s poll — defeating the buffer dedup, drum-beating one 8-K as all-day
+        # confirmation, and making the lead-time learner read polling cadence as "who fired first"
+        # (stocktwits 1.13x, newswire/8-K 0.64x). A filing enters the brain once, at first sight.
+        self.seen = SeenSet("edgar")
 
     def _save_form4_verdicts(self):
         try:
@@ -116,19 +121,31 @@ class EdgarSource(Source):
         for form, skey in self.FEEDS.items():
             url = ("https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent"
                    f"&type={form.replace(' ', '+')}&company=&dateb=&owner=include&count=40&output=atom")
-            r = requests.get(url, headers={"User-Agent": self.ua}, timeout=TIMEOUT)
-            feed = feedparser.parse(r.text)
+            # AUTOPSY FIX 2026-09-01: per-feed isolation. One timeout used to drop 8-K, Form 4 and
+            # 13D together for the whole poll (the primary filing source went dark on a single
+            # slow response). A bad feed now costs only that feed.
+            try:
+                r = requests.get(url, headers={"User-Agent": self.ua}, timeout=TIMEOUT)
+                feed = feedparser.parse(r.text)
+            except Exception as ex:
+                self.errors += 1
+                print(f"  [tentacle:{skey}] feed error (other EDGAR feeds unaffected): {ex}")
+                continue
             for e in feed.entries:
                 title = getattr(e, "title", "")
+                link = getattr(e, "link", "")
+                key = link or title
+                if self.seen.seen(key):
+                    continue                        # emit-once: a filing enters the brain one time
                 cik = None
                 for tok in title.replace("(", " ").replace(")", " ").split():
                     if tok.isdigit() and len(tok) >= 7:
                         cik = int(tok)
                 ticker = ciks.get(cik) if cik else None
                 tickers = [ticker] if ticker else extract_tickers(title)
+                self.seen.add(key)
                 if not tickers:
                     continue
-                link = getattr(e, "link", "")
                 hint = self.HINTS[skey]
                 if skey == "edgar_form4" and self._form4_is_purchase(link):
                     hint = "insider_cluster"       # re-earned: verified code-P open-market buy

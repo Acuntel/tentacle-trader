@@ -143,10 +143,14 @@ class ClinicalTrialsSource(Source):
             tk = _map(sponsor, PHARMA_TICKER) or resolve_name(sponsor)
             if tk and status in ("COMPLETED", "ACTIVE_NOT_RECRUITING"):
                 title = ps.get("identificationModule", {}).get("briefTitle", "")
+                # AUTOPSY FIX 2026-09-01: a trial finishing enrollment is NOT an FDA approval. This
+                # row was stamped catalyst_hint="fda_approval" and became the book's largest
+                # catalyst (38 trades, the $450 LLY loss) on non-events. Unhinted, low strength,
+                # confirm-only (brain.FAMILY maps "fda" to news). openFDA approvals stay the trigger.
                 out.append(RawSignal(
                     source=self.key, weight=self.weight(), ts=now_ts(), tickers=[tk],
                     headline=f"{sponsor} trial {status}: {title[:80]}",
-                    url="https://clinicaltrials.gov", catalyst_hint="fda_approval", strength=0.8,
+                    url="https://clinicaltrials.gov", catalyst_hint=None, strength=0.4,
                 ))
         return out
 

@@ -38,17 +38,26 @@ class ExitEngine:
         self.drift = bool(cfg.get("exits", {}).get("drift_discipline", True))
 
     def evaluate(self, pos: dict, price: float, bearish_tickers: set | None = None,
-                 now: float | None = None) -> tuple[str | None, float]:
+                 now: float | None = None, extended: bool = False) -> tuple[str | None, float]:
         now = now or time.time()
         entry = pos.get("entry_price") or price
         pos["peak"] = max(pos.get("peak", entry), price)            # ratchet the high-water mark
+        pos["trough"] = min(pos.get("trough", entry), price)        # ...and the low-water mark (MAE)
         chg = (price / entry - 1) * 100
         peak_gain = (pos["peak"] / entry - 1) * 100
         drop_from_peak = (price / pos["peak"] - 1) * 100
         held_days = (now - pos.get("entry_ts", now)) / 86400
 
         if chg <= -pos.get("stop_pct", 8):
+            # AUTOPSY FIX 2026-09-01: on the thin extended tape a single bad 1-minute print fired
+            # the stop (LLY, $450, one after-hours print). An extended-hours stop needs the price
+            # to sit through the stop on two consecutive reads; regular-session stops are immediate.
+            if extended:
+                pos["ext_stop_hits"] = int(pos.get("ext_stop_hits", 0)) + 1
+                if pos["ext_stop_hits"] < 2:
+                    return None, chg
             return "stop", chg
+        pos["ext_stop_hits"] = 0
         if chg >= pos.get("target_pct", 12):
             return "target", chg
         # PRE-EVENT (pdufa_runup, 2026-08-05): a hard exit-by date stamped at entry (pre_event_days

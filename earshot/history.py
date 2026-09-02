@@ -159,7 +159,12 @@ def load(ticker: str) -> list[tuple[str, float]]:
             out = []
             for line in f:
                 d, c = line.strip().split(",")
-                out.append((d, float(c)))
+                c = float(c)
+                # AUTOPSY FIX 2026-09-01: drop NaN/inf/non-positive closes at the source — one bad
+                # bar poisoned the sim ledger, six strategy folds and the luck floor (NaN != NaN).
+                if c != c or c in (float("inf"), float("-inf")) or c <= 0:
+                    continue
+                out.append((d, c))
             return out
     except Exception:
         return []

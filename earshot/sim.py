@@ -82,6 +82,10 @@ class SimEngine:
         closes = [c for _, c in bars]
         if i < 55 or i > len(closes) - self.hold - 1 or closes[i - 1] <= 0:
             return None
+        # AUTOPSY FIX 2026-09-01: a single non-finite close poisoned sum_ret permanently ("avg nan%")
+        # and, downstream, the benchmark edge and the growth ledger. Skip any window that isn't clean.
+        if not all(math.isfinite(c) and c > 0 for c in closes[i - 55:i + self.hold + 1]):
+            return None
         sma50 = sum(closes[i - 50:i]) / 50
         trend = "uptrend" if closes[i] > sma50 else "downtrend"
         mag = "huge" if r1 >= 8 else "big" if r1 >= 5 else "mid"
@@ -150,7 +154,7 @@ class SimEngine:
                 break
         for t, bars, i, r1 in candidates[:target_ran]:
             ep = self._episode_from(t, bars, i, r1)
-            if not ep:
+            if not ep or not (math.isfinite(ep["ret"]) and math.isfinite(ep["alpha"])):
                 continue
             ran += 1
             self.learner.patterns.record(ep["sig"], ep["win"], ep["alpha"])  # learn the ALPHA pattern (skill)
