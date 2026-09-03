@@ -34,6 +34,14 @@ jobs:
       - name: Install deps
         run: pip install -r requirements.txt
 
+      # GATE 0 — the committed test suite, BEFORE anything is proposed or shipped.
+      # Added 2026-09-02. Until now the only gates were "compiles", "imports" and "a sim batch ran",
+      # i.e. crash checks: a patch that inverted the exit geometry or re-broke a rail passed them
+      # all. tests/ pins the autopsy invariants and the safety rails, so a self-change that breaks
+      # one can no longer reach main. A red suite fails the job before selfcode is even invoked.
+      - name: Test suite (invariants + rails) — must be green before any self-change
+        run: python -m pytest -q
+
       # The daily state backup (Acuntel/tentacle-state) gives CI the REAL learned brain + ledger, so the
       # FITNESS gate (patch must not worsen prediction Brier on real outcomes) is live here too — without
       # it selfcode only proves "doesn't crash". Missing token/files degrade gracefully (fitness skips).

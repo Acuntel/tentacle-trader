@@ -27,6 +27,7 @@ import hashlib
 import json
 import os
 import py_compile
+import re
 import subprocess
 import sys
 import time
@@ -54,9 +55,34 @@ MONEY_GUARD = ("live_allowed", "RobinStocksExecutor", "get_executor", "order_buy
                "real_money", "place_order")
 
 
+# AUTOPSY FIX 2026-09-02 — the CONFIG rail. risk.py is a LOCKED file, but the NUMBERS it enforces
+# live in config.yaml, which apply_external explicitly allows a patch to edit. So the risk law was
+# locked in code and wide open in data: an approved config patch could set `min_price: 0.0`,
+# `daily_loss_pct: 0.9`, empty the ladder, or flip `mode: live`, and neither the LOCKED check nor
+# MONEY_GUARD (which only matches money-unlock CODE tokens) would notice. These keys are the safety
+# envelope and the sizing law; a self-change may never touch them. Tuning knobs stay editable.
+CONFIG_GUARD = (
+    "mode", "starting_capital", "ruin_floor_pct", "ladder", "promote_mastery",
+    "min_price", "min_dollar_volume", "daily_loss_pct", "daily_max_loss_usd",
+    "max_open_positions", "regime_filter", "block_microcap_social_only", "repeated_exec_limit",
+    "max_position_frac", "unproven_position_frac", "min_reward_risk",
+    "min_independent_sources", "min_families", "size_bands", "allow_short",
+)
+_CFG_KEY_RE = re.compile(r"^\s*-?\s*([A-Za-z_][A-Za-z0-9_]*)\s*:", re.M)
+
+
 def _unsafe(code) -> bool:
     low = str(code)
     return any(tok in low for tok in MONEY_GUARD)
+
+
+def _unsafe_config(text) -> str | None:
+    """Which protected config key a patch touches, or None. Checked on BOTH sides of a config
+    patch: the `find` side too, so a patch cannot delete a guard line it is forbidden to rewrite."""
+    for key in _CFG_KEY_RE.findall(str(text) or ""):
+        if key in CONFIG_GUARD:
+            return key
+    return None
 
 
 # W3.5a FITNESS ROUTING: which deterministic metric can actually SEE a patch to each module.
@@ -556,6 +582,12 @@ def apply_external(patches: list) -> dict:
         rel = str(p.get("file", "")).strip().lstrip("./")
         fname = os.path.basename(rel)
         if rel == "config.yaml":
+            # CONFIG rail (2026-09-02): risk.py is locked, but the numbers it enforces live here.
+            # Refuse any patch that touches the safety envelope or the sizing law, on either side.
+            bad = _unsafe_config(p.get("replace", "")) or _unsafe_config(p.get("find", ""))
+            if bad:
+                _restore(originals)
+                return {"status": "refused", "why": f"config key '{bad}' is a protected rail"}
             path = os.path.join(repo, "config.yaml")
         elif fname in LOCKED:
             _restore(originals)

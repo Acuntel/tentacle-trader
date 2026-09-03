@@ -136,7 +136,11 @@ class Brain:
         # The score is self-assessed conviction — the ledger is what actually happened.
         if catalyst and self.patterns is not None and not self.patterns.catalyst_graduated(catalyst):
             if (self.patterns.grad.get(catalyst) or {}).get("usd", 0.0) <= 0:
-                frac = min(frac, 0.25)
+                # AUTOPSY FIX 2026-09-02: 0.15, not 0.25. The evidence cap hardcoded the SAME 0.25
+                # that max_position_frac applies two lines below, so it could never bind on any
+                # input — an unproven, $-negative catalyst sized exactly like a proven one. An
+                # unproven catalyst now takes a genuinely smaller position than a graduated one.
+                frac = min(frac, float(self.conv.get("unproven_position_frac", 0.15)))
         # AUTOPSY FIX 2026-09-01: hard per-name cap. One saturated-score name (LLY, $450 of $500)
         # was 31% of all losses; the 31 max-confidence trades lost $71 of the $88 total.
         frac = min(frac, float(self.conv.get("max_position_frac", 0.25)))
@@ -368,8 +372,17 @@ class Brain:
                     p_live = _gate.predict(cand._lgate_features)
                     # TRANSFER GAP: blend in the decade-trained historical ALPHA prior at a low weight,
                     # so the whole decade informs the call while the live model still owns it.
-                    if self.hist_gate is not None and self.hist_gate.ready(50):
-                        p_live = 0.8 * p_live + 0.2 * self.hist_gate.predict(cand._lgate_features)
+                    # AUTOPSY FIX 2026-09-02: the decade prior may only speak once it has PROVEN
+                    # skill. Live it had 9,038,391 replays at Brier 0.2519 — worse than no skill —
+                    # and was still blended into every P(win) at a flat 20%, i.e. pure noise
+                    # injection. trust() is 0 at or below the no-skill floor and rises with real
+                    # calibration, so an unproven prior now carries exactly zero weight and a
+                    # marginally-skilled one carries a proportionally small one.
+                    _ht = self.hist_gate
+                    if _ht is not None and _ht.ready(50):
+                        _hw = 0.2 * max(0.0, min(1.0, _ht.trust()))
+                        if _hw > 0:
+                            p_live = (1 - _hw) * p_live + _hw * _ht.predict(cand._lgate_features)
                     # FORGE -> GATE: blend the free search's PROVEN policy at a low, guarded weight (only
                     # once the Forge has a real out-of-sample edge). The live model still owns the call.
                     from .forge import champion_pwin

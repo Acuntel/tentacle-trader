@@ -14,3 +14,10 @@ state/
 *.jsonl
 knowledge.json
 dungeon/
+
+# ...EXCEPT the repo-riding CI change ledger (W3.4). The blanket *.jsonl rule above silently
+# swallowed it, so `state_seed/ci_changes.jsonl` never reached the repo: every CI-applied patch
+# deployed UNCOUNTED, the live coach's `_ingest_ci_changes` always returned 0, and the whole
+# per-change scoreboard could not close its loop. Un-ignored 2026-09-02.
+!state_seed/
+!state_seed/*.jsonl

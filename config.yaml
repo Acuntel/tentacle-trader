@@ -28,7 +28,9 @@ survival:
 
 # ---- The firing gate ----
 conviction:
-  min_score_to_trade: 15        # LOWERED again 2026-06-30 (25->15): trade more of the qualifying multi-confirm
+  min_score_to_trade: 30        # AUTOPSY 2026-09-02: was 15, but the lowest size band starts at 30,
+                                # so 15-29 sized $0 and were dropped by main's $25 floor. 30 is the
+                                # bar that was ALWAYS in force — the config now states it honestly.
                                 # setups. Shadow only; real money still hard-gated. NOTE: trade COUNT is mostly
                                 # capped by the 2-source/2-family multi-confirm requirement below (the strategy's
                                 # core) + max_open_positions, not by this score — lowering further does little.
@@ -41,13 +43,19 @@ conviction:
   family_bonus: 0.18            # confidence multiplier per extra family that agrees (cross-confirmation)
   min_reward_risk: 1.5          # AUTOPSY 2026-09-01: target >= 1.5x stop on every candidate (6% stop / 4% target lost by arithmetic)
   max_position_frac: 0.25       # AUTOPSY 2026-09-01: hard per-name cap on the sizing capital (LLY $450/$500 = 31% of all losses)
+  unproven_position_frac: 0.15  # AUTOPSY 2026-09-02: a $-negative / ungraduated catalyst caps HERE. It used to
+                                # hardcode the same 0.25 as the per-name cap, so it could never bind.
   max_runup_pct: 5.0            # if price already ran > this since the signal, the easy move is gone
   size_bands:                   # confidence score -> fraction of the rung's live capital
-    - {min: 95, frac: 0.35}   # AUTOPSY 2026-09-01: bands top out at 35% (was 100%); max_position_frac caps further
-    - {min: 85, frac: 0.30}
-    - {min: 70, frac: 0.25}
-    - {min: 55, frac: 0.20}
-    - {min: 30, frac: 0.10}     # floor band: below 55 the size was $0, so "min_score 15" could never
+    # AUTOPSY 2026-09-02: every band sits AT or UNDER max_position_frac (0.25). The old
+    # 0.35/0.30 tops were unreachable — max_position_frac clamped them — so scores 70 through 100
+    # all sized identically at $125 and conviction bought nothing above 70. This ladder actually
+    # differentiates: 100 -> $125, 85 -> $100, 70 -> $75, 55 -> $50, 30 -> $25 on a $500 book.
+    - {min: 95, frac: 0.25}
+    - {min: 85, frac: 0.20}
+    - {min: 70, frac: 0.15}
+    - {min: 55, frac: 0.10}
+    - {min: 30, frac: 0.05}     # floor band: below 55 the size was $0, so "min_score 15" could never
                                 #   actually trade (every buy sized to $0 -> skipped as < $25). A small
                                 #   starter size lets mid-conviction setups fire and earn real samples.
 

@@ -15,7 +15,18 @@ def save_json(path: str, obj) -> None:
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     tmp = path + ".tmp"
     with open(tmp, "w") as f:
-        json.dump(obj, f, indent=2)
+        # AUTOPSY FIX 2026-09-02: heal on the way OUT as well as in. json.dump defaults to
+        # allow_nan=True, which writes the bare tokens NaN / Infinity — invalid JSON that any
+        # consumer using a plain json.load (history._load_dead, the CI fitness gate, external
+        # tooling) reads back as poison. Scrubbing here means a non-finite value never reaches
+        # disk in the first place; load_json's scrub stays as the second line of defence for
+        # files written by older builds. allow_nan=False then makes a miss loud, not silent.
+        stats: dict = {}
+        obj = _scrub(obj, stats)
+        if stats.get("healed"):
+            print(f"  [persist] scrubbed {stats['healed']} non-finite value(s) before writing "
+                  f"{os.path.basename(path)}")
+        json.dump(obj, f, indent=2, allow_nan=False)
         f.flush()
         os.fsync(f.fileno())
     if os.path.exists(path):
@@ -26,7 +37,7 @@ def save_json(path: str, obj) -> None:
     os.replace(tmp, path)                            # atomic swap-in — readers never see a half file
 
 
-def _scrub(obj, stats: dict):
+def _scrub(obj, stats: dict):  # noqa: E302  (defined above save_json — both directions use it)
     """AUTOPSY FIX 2026-09-01: JSON round-trips carry NaN/Infinity, and one poisoned accumulator
     (sim.sum_ret, a strategy fold's u, a source's sum_ret) silently turned the benchmark, the luck
     floor and the honesty gauge into NaN for weeks. Every load replaces non-finite floats with 0.0

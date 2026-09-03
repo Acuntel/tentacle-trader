@@ -273,9 +273,15 @@ class StrategyBook:
         if not rh_ok({"style": "momentum", "hold": blend["hold"]}):
             self.core.know["champion_strategy"] = {"status": "blend rejected — not RH-executable"}
             return None
-        for cat in cfg["catalysts"]:
-            self.core.know["catalyst_rules"][cat] = {"stop_pct": blend["stop"], "target_pct": blend["target"],
-                                                     "hold_days": blend["hold"]}
+        # AUTOPSY FIX 2026-09-02: write the FALLBACK, never every catalyst. This used to stamp one
+        # generic daily-bar momentum blend into every catalyst key; since the 09-01 fix a
+        # per-catalyst rule OUTRANKS the config, so an adoption would have silently clobbered
+        # insider_cluster's 30-day hold, pdufa's 35-day hold and fda's 10% stop — re-creating the
+        # exact bug Phase 1 removed (a generic rule overriding catalyst physics), through a second
+        # door. As "__default__" it only fills what a catalyst's config leaves unset, and
+        # evolve.optimize_rules no longer has clones to fight. (Inert today: survivors == 0.)
+        self.core.know["catalyst_rules"]["__default__"] = {
+            "stop_pct": blend["stop"], "target_pct": blend["target"], "hold_days": blend["hold"]}
         self.core.know["champion_strategy"] = {"blend_of": len(defs), "styles": sorted({d["style"] for d in defs}),
                                                "rh_executable": True, "validated": "walk_forward", **blend}
         return blend
