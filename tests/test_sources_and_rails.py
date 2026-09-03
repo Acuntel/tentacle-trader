@@ -21,6 +21,7 @@ into ``earshot/`` — the two selfcode tests assert the target file is byte-iden
 from __future__ import annotations
 
 import os
+import time
 
 import json
 import types
@@ -108,9 +109,31 @@ def test_live_is_refused_at_rung_zero_and_unarmed(isolated_state):
     ok, why = executor.live_allowed(4, True)
     assert ok is False and "gauntlet" in why.lower()
 
-    # Now pass the Gauntlet in this throwaway cwd; the other two locks must still hold.
-    (isolated_state / "state" / "gauntlet.json").write_text(
-        json.dumps({"overall": {"mastery": executor.GAUNTLET_PASS_MASTERY + 5}}))
+    # A LEGACY verdict (the pre-2026-09-02 shape) must NOT satisfy the gate: that file had been a
+    # stale June artifact for ten weeks while the gate kept reading it as evidence.
+    gp = isolated_state / "state" / "gauntlet.json"
+    gp.write_text(json.dumps({"overall": {"mastery": executor.GAUNTLET_PASS_MASTERY + 5}}))
+    ok, why = executor.live_allowed(4, True)
+    assert ok is False and "predates" in why, "a legacy Gauntlet file was accepted as a pass"
+
+    # A v3 verdict that is PASSING but STALE is also refused — a stale pass is not a pass.
+    gp.write_text(json.dumps({"version": "gauntlet-v3-forward-policy", "passed": True,
+                              "overall": {"mastery": executor.GAUNTLET_PASS_MASTERY + 5},
+                              "ts": time.time() - 30 * 86400, "stale_after_days": 7.0}))
+    ok, why = executor.live_allowed(4, True)
+    assert ok is False and "stale" in why.lower(), "a stale Gauntlet pass was accepted"
+
+    # A v3 verdict that FAILED its own checks is refused even with a high mastery number.
+    gp.write_text(json.dumps({"version": "gauntlet-v3-forward-policy", "passed": False,
+                              "failed": ["book_profitable"],
+                              "overall": {"mastery": executor.GAUNTLET_PASS_MASTERY + 5},
+                              "ts": time.time(), "stale_after_days": 7.0}))
+    assert executor.live_allowed(4, True)[0] is False
+
+    # Now a genuine, fresh, passing verdict — the other two locks must STILL hold.
+    gp.write_text(json.dumps({"version": "gauntlet-v3-forward-policy", "passed": True,
+                              "overall": {"mastery": executor.GAUNTLET_PASS_MASTERY + 5},
+                              "ts": time.time(), "stale_after_days": 7.0}))
     assert executor.live_allowed(0, True) == (False, "still on a $0 rung (shadow) — no live capital unlocked")
     assert executor.live_allowed(-1, True)[0] is False
     ok, why = executor.live_allowed(1, False)

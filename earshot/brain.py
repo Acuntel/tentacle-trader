@@ -510,7 +510,16 @@ class Brain:
             per_cat[cat] = per_cat.get(cat, 0) + 1
         return picks
 
-    def passes_gate(self, c: Candidate) -> tuple[bool, str]:
+    def passes_gate(self, c: Candidate, enforce_soft: bool | None = None) -> tuple[bool, str]:
+        """Verdict for one candidate.
+
+        `enforce_soft` decides whether the LIVE-only filters (graduation, the vetoes, min_pwin, the
+        regime bar) bite. Default = the mode's own behaviour: shadow explores through them, live
+        enforces them. Passing enforce_soft=True asks the counterfactual the replay harness needs —
+        "would the LIVE policy have taken this?" — without changing what shadow actually trades.
+        Before this existed nothing could answer that, so ten weeks of book trades measured
+        "anything with 2 sources", not the policy the money gate is supposed to protect.
+        """
         # ---- HARD safety: enforced ALWAYS, even in shadow exploration ----
         # These are data-backed (loser/decay) or structural (it isn't even a real setup otherwise).
         if self.patterns is not None and self.patterns.is_loser(getattr(c, "_signature", "")):
@@ -527,7 +536,9 @@ class Brain:
 
         # ---- SOFT filters: heuristic / not-yet-proven. In shadow we EXPLORE through them so the
         #      learner gathers the labeled outcomes that prove (or kill) them. In live they bite. ----
-        if self.explore:
+        if enforce_soft is None:
+            enforce_soft = not self.explore
+        if not enforce_soft:
             return True, "shadow-explore: cleared hard safety (soft filters logged, not enforced)"
 
         # ---- LIVE only: conviction capital flows ONLY to catalysts whose forward ledger has PROVEN

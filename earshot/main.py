@@ -13,6 +13,7 @@ import time
 import yaml
 
 from . import prices, market, history, warmstart
+from .learning import _append as _append_ledger      # the rotating jsonl writer (size-capped)
 from .persist import load_json, save_json
 from .sources import build_sources
 from .approvals import ApprovalQueue
@@ -47,6 +48,7 @@ SLOW_FAMILIES = {"filing", "regulatory", "surprise", "alt", "demand", "onchain",
                  "attention", "crowd"}
 
 EXIT_COOLDOWN_PATH = "state/recent_exits.json"   # {ticker: ET date} of same-day re-entry cooldowns
+CAND_PATH = "state/candidates.jsonl"             # what the brain SAW + every gate's verdict (replay.py)
 
 
 class ClosedMarketExits:
@@ -182,6 +184,59 @@ class Earshot:
             save_json(EXIT_COOLDOWN_PATH, self.recent_exits)
         return set(self.recent_exits)
 
+    def _record_candidates(self, cands: list) -> int:
+        """Write what the brain SAW and what every gate said about it -> state/candidates.jsonl.
+
+        This is the substrate of the replay harness (earshot/replay.py) and of Phase 2's gated
+        policy book. Until now nothing recorded the counterfactual, so "would the LIVE rules have
+        bought this?" was unanswerable and every self-change verdict was a confounded 24h diff.
+        Each row carries the LIVE verdict (`would_pass_live`) alongside the shadow one, so a
+        policy change can be measured offline against setups the bot really saw.
+
+        Bounded like every other ledger here: the top few candidates per cycle, one row per ticker
+        per ET day, appended through the rotating writer.
+        """
+        rc = self.cfg.get("replay", {})
+        if not rc.get("record", True):
+            return 0
+        top = int(rc.get("record_top", 8))
+        day = market.now_et().date().isoformat()
+        seen = self.learner.know.setdefault("cand_seen", {})
+        if any(d != day for d in seen.values()):                 # keep the map to today only
+            seen = {t: d for t, d in seen.items() if d == day}
+            self.learner.know["cand_seen"] = seen
+        n = 0
+        for c in cands[:top]:
+            if seen.get(c.ticker) == day:
+                continue
+            try:
+                live_ok, live_why = self.brain.passes_gate(c, enforce_soft=True)
+                shadow_ok, shadow_why = self.brain.passes_gate(c)
+                risk_ok, risk_why = self.risk.check(c, self.instinct, self.learner.open, 0.0)
+                _append_ledger(CAND_PATH, {
+                    "ts": time.time(), "ticker": c.ticker, "catalyst": c.catalyst.value,
+                    "score": round(float(c.confidence), 2),
+                    "families": int(getattr(c, "_families", 1)),
+                    "sources": sorted({s.source for s in c.signals}),
+                    "signature": getattr(c, "_signature", ""),
+                    "pwin": getattr(c, "_pwin", None),
+                    "runup_pct": c.runup_pct, "regime_ok": bool(c.regime_ok),
+                    "qualified": bool(getattr(c, "_qualified", False)),
+                    "stop_pct": c.stop_pct, "target_pct": c.target_pct, "hold_days": c.hold_days,
+                    "size_usd": c.size_usd,
+                    "tech_veto": bool(getattr(c, "_tech_veto", None)),
+                    "analyst_veto": bool(getattr(c, "_analyst_veto", None)),
+                    "odds_veto": bool(getattr(c, "_odds_veto", None)),
+                    "would_pass_live": bool(live_ok and risk_ok),
+                    "would_pass_shadow": bool(shadow_ok and risk_ok),
+                    "blocked_by": None if (live_ok and risk_ok) else (live_why if not live_ok else risk_why),
+                })
+                seen[c.ticker] = day
+                n += 1
+            except Exception as e:                # recording must NEVER break a trading cycle
+                print(f"  [replay] candidate record skipped ({c.ticker}): {e}")
+        return n
+
     def _equity_now(self) -> float:
         """Realized paper equity + unrealized mark-to-market of open positions (today's true damage)."""
         eq = self.instinct.state["paper_equity"]
@@ -196,6 +251,10 @@ class Earshot:
         self.analyst.reset_cycle()                             # refresh the per-cycle LLM budget
         st = self.instinct.status()
         mkt_open, mkt_why, mkt = market.can_open(self.cfg.get("market", {}))
+        # Session flags are needed BOTH by the learning throttle below and by the exit/observe
+        # sections further down, so they are derived once here, where the session is first known.
+        ext_session = mkt.get("session") in ("premarket", "afterhours")
+        regular_open = mkt_open and not ext_session
         print("\n" + "=" * 74)
         print(f"TENTACLE [{st['mode'].upper()}]  rung {st['rung']} ({st['stage']})  "
               f"capital-unlocked ${st['capital_unlocked']}  mastery {st['mastery']}/{st['needs_mastery']}")
@@ -299,12 +358,22 @@ class Earshot:
             cov = history.ensure_slice(self.hist_years, self.hist_slice)
             print(f"  history: {cov['have']}/{cov['total']} names hold {self.hist_years}y of bars "
                   f"(+{cov['fetched']} this top-up)")
-        simr = self.sim.step()
+        # HOT-PATH BUDGET (2026-09-02, measured not assumed): sim.step + histtrain.step ran on
+        # EVERY tick and cost ~2.0s of a 10s budget (sim 1.16s, histtrain 0.85s) — 20% of the loop
+        # spent on historical replay while live entries wait. They are pure LEARNING: nothing they
+        # produce is needed to price the next entry. So during the regular session they run on a
+        # cadence, and off-hours (most of the week) they run flat out exactly as before.
+        _hb = self.cfg.get("learning", {})
+        _throttle = float(_hb.get("session_learn_every_sec", 120))
+        _may_learn = (not regular_open) or (now2 - getattr(self, "_last_heavy", 0.0) >= _throttle)
+        if _may_learn:
+            self._last_heavy = now2
+        simr = self.sim.step() if _may_learn else {"ran": 0}
         if simr.get("ran"):
             sr = self.sim.report()
             print(f"  sims: +{simr['ran']} replays (total {sr['episodes']}, win {sr['win_rate']}, "
                   f"avg {sr['avg_ret']}%) — sim-son ${sr['sim_equity']} ({sr['grown_pct']:+.1f}%)")
-        ht = self.histtrain.step()                      # #1 train the decade->live P(win) transfer prior
+        ht = self.histtrain.step() if _may_learn else {}   # decade->live P(win) prior (throttled in-session)
         if ht.get("trained"):
             print(f"  histtrain: +{ht['trained']} decade alpha-events -> P(win) prior "
                   f"(n={ht['total']}, brier {ht.get('brier', '?')})")
@@ -315,8 +384,6 @@ class Earshot:
         # Extended sessions (pre-market/after-hours, when enabled): the REAL BOOK may trade at
         # fresh extended prints, but every LEARNING pipeline below stays regular-session-only —
         # the July-4th degenerate-label incident applies to thin extended tape too.
-        ext_session = mkt.get("session") in ("premarket", "afterhours")
-        regular_open = mkt_open and not ext_session
         live_exits = self.exits if mkt_open else ClosedMarketExits(self.exits)
         for r in self.learner.resolve_due(self.instinct, live_exits, extended=ext_session,
                                           closed=not mkt_open):
@@ -391,6 +458,7 @@ class Earshot:
         # could never have traded (lookahead). Setups seen off-hours are simply not recorded.
         if regular_open:
             self.learner.observe(cands, max_pending=self.observe_cap)  # every worked-up setup -> a labeled example
+            self._record_candidates(cands)     # + the POLICY ledger the replay harness measures
 
         # 5) act — but NOT if the day is halted, and NEVER when the market is closed (can't trade it)
         if self.daily.halted():
@@ -493,6 +561,22 @@ class Earshot:
                   "Per EDGE_MASTERPROMPT the edge is not in this source set at this latency; the next "
                   "lever is DATA (earlier microcap filings), not more learning surgery. "
                   "(Phase 1 fixes shipped 2026-09-01 — the clock restarts on clean exits.)")
+
+        # 6b) THE GAUNTLET — re-certify against the CURRENT forward record, once a day.
+        # It used to be a June artifact nobody re-ran while executor._gauntlet_passed kept reading
+        # it as the money gate's first condition. It is pure ledger math now (no network), so it
+        # can simply keep itself honest; a verdict older than its own stale_after_days is refused.
+        _day = time.strftime("%Y-%m-%d")
+        if self.learner.know.get("gauntlet_day") != _day:
+            self.learner.know["gauntlet_day"] = _day
+            try:
+                from . import backtest
+                g = backtest.run(write=True)
+                print(f"  gauntlet: {'PASS' if g['passed'] else 'FAIL'} "
+                      f"(mastery {g['raw_mastery']}, book {g['book_trades']} trades"
+                      f"{'' if g['passed'] else ', blocked by ' + ', '.join(g['failed'])})")
+            except Exception as ex:
+                print(f"  gauntlet run FAILED (cycle continues): {ex}")
 
         # 7) SELF-REVIEW — diagnose its own behaviour and recommend (auto-apply the safe) fixes
         every = max(1, int(self.review.get("every_cycles", 240)))

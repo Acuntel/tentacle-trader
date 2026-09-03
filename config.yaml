@@ -323,6 +323,9 @@ sim:
 
 # ---- Progressive learning: label every setup at MULTIPLE horizons so learning accrues in HOURS ----
 learning:
+  session_learn_every_sec: 120   # AUTOPSY 2026-09-02: sim+histtrain replay cost ~2.0s of a 10s tick
+                                # EVERY cycle (measured). They are pure learning, so during the regular
+                                # session they run on this cadence; off-hours they run flat out.
   horizons_hours: [1, 24, 120]      # resolve each observation at 1h / 1d / 5d (short = fast, long = real)
   horizon_credit: [0.03, 0.05, 0.08]  # credit rate per horizon (short = noisier = lighter); < a real trade's 0.15
   observe_cap: 2000                 # pending-observation ceiling (800 was saturating at 573 live with the
@@ -470,3 +473,12 @@ robotics:
     batch: 6                   # queries per batch -> full universe sweep roughly every 45 minutes
     bodies_per_tick: 2         # full-article reads per batch, scored names + tier 1/2 sources only
     corpus_hours: 36           # how far back the 8am synthesis reads
+
+# ---- THE REPLAY HARNESS (2026-09-02): the one deterministic 'did that change help?' ----
+# Every cycle the brain records the candidates it considered + EVERY gate's verdict to
+# state/candidates.jsonl. earshot/replay.py joins those to the realized outcome for the same
+# ticker/day and reports the expectancy of the set the LIVE policy selects vs everything it saw.
+# This is what the Gauntlet (earshot/backtest.py) now certifies against.
+replay:
+  record: true
+  record_top: 8                # candidates recorded per cycle (deduped to one per ticker per ET day)

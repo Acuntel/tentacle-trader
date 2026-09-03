@@ -18,16 +18,43 @@ AGENTIC_ACCOUNT = "469628218"   # the ••8218 cash account — the only agent
 GAUNTLET_PASS_MASTERY = 80
 
 
-def _gauntlet_passed() -> bool:
+def _gauntlet_passed() -> tuple[bool, str]:
+    """Has the Gauntlet CERTIFIED the code that is running now?
+
+    Hardened 2026-09-02. The old check read one number out of state/gauntlet.json and nothing else.
+    That file had been a stale artifact since 2026-06-18 — written once, by hand, by a backtest of
+    a strategy this bot does not run — so the money gate's first condition was being satisfied by
+    a ten-week-old measurement of something else. Three conditions now, all required:
+
+      * the file exists and is v3+ (a forward-record verdict, not a legacy backtest),
+      * it says every one of its own checks passed,
+      * it was computed recently enough to describe today's code.
+
+    Strictly harder than before: a legacy file, an old file, or a partial pass all read as FAIL.
+    """
     try:
-        return json.load(open("state/gauntlet.json"))["overall"]["mastery"] >= GAUNTLET_PASS_MASTERY
+        with open("state/gauntlet.json") as f:
+            g = json.load(f)
     except Exception:
-        return False
+        return False, "no Gauntlet verdict on disk — real money locked"
+    if not str(g.get("version", "")).startswith("gauntlet-v3"):
+        return False, ("Gauntlet verdict predates the forward-record rewrite (2026-09-02) — "
+                       "re-run `python -m earshot.backtest`")
+    if not g.get("passed") or float(g.get("overall", {}).get("mastery", 0)) < GAUNTLET_PASS_MASTERY:
+        failed = ", ".join(g.get("failed") or []) or "mastery below the bar"
+        return False, f"Gauntlet not passed ({failed}) — real money locked"
+    age_d = (time.time() - float(g.get("ts", 0))) / 86400.0
+    stale = float(g.get("stale_after_days", 7.0))
+    if age_d > stale:
+        return False, (f"Gauntlet verdict is {age_d:.1f} days old (> {stale:.0f}) — a stale pass is "
+                       "not a pass; re-run it against the current ledger")
+    return True, "Gauntlet passed on the current forward record"
 
 
 def live_allowed(rung: int, armed: bool) -> tuple[bool, str]:
-    if not _gauntlet_passed():
-        return False, "Gauntlet not passed (mastery < 80) — real money locked"
+    ok, why = _gauntlet_passed()
+    if not ok:
+        return False, why
     if rung < 1:
         return False, "still on a $0 rung (shadow) — no live capital unlocked"
     if not armed:

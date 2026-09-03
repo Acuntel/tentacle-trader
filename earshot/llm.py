@@ -303,11 +303,20 @@ def _ask(system, user, want_json, max_tokens, temperature, timeout, priority, ta
     avoid = avoid or set()
     est = max_tokens + len(user) // 4
     now = time.time()
+    # WALL-CLOCK CEILING (2026-09-02). `timeout` bounds ONE call, but this loop fails over across
+    # the whole pool — 12 providers x a 30s timeout is a 6-minute worst case on a loop that ticks
+    # every 10s, and the coach runs on the trading thread. The per-call timeout was never the
+    # binding constraint; the chain was. Past the deadline we stop failing over and degrade to the
+    # caller's fallback (distilled judge / heuristic), which every LLM caller here already has.
+    deadline = now + max(float(timeout), float(os.getenv("TENTACLE_LLM_CHAIN_BUDGET", "45")))
     for name in _chain(task):
+        if time.time() >= deadline:
+            break
         if name in avoid:
             continue
         if not _has_key(name) or _COOLDOWN.get(name, 0) > now:
             continue
+        timeout = min(timeout, max(1.0, deadline - time.time()))   # never overrun the ceiling
         if not _budget_ok(name, priority, est):           # daily token cap applies to ALL — caps paid spend too
             continue
         t0 = time.time()
