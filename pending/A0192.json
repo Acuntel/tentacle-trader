@@ -1,0 +1,11 @@
+{
+  "id": "A0192",
+  "title": "CI-quarantined: quarantined patch to earshot/forge.py",
+  "patches": [
+    {
+      "file": "earshot/forge.py",
+      "find": "return sum(accepted_rets) / len(accepted_rets)",
+      "replace": "return max(0.0, sum(accepted_rets) / len(accepted_rets))"
+    }
+  ]
+}
