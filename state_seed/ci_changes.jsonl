@@ -1,0 +1,1 @@
+{"ts": 1788489374.7254438, "iso": "2026-09-04T02:36:14Z", "target_file": "earshot/learnedgate.py", "patch_hash": "e79785c1be48", "kind": "code", "title": "approved self-change (apply-approved Action)", "why": null, "sha": "3bf615f875dc545a318bac7c4dba3a0e5cc6621b", "channel": "ci", "gate_fitness_delta": 0.0}

@@ -110,7 +110,7 @@ class LearnedGate:
             # sqz=0.05 (near-binary feature, information destroyed). sqz is already 0..1 — mild scale.
             "squeeze": math.tanh(sqz * 2.0), "quality": qual, "analyst_conv": conv,
             "is_filing": is_filing, "is_options": is_options, "is_price": is_price, "is_regulatory": -1.0 if "regulatory" in p else 0.0,
-            "f_market_cap": _znorm("f_market_cap", float(f.get("market_cap", 0) or 0)), "o_max_pain": _znorm("o_max_pain", float(o.get("max_pain", 0) or 0)),
+            "f_market_cap": _znorm("f_market_cap", float(f.get("market_cap", 0) or 0)), "o_max_pain": _znorm("o_max_pain", float(o.get("max_pain", 0) or 0)), "o_pcr_oi": _znorm("o_pcr_oi", float(o.get("pcr_oi", 0) or 0)),
             "indep_x_conv": indep * conv, "opt_x_tech": opt_b * tech_b, "sqz_x_filing": sqz * is_filing, "sqz_x_regulatory": sqz * (1.0 if "regulatory" in p else 0.0),
             "risk_on": 1.0 if "risk_on" in macro else 0.0,
             "rates_down": 1.0 if "rates_down" in macro else 0.0,
