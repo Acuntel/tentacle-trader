@@ -142,7 +142,8 @@ class LearnedGate:
         # Forge-found features: is_crowd and is_price are strong predictors; expose them explicitly
         # so the online learner gets stable, named weights (avoids dynamic key churn in knowledge.json).
         feat["is_crowd"] = feat.get("is_crowd", 0.0)
-        feat["is_price"] = feat.get("is_price", 0.0)
+        # is_price already set above; keep explicit exposure without overwriting
+# feat["is_price"] = feat.get("is_price", 0.0)
         return feat
 
     def predict(self, feats: dict) -> float:
