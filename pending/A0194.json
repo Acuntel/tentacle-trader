@@ -1,0 +1,11 @@
+{
+  "id": "A0194",
+  "title": "CI-quarantined: quarantined patch to earshot/council.py",
+  "patches": [
+    {
+      "file": "earshot/council.py",
+      "find": "want_json=True, max_tokens=1100, priority=\"low\", task=\"code\"",
+      "replace": "want_json=True, max_tokens=1100, priority=\"normal\", task=\"code\""
+    }
+  ]
+}
