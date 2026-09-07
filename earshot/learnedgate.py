@@ -143,7 +143,7 @@ class LearnedGate:
         # so the online learner gets stable, named weights (avoids dynamic key churn in knowledge.json).
         feat["is_crowd"] = feat.get("is_crowd", 0.0)
         # is_price already set above; keep explicit exposure without overwriting
-# feat["is_price"] = feat.get("is_price", 0.0)
+# feat["is_price"] = float("price" in p)
         return feat
 
     def predict(self, feats: dict) -> float:
