@@ -1,0 +1,11 @@
+{
+  "id": "A0220",
+  "title": "code change in doctrine.py",
+  "patches": [
+    {
+      "file": "earshot/doctrine.py",
+      "find": "STANDING_ORDERS = (",
+      "replace": "STANDING_ORDERS = load_doctrine()\n\ndef load_doctrine() -> str:\n    \"\"\"Load and validate doctrine from external YAML config.\"\"\"\n    try:\n        with open('config/doctrine.yaml') as f:\n            data = yaml.safe_load(f)\n        assert isinstance(data, dict), \"Doctrine must be a mapping\"\n        return data[\"standing_orders\"]\n    except Exception as e:\n        logging.warning(f\"Failed loading doctrine: {e}, using fallback\")\n        return ("
+    }
+  ]
+}
