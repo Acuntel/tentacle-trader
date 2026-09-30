@@ -1,0 +1,11 @@
+{
+  "id": "A0223",
+  "title": "code change in recall.py",
+  "patches": [
+    {
+      "file": "earshot/recall.py",
+      "find": "with open(path) as f",
+      "replace": "with open(path, 'r', encoding='utf-8') as f"
+    }
+  ]
+}
